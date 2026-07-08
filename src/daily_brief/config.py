@@ -68,3 +68,25 @@ LOW_WEIGHT_KEYWORDS = [
 ]
 
 ABBREVIATIONS = {"AI", "LLM", "RAG", "MCP", "GPU"}
+
+AI_MAX_ITEMS = 5
+AI_MIN_SCORE = 6.0
+AI_MIN_POINTS = 10
+NON_AI_MAX_ITEMS = 2
+NON_AI_POINTS_THRESHOLD = 300
+NON_AI_COMMENTS_THRESHOLD = 150
+HIGH_WEIGHT_BONUS_CAP = 6.0
+MEDIUM_HIGH_WEIGHT_BONUS_CAP = 5.0
+MEDIUM_WEIGHT_BONUS_CAP = 3.0
+LOW_WEIGHT_BONUS_CAP = 1.0
+KEYWORD_BONUS_CAP = 10.0
+TOPIC_BONUS_CAP = 4.0
+TOPIC_KEYWORDS = {
+    "AI coding",
+    "coding agent",
+    "AI agent",
+    "AI developer tools",
+    "AI workflow",
+    "AI productivity",
+    "AI automation",
+}
