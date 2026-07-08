@@ -15,6 +15,8 @@ class TimeWindow:
 
 def daily_window(now: datetime | None = None) -> TimeWindow:
     current = now or datetime.now(TIMEZONE)
+    if current.tzinfo is None or current.utcoffset() is None:
+        current = current.replace(tzinfo=TIMEZONE)
     current = current.astimezone(TIMEZONE)
     today_boundary = datetime.combine(current.date(), time(RUN_HOUR), tzinfo=TIMEZONE)
 
