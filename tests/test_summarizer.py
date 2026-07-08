@@ -1,3 +1,5 @@
+import pytest
+
 from daily_brief.models import Candidate, KeywordMatch, Story
 from daily_brief.summarizer import CodexSummarizer, fallback_summary
 
@@ -61,6 +63,12 @@ def test_codex_summarizer_builds_prompt_and_returns_stdout(monkeypatch):
 
     assert summary == "中文摘要"
     assert calls["args"][:3] == ["codex", "exec", "--ephemeral"]
+    assert "--sandbox" in calls["args"]
+    assert "read-only" in calls["args"]
+    assert "--cd" in calls["args"]
+    neutral_cwd = calls["args"][calls["args"].index("--cd") + 1]
+    assert neutral_cwd
+    assert neutral_cwd != "."
     assert calls["text"] is True
     assert calls["capture_output"] is True
     assert calls["timeout"] == 5
@@ -73,6 +81,7 @@ def test_codex_summarizer_builds_prompt_and_returns_stdout(monkeypatch):
     assert "AI coding" in calls["input"]
     assert "A demo of an AI coding agent." in calls["input"]
     assert "中文" in calls["input"]
+    assert "untrusted" in calls["input"]
 
 
 def test_codex_summarizer_prompt_uses_fetched_text_when_story_text_is_empty(monkeypatch):
@@ -91,3 +100,53 @@ def test_codex_summarizer_prompt_uses_fetched_text_when_story_text_is_empty(monk
     CodexSummarizer().summarize(candidate(story_text="", fetched_text="Fetched article text."))
 
     assert "Fetched article text." in calls["input"]
+
+
+def test_codex_summarizer_raises_when_stdout_is_empty(monkeypatch):
+    def fake_run(args, input, text, capture_output, timeout, check):
+        class Result:
+            stdout = " \n\t"
+
+        return Result()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="empty summary"):
+        CodexSummarizer().summarize(candidate())
+
+
+def test_codex_summarizer_prompt_uses_fetched_text_when_story_text_is_whitespace(monkeypatch):
+    calls = {}
+
+    def fake_run(args, input, text, capture_output, timeout, check):
+        calls["input"] = input
+
+        class Result:
+            stdout = "摘要"
+
+        return Result()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    CodexSummarizer().summarize(candidate(story_text=" \n\t", fetched_text=" Fetched article text. "))
+
+    assert "Fetched article text." in calls["input"]
+    assert " \n\t" not in calls["input"]
+
+
+def test_codex_summarizer_prompt_uses_placeholder_when_no_content(monkeypatch):
+    calls = {}
+
+    def fake_run(args, input, text, capture_output, timeout, check):
+        calls["input"] = input
+
+        class Result:
+            stdout = "摘要"
+
+        return Result()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    CodexSummarizer().summarize(candidate(story_text=" \n\t", fetched_text="   "))
+
+    assert "(not available)" in calls["input"]
