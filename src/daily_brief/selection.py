@@ -12,22 +12,54 @@ from .models import Candidate
 
 
 def dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    parent = list(range(len(candidates)))
+    hn_item_groups: dict[str, int] = {}
+    source_url_groups: dict[str, int] = {}
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    for index, candidate in enumerate(candidates):
+        if candidate.story.hn_item_id:
+            if candidate.story.hn_item_id in hn_item_groups:
+                union(index, hn_item_groups[candidate.story.hn_item_id])
+            else:
+                hn_item_groups[candidate.story.hn_item_id] = index
+        if candidate.story.source_url:
+            if candidate.story.source_url in source_url_groups:
+                union(index, source_url_groups[candidate.story.source_url])
+            else:
+                source_url_groups[candidate.story.source_url] = index
+
+    groups: dict[int, list[int]] = {}
+    for index in range(len(candidates)):
+        groups.setdefault(find(index), []).append(index)
+
     deduped: list[Candidate] = []
-    for candidate in candidates:
-        existing_index = next(
-            (index for index, existing in enumerate(deduped) if _same_story(candidate, existing)),
-            None,
-        )
-        if existing_index is None:
-            deduped.append(candidate)
-            continue
-        if _priority(candidate) > _priority(deduped[existing_index]):
-            deduped[existing_index] = candidate
+    for group in sorted(groups.values(), key=min):
+        best_index = max(group, key=lambda index: (_priority(candidates[index]), candidates[index].score, -index))
+        deduped.append(candidates[best_index])
     return deduped
 
 
 def select_sections(ai_candidates: list[Candidate], non_ai_candidates: list[Candidate]) -> tuple[list[Candidate], list[Candidate]]:
-    ai_items = _select_ai(ai_candidates)
+    ai_pool = dedupe_candidates(ai_candidates)
+    retained_ai_ids = {id(candidate) for candidate in ai_pool}
+    ai_items = _select_ai(ai_pool)
+    for candidate in ai_candidates:
+        if id(candidate) not in retained_ai_ids:
+            candidate.selected = False
+            candidate.section = ""
+            candidate.rejection_reason = "not_selected"
     hot_pool = [candidate for candidate in non_ai_candidates if not any(_same_story(candidate, item) for item in ai_items)]
     hot_items = _select_non_ai_hot(hot_pool)
     return ai_items, hot_items

@@ -158,6 +158,29 @@ def test_select_ai_marks_overflow_qualifying_candidates_not_selected():
     assert candidates[5].rejection_reason == "not_selected"
 
 
+def test_select_ai_dedupes_duplicate_ai_candidates_before_selection():
+    original = score_candidate(
+        Candidate(
+            story=story(1, "AI agent", points=100, comments=10),
+            matched_keywords=[match("AI agent", "high", 4.0)],
+        )
+    )
+    duplicate = score_candidate(
+        Candidate(
+            story=story(1, "AI agent duplicate", points=95, comments=8),
+            matched_keywords=[match("AI agent", "high", 4.0)],
+        )
+    )
+
+    ai_items, hot_items = select_sections([original, duplicate], [])
+
+    assert [item.story.hn_item_id for item in ai_items] == ["1"]
+    assert hot_items == []
+    assert duplicate.selected is False
+    assert duplicate.section == ""
+    assert duplicate.rejection_reason == "not_selected"
+
+
 def test_non_ai_hot_uses_threshold_or_fallback():
     hot = Candidate(story=story(1, "SQLite release", points=320, comments=12))
     fallback = Candidate(story=story(2, "Compiler notes", points=90, comments=10))
@@ -212,3 +235,18 @@ def test_dedupe_prefers_ai_candidate_by_source_url_with_different_hn_item_ids():
     assert len(deduped) == 1
     assert deduped[0].section == "ai"
     assert deduped[0].story.hn_item_id == "1"
+
+
+def test_dedupe_collapses_transitive_duplicate_chain_and_prefers_ai_candidate():
+    shared_url = "https://example.com/transitive-story"
+    hn_duplicate = Candidate(story=story(1, "HN duplicate", url="https://example.com/hn"), score=20.0)
+    bridge = Candidate(story=story(1, "Bridge duplicate", url=shared_url), score=30.0)
+    ai_candidate = Candidate(
+        story=story(2, "AI duplicate", url=shared_url),
+        matched_keywords=[match("AI agent", "high", 4.0)],
+        score=10.0,
+    )
+
+    deduped = dedupe_candidates([hn_duplicate, bridge, ai_candidate])
+
+    assert deduped == [ai_candidate]
