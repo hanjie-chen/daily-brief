@@ -48,7 +48,8 @@ AI 内容使用 Algolia HN Search API 召回。v1 先按时间窗口分页拉取
 - Candidate source: Algolia HN Search API。
 - Ranking rule: 热度打底，AI 相关性加权。
 - Minimum score: `score >= 6` 才能进入 AI section。
-- 允许内容少于 5 条；如果当天 AI 内容不足或分数低于最低入选线，不强行补满。
+- Minimum heat: `points >= 10` 才能进入 AI section，避免零热度内容仅靠关键词堆叠入选。
+- 允许内容少于 5 条；如果当天 AI 内容不足、分数低于最低入选线或未达到最低热度，不强行补满。
 
 ### Non-AI Hot Section
 
@@ -65,8 +66,9 @@ AI 内容使用 Algolia HN Search API 召回。v1 先按时间窗口分页拉取
 ### Matching Semantics
 
 - 普通关键词匹配使用 Unicode-aware case-insensitive 单词边界或短语边界匹配，不能使用简单子串匹配。例如 `eval` 不能命中 `medieval`，`RAG` 不能命中 `storage` 或 `average`。
-- 缩写词 `AI`、`LLM`、`RAG`、`MCP`、`GPU` 默认要求以独立 token 命中，并要求原文中是全大写形式，避免把普通英文词或路径片段误判为 AI 信号。
-- 匹配范围包括 title、story text、source URL hostname/path 中可读 token，以及抓取到的正文片段；ranking 的主要依据仍以 title 和 story text 为先。
+- 短语整体 case-insensitive，例如 `AI coding` 可以匹配 `Ai Coding`；独立缩写词 `AI`、`LLM`、`RAG`、`MCP`、`GPU` 默认要求以独立 token 命中，并要求原文中是全大写形式，避免把普通英文词或路径片段误判为 AI 信号。
+- 计分采用 longest-match-wins：优先匹配更长短语，被长短语覆盖的 token 不再触发短词或裸词加分。例如 `AI coding agent` 可以触发组合短语，但其中的 `AI`、`coding`、`agent` 不再重复计分。
+- 匹配范围包括 title、story text、source URL hostname/path 中可读 token，以及抓取到的正文片段；ranking 的主要依据仍以 title 和 story text 为先。URL token 只能作为 contextual weak signal，不能单独触发 high、medium-high 或 medium weight 加分。
 
 ### High Weight
 
@@ -105,7 +107,6 @@ AI 内容使用 Algolia HN Search API 召回。v1 先按时间窗口分页拉取
 - AI
 - inference
 - fine-tuning
-- training
 - eval
 - AI benchmark
 - LLM benchmark
@@ -121,6 +122,7 @@ AI 内容使用 Algolia HN Search API 召回。v1 先按时间窗口分页拉取
 - workflow
 - automation
 - productivity
+- training
 - benchmark
 - developer tools
 
@@ -152,7 +154,7 @@ score = ln(points + 1)
 - Bonus caps are independent by layer. `keyword_bonus` 的总上限为 +10，`topic_bonus` 的总上限为 +4，避免一条 story 因为命中大量相近关键词而压过所有其他候选。
 - 用 `ln` 是为了降低极高 points 或 comments 对排序的碾压，让关键词和个人兴趣仍能影响结果。
 
-排序结果仍需满足 section 的数量限制：AI section 最多 5 条且 `score >= 6`，Non-AI Hot section 最多 2 条。
+排序结果仍需满足 section 的数量限制：AI section 最多 5 条，且同时满足 `score >= 6` 和 `points >= 10`；Non-AI Hot section 最多 2 条。
 
 ## Output Format
 
@@ -225,8 +227,9 @@ v1 需要覆盖以下行为：
 
 - AI keyword matching 能区分高权重、中权重和低权重关键词。
 - Keyword matching 使用单词边界或短语边界，不会让 `eval` 命中 `medieval`，也不会让 `RAG` 命中 `storage`。
+- Keyword scoring 使用 longest-match-wins，被长短语覆盖的 token 不会重复给短词加分。
 - `agent`、`model` 等弱关键词不会单独造成明显误判。
-- AI section 不输出 `score < 6` 的候选。
+- AI section 不输出 `score < 6` 或 `points < 10` 的候选。
 - AI section 最多输出 5 条。
 - Non-AI Hot section 达阈值时最多输出 2 条。
 - Non-AI Hot section 没有达阈值时输出最热 1 条。
