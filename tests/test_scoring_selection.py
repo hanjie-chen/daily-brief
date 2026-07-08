@@ -32,8 +32,48 @@ def test_score_uses_log_heat_and_bonus_caps():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 16.14
+    assert round(scored.score, 2) == 14.14
     assert scored.why == "keywords: AI coding, Claude, AI agent"
+
+
+def test_score_topic_bonus_is_single_plus_two_when_topic_matches_exist():
+    candidate = Candidate(
+        story=story(1, "AI coding with AI workflow", points=100, comments=20),
+        matched_keywords=[
+            match("AI coding", "high", 4.0),
+            match("AI workflow", "medium_high", 2.5),
+        ],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 14.64
+
+
+def test_score_weak_only_keywords_add_no_bonus():
+    candidate = Candidate(
+        story=story(1, "developer tools", points=100, comments=20),
+        matched_keywords=[match("developer tools", "weak", 0.0)],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 6.14
+
+
+def test_score_weak_keywords_add_one_bonus_max_with_stronger_match():
+    candidate = Candidate(
+        story=story(1, "AI developer tools workflow", points=100, comments=20),
+        matched_keywords=[
+            match("AI", "medium", 1.5),
+            match("developer tools", "weak", 0.0),
+            match("workflow", "weak", 0.0),
+        ],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 8.64
 
 
 def test_select_ai_requires_score_and_minimum_points():
@@ -86,6 +126,18 @@ def test_non_ai_hot_uses_threshold_or_fallback():
     assert hot_items[0].section == "non_ai_hot"
 
 
+def test_non_ai_hot_selects_one_when_multiple_stories_meet_threshold():
+    highest_points = Candidate(story=story(1, "SQLite release", points=330, comments=12))
+    highest_comments = Candidate(story=story(2, "Compiler notes", points=90, comments=180))
+
+    ai_items, hot_items = select_sections([], [highest_comments, highest_points])
+
+    assert ai_items == []
+    assert [item.story.hn_item_id for item in hot_items] == ["1"]
+    assert highest_comments.selected is False
+    assert highest_comments.rejection_reason == "not_selected"
+
+
 def test_non_ai_hot_fallback_selects_one_when_no_threshold_met():
     first = Candidate(story=story(1, "SQLite release", points=120, comments=12))
     second = Candidate(story=story(2, "Compiler notes", points=90, comments=10))
@@ -105,3 +157,15 @@ def test_dedupe_prefers_ai_candidate_by_hn_item_id():
 
     assert len(deduped) == 1
     assert deduped[0].section == "ai"
+
+
+def test_dedupe_prefers_ai_candidate_by_source_url_with_different_hn_item_ids():
+    shared_url = "https://example.com/shared-story"
+    ai_candidate = Candidate(story=story(1, "AI story", url=shared_url), section="ai")
+    hot_candidate = Candidate(story=story(2, "AI story duplicate", url=shared_url), section="non_ai_hot")
+
+    deduped = dedupe_candidates([hot_candidate, ai_candidate])
+
+    assert len(deduped) == 1
+    assert deduped[0].section == "ai"
+    assert deduped[0].story.hn_item_id == "1"

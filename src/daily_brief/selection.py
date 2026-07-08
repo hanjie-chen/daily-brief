@@ -12,19 +12,23 @@ from .models import Candidate
 
 
 def dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:
-    by_key: dict[str, Candidate] = {}
+    deduped: list[Candidate] = []
     for candidate in candidates:
-        key = candidate.story.hn_item_id or candidate.story.source_url
-        existing = by_key.get(key)
-        if existing is None or _priority(candidate) > _priority(existing):
-            by_key[key] = candidate
-    return list(by_key.values())
+        existing_index = next(
+            (index for index, existing in enumerate(deduped) if _same_story(candidate, existing)),
+            None,
+        )
+        if existing_index is None:
+            deduped.append(candidate)
+            continue
+        if _priority(candidate) > _priority(deduped[existing_index]):
+            deduped[existing_index] = candidate
+    return deduped
 
 
 def select_sections(ai_candidates: list[Candidate], non_ai_candidates: list[Candidate]) -> tuple[list[Candidate], list[Candidate]]:
     ai_items = _select_ai(ai_candidates)
-    ai_keys = {item.story.hn_item_id or item.story.source_url for item in ai_items}
-    hot_pool = [candidate for candidate in non_ai_candidates if (candidate.story.hn_item_id or candidate.story.source_url) not in ai_keys]
+    hot_pool = [candidate for candidate in non_ai_candidates if not any(_same_story(candidate, item) for item in ai_items)]
     hot_items = _select_non_ai_hot(hot_pool)
     return ai_items, hot_items
 
@@ -75,3 +79,12 @@ def _priority(candidate: Candidate) -> int:
     if candidate.section == "non_ai_hot":
         return 1
     return 0
+
+
+def _same_story(left: Candidate, right: Candidate) -> bool:
+    same_hn_item = bool(left.story.hn_item_id and right.story.hn_item_id) and left.story.hn_item_id == right.story.hn_item_id
+    same_source_url = (
+        bool(left.story.source_url and right.story.source_url)
+        and left.story.source_url == right.story.source_url
+    )
+    return same_hn_item or same_source_url
