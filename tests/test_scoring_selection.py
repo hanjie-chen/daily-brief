@@ -181,6 +181,29 @@ def test_select_ai_dedupes_duplicate_ai_candidates_before_selection():
     assert duplicate.rejection_reason == "not_selected"
 
 
+def test_select_ai_dedupe_prefers_eligible_duplicate_before_score():
+    ineligible_high_score = Candidate(
+        story=story(1, "AI agent low points", points=AI_MIN_POINTS - 1, comments=100),
+        matched_keywords=[match("AI agent", "high", 4.0)],
+        score=AI_MIN_SCORE + 10.0,
+    )
+    eligible_lower_score = Candidate(
+        story=story(1, "AI agent eligible duplicate", points=AI_MIN_POINTS, comments=0),
+        matched_keywords=[match("AI agent", "high", 4.0)],
+        score=AI_MIN_SCORE + 1.0,
+    )
+
+    ai_items, hot_items = select_sections([ineligible_high_score, eligible_lower_score], [])
+
+    assert ai_items == [eligible_lower_score]
+    assert hot_items == []
+    assert eligible_lower_score.selected is True
+    assert eligible_lower_score.section == "ai"
+    assert ineligible_high_score.selected is False
+    assert ineligible_high_score.section == ""
+    assert ineligible_high_score.rejection_reason == "not_selected"
+
+
 def test_non_ai_hot_uses_threshold_or_fallback():
     hot = Candidate(story=story(1, "SQLite release", points=320, comments=12))
     fallback = Candidate(story=story(2, "Compiler notes", points=90, comments=10))

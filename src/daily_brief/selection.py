@@ -12,6 +12,20 @@ from .models import Candidate
 
 
 def dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    return _dedupe_candidates(
+        candidates,
+        key=lambda candidate, index: (_priority(candidate), candidate.score, -index),
+    )
+
+
+def _dedupe_ai_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    return _dedupe_candidates(
+        candidates,
+        key=lambda candidate, index: (_meets_ai_minimum(candidate), _priority(candidate), candidate.score, -index),
+    )
+
+
+def _dedupe_candidates(candidates: list[Candidate], key) -> list[Candidate]:
     parent = list(range(len(candidates)))
     hn_item_groups: dict[str, int] = {}
     source_url_groups: dict[str, int] = {}
@@ -46,13 +60,13 @@ def dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:
 
     deduped: list[Candidate] = []
     for group in sorted(groups.values(), key=min):
-        best_index = max(group, key=lambda index: (_priority(candidates[index]), candidates[index].score, -index))
+        best_index = max(group, key=lambda index: key(candidates[index], index))
         deduped.append(candidates[best_index])
     return deduped
 
 
 def select_sections(ai_candidates: list[Candidate], non_ai_candidates: list[Candidate]) -> tuple[list[Candidate], list[Candidate]]:
-    ai_pool = dedupe_candidates(ai_candidates)
+    ai_pool = _dedupe_ai_candidates(ai_candidates)
     retained_ai_ids = {id(candidate) for candidate in ai_pool}
     ai_items = _select_ai(ai_pool)
     for candidate in ai_candidates:
@@ -68,7 +82,7 @@ def select_sections(ai_candidates: list[Candidate], non_ai_candidates: list[Cand
 def _select_ai(candidates: list[Candidate]) -> list[Candidate]:
     selected: list[Candidate] = []
     for candidate in sorted(candidates, key=lambda item: item.score, reverse=True):
-        if candidate.score < AI_MIN_SCORE or candidate.story.points < AI_MIN_POINTS:
+        if not _meets_ai_minimum(candidate):
             candidate.selected = False
             candidate.section = ""
             candidate.rejection_reason = "below_ai_minimum"
@@ -83,6 +97,10 @@ def _select_ai(candidates: list[Candidate]) -> list[Candidate]:
         candidate.rejection_reason = ""
         selected.append(candidate)
     return selected
+
+
+def _meets_ai_minimum(candidate: Candidate) -> bool:
+    return candidate.score >= AI_MIN_SCORE and candidate.story.points >= AI_MIN_POINTS
 
 
 def _select_non_ai_hot(candidates: list[Candidate]) -> list[Candidate]:
