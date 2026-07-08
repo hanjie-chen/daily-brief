@@ -37,12 +37,15 @@ def _select_ai(candidates: list[Candidate]) -> list[Candidate]:
             candidate.section = ""
             candidate.rejection_reason = "below_ai_minimum"
             continue
+        if len(selected) == AI_MAX_ITEMS:
+            candidate.selected = False
+            candidate.section = ""
+            candidate.rejection_reason = "not_selected"
+            continue
         candidate.selected = True
         candidate.section = "ai"
         candidate.rejection_reason = ""
         selected.append(candidate)
-        if len(selected) == AI_MAX_ITEMS:
-            break
     return selected
 
 

@@ -54,6 +54,27 @@ def test_select_ai_requires_score_and_minimum_points():
     assert low_heat.rejection_reason == "below_ai_minimum"
 
 
+def test_select_ai_marks_overflow_qualifying_candidates_not_selected():
+    candidates = [
+        score_candidate(
+            Candidate(
+                story=story(item_id, "AI agent", points=100 - item_id, comments=10),
+                matched_keywords=[match("AI agent", "high", 4.0)],
+            )
+        )
+        for item_id in range(1, 7)
+    ]
+
+    ai_items, hot_items = select_sections(candidates, [])
+
+    assert [item.story.hn_item_id for item in ai_items] == ["1", "2", "3", "4", "5"]
+    assert hot_items == []
+    assert sum(candidate.selected for candidate in candidates) == 5
+    assert candidates[5].selected is False
+    assert candidates[5].section == ""
+    assert candidates[5].rejection_reason == "not_selected"
+
+
 def test_non_ai_hot_uses_threshold_or_fallback():
     hot = Candidate(story=story(1, "SQLite release", points=320, comments=12))
     fallback = Candidate(story=story(2, "Compiler notes", points=90, comments=10))
