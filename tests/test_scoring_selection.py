@@ -238,6 +238,30 @@ def test_non_ai_hot_fallback_selects_one_when_no_threshold_met():
     assert hot_items[0].why == "today's hottest non-AI story"
 
 
+def test_non_ai_hot_suppresses_transitive_duplicate_of_selected_ai():
+    selected_ai = Candidate(
+        story=story(1, "AI agent", points=AI_MIN_POINTS, comments=10, url="https://example.com/ai"),
+        matched_keywords=[match("AI agent", "high", 4.0)],
+        score=AI_MIN_SCORE + 2.0,
+    )
+    ai_bridge = Candidate(
+        story=story(1, "AI agent bridge", points=AI_MIN_POINTS - 1, comments=10, url="https://example.com/bridge"),
+        matched_keywords=[match("AI agent", "high", 4.0)],
+        score=AI_MIN_SCORE + 1.0,
+    )
+    transitive_hot = Candidate(
+        story=story(2, "Bridge duplicate hot story", points=320, comments=20, url="https://example.com/bridge")
+    )
+    fallback = Candidate(story=story(3, "Other hot story", points=250, comments=20))
+
+    ai_items, hot_items = select_sections([selected_ai, ai_bridge], [transitive_hot, fallback])
+
+    assert ai_items == [selected_ai]
+    assert transitive_hot not in hot_items
+    assert transitive_hot.selected is False
+    assert transitive_hot.rejection_reason == "not_selected"
+
+
 def test_dedupe_prefers_ai_candidate_by_hn_item_id():
     ai_candidate = Candidate(story=story(1, "AI story"), section="ai")
     hot_candidate = Candidate(story=story(1, "AI story"), section="non_ai_hot")

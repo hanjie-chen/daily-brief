@@ -26,6 +26,16 @@ def _dedupe_ai_candidates(candidates: list[Candidate]) -> list[Candidate]:
 
 
 def _dedupe_candidates(candidates: list[Candidate], key) -> list[Candidate]:
+    groups = _duplicate_groups(candidates)
+
+    deduped: list[Candidate] = []
+    for group in sorted(groups, key=min):
+        best_index = max(group, key=lambda index: key(candidates[index], index))
+        deduped.append(candidates[best_index])
+    return deduped
+
+
+def _duplicate_groups(candidates: list[Candidate]) -> list[list[int]]:
     parent = list(range(len(candidates)))
     hn_item_groups: dict[str, int] = {}
     source_url_groups: dict[str, int] = {}
@@ -58,11 +68,7 @@ def _dedupe_candidates(candidates: list[Candidate], key) -> list[Candidate]:
     for index in range(len(candidates)):
         groups.setdefault(find(index), []).append(index)
 
-    deduped: list[Candidate] = []
-    for group in sorted(groups.values(), key=min):
-        best_index = max(group, key=lambda index: key(candidates[index], index))
-        deduped.append(candidates[best_index])
-    return deduped
+    return list(groups.values())
 
 
 def select_sections(ai_candidates: list[Candidate], non_ai_candidates: list[Candidate]) -> tuple[list[Candidate], list[Candidate]]:
@@ -74,9 +80,25 @@ def select_sections(ai_candidates: list[Candidate], non_ai_candidates: list[Cand
             candidate.selected = False
             candidate.section = ""
             candidate.rejection_reason = "not_selected"
-    hot_pool = [candidate for candidate in non_ai_candidates if not any(_same_story(candidate, item) for item in ai_items)]
+    selected_ai_duplicate_group = _selected_ai_duplicate_group(ai_candidates, ai_items)
+    hot_pool: list[Candidate] = []
+    for candidate in non_ai_candidates:
+        if any(_same_story(candidate, item) for item in selected_ai_duplicate_group):
+            candidate.selected = False
+            candidate.rejection_reason = "not_selected"
+        else:
+            hot_pool.append(candidate)
     hot_items = _select_non_ai_hot(hot_pool)
     return ai_items, hot_items
+
+
+def _selected_ai_duplicate_group(ai_candidates: list[Candidate], ai_items: list[Candidate]) -> list[Candidate]:
+    selected_ai_ids = {id(candidate) for candidate in ai_items}
+    duplicate_group: list[Candidate] = []
+    for group in _duplicate_groups(ai_candidates):
+        if any(id(ai_candidates[index]) in selected_ai_ids for index in group):
+            duplicate_group.extend(ai_candidates[index] for index in group)
+    return duplicate_group
 
 
 def _select_ai(candidates: list[Candidate]) -> list[Candidate]:
