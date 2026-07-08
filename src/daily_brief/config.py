@@ -79,13 +79,3 @@ HIGH_WEIGHT_BONUS_CAP = 6.0
 MEDIUM_HIGH_WEIGHT_BONUS_CAP = 5.0
 MEDIUM_WEIGHT_BONUS_CAP = 3.0
 LOW_WEIGHT_BONUS_CAP = 1.0
-KEYWORD_BONUS_CAP = 10.0
-TOPIC_KEYWORDS = {
-    "AI coding",
-    "coding agent",
-    "AI agent",
-    "AI developer tools",
-    "AI workflow",
-    "AI productivity",
-    "AI automation",
-}

@@ -4,11 +4,9 @@ import math
 
 from .config import (
     HIGH_WEIGHT_BONUS_CAP,
-    KEYWORD_BONUS_CAP,
     LOW_WEIGHT_BONUS_CAP,
     MEDIUM_HIGH_WEIGHT_BONUS_CAP,
     MEDIUM_WEIGHT_BONUS_CAP,
-    TOPIC_KEYWORDS,
 )
 from .models import Candidate
 
@@ -22,7 +20,7 @@ LAYER_CAPS = {
 
 def score_candidate(candidate: Candidate) -> Candidate:
     heat = math.log(candidate.story.points + 1) + 0.5 * math.log(candidate.story.comments + 1)
-    keyword_bonus = min(_keyword_bonus(candidate), KEYWORD_BONUS_CAP)
+    keyword_bonus = _keyword_bonus(candidate)
     topic_bonus = _topic_bonus(candidate)
     candidate.score = heat + keyword_bonus + topic_bonus
     candidate.why = _why(candidate)
@@ -40,7 +38,7 @@ def _keyword_bonus(candidate: Candidate) -> float:
 
 
 def _topic_bonus(candidate: Candidate) -> float:
-    if any(match.weight in {"high", "medium_high"} and match.keyword in TOPIC_KEYWORDS for match in candidate.matched_keywords):
+    if any(match.weight in {"high", "medium_high"} for match in candidate.matched_keywords):
         return 2.0
     return 0.0
 

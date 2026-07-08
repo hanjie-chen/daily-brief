@@ -50,6 +50,32 @@ def test_score_topic_bonus_is_single_plus_two_when_topic_matches_exist():
     assert round(scored.score, 2) == 14.64
 
 
+def test_score_topic_bonus_applies_to_any_high_or_medium_high_match():
+    candidate = Candidate(
+        story=story(1, "Claude release", points=100, comments=20),
+        matched_keywords=[match("Claude", "high", 4.0)],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 12.14
+
+
+def test_score_allows_combined_layer_bonus_above_ten():
+    candidate = Candidate(
+        story=story(1, "AI coding with Gemini and AI benchmark", points=100, comments=20),
+        matched_keywords=[
+            match("AI coding", "high", 6.0),
+            match("Gemini", "medium_high", 5.0),
+            match("AI benchmark", "medium", 3.0),
+        ],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 22.14
+
+
 def test_score_weak_only_keywords_add_no_bonus():
     candidate = Candidate(
         story=story(1, "developer tools", points=100, comments=20),
