@@ -9,7 +9,7 @@ from .keywords import match_keywords
 from .models import Candidate, Story
 from .render import render_candidates_json, render_markdown
 from .scoring import score_candidate
-from .selection import select_sections
+from .selection import dedupe_candidates, select_sections
 from .summarizer import CodexSummarizer, fallback_summary
 from .time_window import daily_window
 
@@ -56,8 +56,12 @@ def run_generate(
     algolia_items = algolia_stories if algolia_stories is not None else fetch_algolia_stories(window)
     hot_items = hot_stories if hot_stories is not None else fetch_hot_stories()
 
-    ai_pool = [_ai_candidate(story) for story in algolia_items]
-    hot_pool = [_hot_candidate(story) for story in hot_items if not _has_keyword_match(story)]
+    ai_candidates = [_ai_candidate(story) for story in algolia_items]
+    hot_candidates = [_hot_candidate(story) for story in hot_items if not _has_keyword_match(story)]
+    candidates = dedupe_candidates([*ai_candidates, *hot_candidates])
+    retained_candidate_ids = {id(candidate) for candidate in candidates}
+    ai_pool = [candidate for candidate in ai_candidates if id(candidate) in retained_candidate_ids]
+    hot_pool = [candidate for candidate in hot_candidates if id(candidate) in retained_candidate_ids]
 
     ai_items, selected_hot_items = select_sections(ai_pool, hot_pool)
     summary_client = summarizer or CodexSummarizer()
@@ -72,7 +76,7 @@ def run_generate(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     data_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_markdown(label, ai_items, selected_hot_items), encoding="utf-8")
-    data_path.write_text(render_candidates_json([*ai_pool, *hot_pool]), encoding="utf-8")
+    data_path.write_text(render_candidates_json(candidates), encoding="utf-8")
     return GenerateResult(brief_path=output_path, data_path=data_path)
 
 

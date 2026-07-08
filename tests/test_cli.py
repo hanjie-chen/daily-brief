@@ -76,6 +76,32 @@ def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path):
     assert "摘要生成失败时保留此基础信息。" in markdown
 
 
+def test_run_generate_dedupes_hot_candidates_before_writing_json(tmp_path):
+    duplicate_url = "https://example.com/shared"
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[],
+        hot_stories=[
+            story("1", "Original SQLite writeup", source="hn_official", points=120, comments=30, url=duplicate_url),
+            story("2", "Popular SQLite discussion", source="hn_official", points=350, comments=80, url=duplicate_url),
+        ],
+        summarizer=FakeSummarizer(),
+    )
+
+    candidate_data = json.loads(result.data_path.read_text(encoding="utf-8"))
+    duplicate_records = [item for item in candidate_data if item["source_url"] == duplicate_url]
+
+    assert len(duplicate_records) == 1
+    assert duplicate_records[0]["selected"] is True
+    assert duplicate_records[0]["section"] == "non_ai_hot"
+
+    markdown = result.brief_path.read_text(encoding="utf-8")
+    assert duplicate_records[0]["title"] in markdown
+
+
 def test_main_dry_run_does_not_create_output_directories_or_files(tmp_path, monkeypatch):
     output_dir = tmp_path / "briefs"
     data_dir = tmp_path / "data"
