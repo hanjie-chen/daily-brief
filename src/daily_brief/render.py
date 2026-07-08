@@ -46,10 +46,10 @@ def _render_section(title: str, items: list[Candidate]) -> list[str]:
         story = item.story
         lines.extend(
             [
-                f"### {story.title}",
+                f"### {_single_line_display_text(story.title)}",
                 "",
-                f"- Summary: {item.summary}",
-                f"- Why: {item.why}",
+                f"- Summary: {_single_line_display_text(item.summary)}",
+                f"- Why: {_single_line_display_text(item.why)}",
                 f"- Source: {story.source_url}",
                 f"- Discussion: {story.hn_discussion_url}",
                 f"- Stats: {story.points} points / {story.comments} comments",
@@ -57,3 +57,7 @@ def _render_section(title: str, items: list[Candidate]) -> list[str]:
             ]
         )
     return lines
+
+
+def _single_line_display_text(value: str) -> str:
+    return " ".join(value.split())

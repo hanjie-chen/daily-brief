@@ -49,6 +49,21 @@ def test_render_markdown_shows_empty_ai_section():
     assert "## Hacker News: Non-AI Hot" in markdown
 
 
+def test_render_markdown_normalizes_multiline_display_text():
+    item = candidate(title="AI coding agent\n### Injected heading")
+    item.summary = "  First line\n\nSecond\tline  "
+    item.why = "  Keyword match\nspans lines  "
+
+    markdown = render_markdown("2026-07-08", [item], [])
+
+    assert "\n### Injected heading\n" not in markdown
+    assert "### AI coding agent ### Injected heading" in markdown
+    assert "- Summary: First line Second line" in markdown
+    assert "- Why: Keyword match spans lines" in markdown
+    assert "\nSecond\tline" not in markdown
+    assert "\nspans lines" not in markdown
+
+
 def test_render_candidates_json_uses_snake_case_fields():
     item = candidate(selected=False, title="中文 AI coding agent")
     item.score = 9.23456
