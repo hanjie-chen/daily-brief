@@ -1,4 +1,5 @@
 from daily_brief.models import Candidate, KeywordMatch, Story
+from daily_brief.config import AI_MIN_POINTS, AI_MIN_SCORE
 from daily_brief.scoring import score_candidate
 from daily_brief.selection import dedupe_candidates, select_sections
 
@@ -118,6 +119,22 @@ def test_select_ai_requires_score_and_minimum_points():
     assert [item.story.hn_item_id for item in ai_items] == ["2"]
     assert hot_items == []
     assert low_heat.rejection_reason == "below_ai_minimum"
+
+
+def test_select_ai_rejects_candidate_below_minimum_score_with_enough_points():
+    low_score = Candidate(
+        story=story(1, "AI mention without enough signal", points=AI_MIN_POINTS, comments=0),
+        matched_keywords=[match("AI", "weak", 0.0)],
+        score=AI_MIN_SCORE - 0.01,
+    )
+
+    ai_items, hot_items = select_sections([low_score], [])
+
+    assert ai_items == []
+    assert hot_items == []
+    assert low_score.selected is False
+    assert low_score.section == ""
+    assert low_score.rejection_reason == "below_ai_minimum"
 
 
 def test_select_ai_marks_overflow_qualifying_candidates_not_selected():
