@@ -56,8 +56,12 @@ def run_generate(
     algolia_items = algolia_stories if algolia_stories is not None else fetch_algolia_stories(window)
     hot_items = hot_stories if hot_stories is not None else fetch_hot_stories()
 
-    ai_candidates = [_ai_candidate(story) for story in algolia_items]
-    hot_candidates = [_hot_candidate(story) for story in hot_items if not _has_keyword_match(story)]
+    algolia_candidates = [_ai_candidate(story) for story in algolia_items]
+    ai_candidates = [candidate for candidate in algolia_candidates if candidate.matched_keywords]
+    hot_candidates = [
+        *[candidate for candidate in algolia_candidates if not candidate.matched_keywords],
+        *[_hot_candidate(story) for story in hot_items if not _has_keyword_match(story)],
+    ]
     candidates = dedupe_candidates([*ai_candidates, *hot_candidates])
     retained_candidate_ids = {id(candidate) for candidate in candidates}
     ai_pool = [candidate for candidate in ai_candidates if id(candidate) in retained_candidate_ids]
