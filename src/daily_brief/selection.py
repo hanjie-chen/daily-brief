@@ -152,11 +152,15 @@ def _select_non_ai_hot(candidates: list[Candidate]) -> list[Candidate]:
 
 
 def _priority(candidate: Candidate) -> int:
-    if candidate.section == "ai" or candidate.matched_keywords:
+    if candidate.section == "ai" or _has_non_weak_keyword_match(candidate):
         return 2
     if candidate.section == "non_ai_hot":
         return 1
     return 0
+
+
+def _has_non_weak_keyword_match(candidate: Candidate) -> bool:
+    return any(match.weight != "weak" for match in candidate.matched_keywords)
 
 
 def _hn_heat(candidate: Candidate) -> tuple[int, int]:

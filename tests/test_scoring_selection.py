@@ -358,3 +358,19 @@ def test_dedupe_collapses_transitive_duplicate_chain_and_prefers_ai_candidate():
     deduped = dedupe_candidates([hn_duplicate, bridge, ai_candidate])
 
     assert deduped == [ai_candidate]
+
+
+def test_dedupe_prefers_hotter_non_ai_duplicate_over_weak_only_match():
+    weak_only_algolia = Candidate(
+        story=story(1, "Database model migration guide", points=10, comments=1),
+        matched_keywords=[match("model", "weak", 0.0)],
+        score=1.0,
+    )
+    official_hot = Candidate(
+        story=story(1, "Database model migration guide", points=500, comments=90),
+        section="non_ai_hot",
+    )
+
+    deduped = dedupe_candidates([weak_only_algolia, official_hot])
+
+    assert deduped == [official_hot]
