@@ -74,10 +74,11 @@ def run_generate(
             hot_note = f"Today's HN hot data source failed: HN official API request failed ({exc})."
 
     algolia_candidates = [_ai_candidate(story) for story in algolia_items]
-    ai_candidates = [candidate for candidate in algolia_candidates if candidate.matched_keywords]
+    official_hot_candidates = [_hot_candidate(story) for story in hot_items]
+    ai_candidates = [candidate for candidate in algolia_candidates if _has_non_weak_keyword_match(candidate)]
     hot_candidates = [
-        *[candidate for candidate in algolia_candidates if not candidate.matched_keywords],
-        *[_hot_candidate(story) for story in hot_items if not _has_keyword_match(story)],
+        *[candidate for candidate in algolia_candidates if not _has_non_weak_keyword_match(candidate)],
+        *[candidate for candidate in official_hot_candidates if not _has_non_weak_keyword_match(candidate)],
     ]
     candidates = dedupe_candidates([*ai_candidates, *hot_candidates])
     retained_candidate_ids = {id(candidate) for candidate in candidates}
@@ -109,11 +110,11 @@ def _ai_candidate(story: Story) -> Candidate:
 
 
 def _hot_candidate(story: Story) -> Candidate:
-    return Candidate(story=story)
+    return Candidate(story=story, matched_keywords=_keyword_matches(story))
 
 
-def _has_keyword_match(story: Story) -> bool:
-    return bool(_keyword_matches(story))
+def _has_non_weak_keyword_match(candidate: Candidate) -> bool:
+    return any(match.weight != "weak" for match in candidate.matched_keywords)
 
 
 def _keyword_matches(story: Story):
