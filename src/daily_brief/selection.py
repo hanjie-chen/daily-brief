@@ -14,14 +14,20 @@ from .models import Candidate
 def dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:
     return _dedupe_candidates(
         candidates,
-        key=lambda candidate, index: (_priority(candidate), candidate.score, -index),
+        key=lambda candidate, index: (_priority(candidate), candidate.score, *_hn_heat(candidate), -index),
     )
 
 
 def _dedupe_ai_candidates(candidates: list[Candidate]) -> list[Candidate]:
     return _dedupe_candidates(
         candidates,
-        key=lambda candidate, index: (_meets_ai_minimum(candidate), _priority(candidate), candidate.score, -index),
+        key=lambda candidate, index: (
+            _meets_ai_minimum(candidate),
+            _priority(candidate),
+            candidate.score,
+            *_hn_heat(candidate),
+            -index,
+        ),
     )
 
 
@@ -151,6 +157,10 @@ def _priority(candidate: Candidate) -> int:
     if candidate.section == "non_ai_hot":
         return 1
     return 0
+
+
+def _hn_heat(candidate: Candidate) -> tuple[int, int]:
+    return candidate.story.points, candidate.story.comments
 
 
 def _same_story(left: Candidate, right: Candidate) -> bool:

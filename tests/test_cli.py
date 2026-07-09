@@ -120,6 +120,8 @@ def test_run_generate_dedupes_hot_candidates_before_writing_json(tmp_path):
     duplicate_records = [item for item in candidate_data if item["source_url"] == duplicate_url]
 
     assert len(duplicate_records) == 1
+    assert duplicate_records[0]["hn_item_id"] == "2"
+    assert duplicate_records[0]["title"] == "Popular SQLite discussion"
     assert duplicate_records[0]["selected"] is True
     assert duplicate_records[0]["section"] == "non_ai_hot"
 
