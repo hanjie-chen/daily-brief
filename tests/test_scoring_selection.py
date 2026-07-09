@@ -33,11 +33,11 @@ def test_score_uses_log_heat_and_bonus_caps():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 14.14
+    assert round(scored.score, 2) == 16.14
     assert scored.why == "keywords: AI coding, Claude, AI agent"
 
 
-def test_score_topic_bonus_is_single_plus_two_when_topic_matches_exist():
+def test_score_topic_bonus_adds_two_per_topic_keyword_up_to_cap():
     candidate = Candidate(
         story=story(1, "AI coding with AI workflow", points=100, comments=20),
         matched_keywords=[
@@ -48,10 +48,10 @@ def test_score_topic_bonus_is_single_plus_two_when_topic_matches_exist():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 14.64
+    assert round(scored.score, 2) == 16.64
 
 
-def test_score_topic_bonus_applies_to_any_high_or_medium_high_match():
+def test_score_topic_bonus_ignores_non_topic_high_match():
     candidate = Candidate(
         story=story(1, "Claude release", points=100, comments=20),
         matched_keywords=[match("Claude", "high", 4.0)],
@@ -59,22 +59,25 @@ def test_score_topic_bonus_applies_to_any_high_or_medium_high_match():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 12.14
+    assert round(scored.score, 2) == 10.14
 
 
-def test_score_allows_combined_layer_bonus_above_ten():
+def test_score_caps_combined_keyword_bonus_and_topic_bonus_independently():
     candidate = Candidate(
-        story=story(1, "AI coding with Gemini and AI benchmark", points=100, comments=20),
+        story=story(1, "AI coding with Gemini, AI workflow, and AI benchmark", points=100, comments=20),
         matched_keywords=[
-            match("AI coding", "high", 6.0),
-            match("Gemini", "medium_high", 5.0),
-            match("AI benchmark", "medium", 3.0),
+            match("AI coding", "high", 4.0),
+            match("AI agent", "high", 4.0),
+            match("Gemini", "medium_high", 2.5),
+            match("AI workflow", "medium_high", 2.5),
+            match("AI benchmark", "medium", 1.5),
+            match("workflow", "weak", 0.0),
         ],
     )
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 22.14
+    assert round(scored.score, 2) == 20.14
 
 
 def test_score_weak_only_keywords_add_no_bonus():
@@ -215,16 +218,16 @@ def test_non_ai_hot_uses_threshold_or_fallback():
     assert hot_items[0].section == "non_ai_hot"
 
 
-def test_non_ai_hot_selects_one_when_multiple_stories_meet_threshold():
+def test_non_ai_hot_selects_two_when_multiple_stories_meet_threshold():
     highest_points = Candidate(story=story(1, "SQLite release", points=330, comments=12))
     highest_comments = Candidate(story=story(2, "Compiler notes", points=90, comments=180))
 
     ai_items, hot_items = select_sections([], [highest_comments, highest_points])
 
     assert ai_items == []
-    assert [item.story.hn_item_id for item in hot_items] == ["1"]
-    assert highest_comments.selected is False
-    assert highest_comments.rejection_reason == "not_selected"
+    assert [item.story.hn_item_id for item in hot_items] == ["1", "2"]
+    assert highest_points.selected is True
+    assert highest_comments.selected is True
 
 
 def test_non_ai_hot_fallback_selects_one_when_no_threshold_met():
