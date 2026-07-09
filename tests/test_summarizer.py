@@ -63,6 +63,7 @@ def test_codex_summarizer_builds_prompt_and_returns_stdout(monkeypatch):
 
     assert summary == "中文摘要"
     assert calls["args"][:3] == ["codex", "exec", "--ephemeral"]
+    assert "--skip-git-repo-check" in calls["args"]
     assert "--sandbox" in calls["args"]
     assert "read-only" in calls["args"]
     assert "--cd" in calls["args"]

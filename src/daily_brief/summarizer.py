@@ -17,6 +17,7 @@ class CodexSummarizer:
                     "codex",
                     "exec",
                     "--ephemeral",
+                    "--skip-git-repo-check",
                     "--sandbox",
                     "read-only",
                     "--cd",
