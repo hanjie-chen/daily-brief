@@ -102,7 +102,7 @@ def test_score_developer_tools_gets_topic_bonus_with_high_signal():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 13.14
+    assert round(scored.score, 2) == 12.64
 
 
 def test_score_weak_keywords_add_no_bonus_with_medium_match():
@@ -118,6 +118,20 @@ def test_score_weak_keywords_add_no_bonus_with_medium_match():
     scored = score_candidate(candidate)
 
     assert round(scored.score, 2) == 7.64
+
+
+def test_score_weak_keywords_add_half_bonus_per_match_with_high_match():
+    candidate = Candidate(
+        story=story(1, "Claude model", points=100, comments=20),
+        matched_keywords=[
+            match("Claude", "high", 4.0),
+            match("model", "weak", 0.0),
+        ],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 10.64
 
 
 def test_score_weak_keywords_add_one_bonus_max_with_high_match():

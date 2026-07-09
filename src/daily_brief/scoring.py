@@ -35,8 +35,9 @@ def _keyword_bonus(candidate: Candidate) -> float:
     for layer, cap in LAYER_CAPS.items():
         layer_total = sum(match.bonus for match in candidate.matched_keywords if match.weight == layer)
         total += min(layer_total, cap)
-    if _has_high_or_medium_high_match(candidate) and any(match.weight == "weak" for match in candidate.matched_keywords):
-        total += 1.0
+    if _has_high_or_medium_high_match(candidate):
+        weak_count = sum(1 for match in candidate.matched_keywords if match.weight == "weak")
+        total += min(weak_count * 0.5, 1.0)
     return total
 
 
