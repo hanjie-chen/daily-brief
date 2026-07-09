@@ -42,13 +42,23 @@ def _keyword_bonus(candidate: Candidate) -> float:
 
 def _topic_bonus(candidate: Candidate) -> float:
     return min(
-        sum(2.0 for match in candidate.matched_keywords if match.keyword in TOPIC_KEYWORDS),
+        sum(2.0 for match in candidate.matched_keywords if _gets_topic_bonus(match.keyword, candidate)),
         TOPIC_BONUS_CAP,
     )
 
 
+def _gets_topic_bonus(keyword: str, candidate: Candidate) -> bool:
+    if keyword in TOPIC_KEYWORDS:
+        return True
+    return keyword == "developer tools" and _has_high_or_medium_high_match(candidate)
+
+
 def _has_stronger_match(candidate: Candidate) -> bool:
     return any(match.weight in LAYER_CAPS for match in candidate.matched_keywords)
+
+
+def _has_high_or_medium_high_match(candidate: Candidate) -> bool:
+    return any(match.weight in {"high", "medium_high"} for match in candidate.matched_keywords)
 
 
 def _why(candidate: Candidate) -> str:

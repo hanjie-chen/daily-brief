@@ -76,6 +76,62 @@ def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path):
     assert "摘要生成失败时保留此基础信息。" in markdown
 
 
+def test_run_generate_writes_files_when_algolia_fetch_fails(tmp_path, monkeypatch):
+    output_dir = tmp_path / "briefs"
+    data_dir = tmp_path / "data"
+
+    def raise_algolia_error(window):
+        raise RuntimeError("algolia unavailable")
+
+    monkeypatch.setattr(cli, "fetch_algolia_stories", raise_algolia_error)
+    monkeypatch.setattr(
+        cli,
+        "fetch_hot_stories",
+        lambda: [story("3", "SQLite release notes", source="hn_official", points=350, comments=20)],
+    )
+
+    result = run_generate(
+        output_dir=output_dir,
+        data_dir=data_dir,
+        date_label="2026-07-08",
+        summarizer=FakeSummarizer(),
+    )
+
+    markdown = result.brief_path.read_text(encoding="utf-8")
+
+    assert result.brief_path.exists()
+    assert result.data_path.exists()
+    assert "AI data source failed" in markdown
+    assert "Algolia" in markdown
+    assert "SQLite release notes" in markdown
+
+
+def test_run_generate_writes_files_when_hot_fetch_fails(tmp_path, monkeypatch):
+    output_dir = tmp_path / "briefs"
+    data_dir = tmp_path / "data"
+
+    def raise_hot_error():
+        raise RuntimeError("hn unavailable")
+
+    monkeypatch.setattr(cli, "fetch_hot_stories", raise_hot_error)
+
+    result = run_generate(
+        output_dir=output_dir,
+        data_dir=data_dir,
+        date_label="2026-07-08",
+        algolia_stories=[story("1", "AI coding agent with Claude", points=40, comments=8)],
+        summarizer=FakeSummarizer(),
+    )
+
+    markdown = result.brief_path.read_text(encoding="utf-8")
+
+    assert result.brief_path.exists()
+    assert result.data_path.exists()
+    assert "HN hot data source failed" in markdown
+    assert "Non-AI Hot" in markdown
+    assert "AI coding agent with Claude" in markdown
+
+
 def test_run_generate_keeps_non_ai_algolia_story_out_of_ai_section(tmp_path):
     result = run_generate(
         output_dir=tmp_path / "briefs",

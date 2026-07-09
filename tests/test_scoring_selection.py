@@ -80,7 +80,7 @@ def test_score_caps_combined_keyword_bonus_and_topic_bonus_independently():
     assert round(scored.score, 2) == 20.14
 
 
-def test_score_weak_only_keywords_add_no_bonus():
+def test_score_developer_tools_alone_gets_no_topic_or_keyword_bonus():
     candidate = Candidate(
         story=story(1, "developer tools", points=100, comments=20),
         matched_keywords=[match("developer tools", "weak", 0.0)],
@@ -89,6 +89,20 @@ def test_score_weak_only_keywords_add_no_bonus():
     scored = score_candidate(candidate)
 
     assert round(scored.score, 2) == 6.14
+
+
+def test_score_developer_tools_gets_topic_bonus_with_high_signal():
+    candidate = Candidate(
+        story=story(1, "Claude developer tools", points=100, comments=20),
+        matched_keywords=[
+            match("Claude", "high", 4.0),
+            match("developer tools", "weak", 0.0),
+        ],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 13.14
 
 
 def test_score_weak_keywords_add_one_bonus_max_with_stronger_match():

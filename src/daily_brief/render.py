@@ -5,10 +5,16 @@ import json
 from .models import Candidate
 
 
-def render_markdown(date_label: str, ai_items: list[Candidate], hot_items: list[Candidate]) -> str:
+def render_markdown(
+    date_label: str,
+    ai_items: list[Candidate],
+    hot_items: list[Candidate],
+    ai_note: str = "",
+    hot_note: str = "",
+) -> str:
     lines = [f"# Daily Brief - {date_label}", ""]
-    lines.extend(_render_section("Hacker News: AI", ai_items))
-    lines.extend(_render_section("Hacker News: Non-AI Hot", hot_items))
+    lines.extend(_render_section("Hacker News: AI", ai_items, ai_note))
+    lines.extend(_render_section("Hacker News: Non-AI Hot", hot_items, hot_note))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -36,8 +42,10 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
-def _render_section(title: str, items: list[Candidate]) -> list[str]:
+def _render_section(title: str, items: list[Candidate], note: str = "") -> list[str]:
     lines = [f"## {title}", ""]
+    if note:
+        lines.extend([f"Note: {_single_line_display_text(note)}", ""])
     if not items:
         lines.extend(["No items selected.", ""])
         return lines

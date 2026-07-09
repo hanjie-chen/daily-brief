@@ -53,8 +53,25 @@ def run_generate(
 ) -> GenerateResult:
     window = daily_window()
     label = date_label or window.date_label
-    algolia_items = algolia_stories if algolia_stories is not None else fetch_algolia_stories(window)
-    hot_items = hot_stories if hot_stories is not None else fetch_hot_stories()
+    ai_note = ""
+    hot_note = ""
+    if algolia_stories is not None:
+        algolia_items = algolia_stories
+    else:
+        try:
+            algolia_items = fetch_algolia_stories(window)
+        except Exception as exc:
+            algolia_items = []
+            ai_note = f"Today's AI data source failed: Algolia request failed ({exc})."
+
+    if hot_stories is not None:
+        hot_items = hot_stories
+    else:
+        try:
+            hot_items = fetch_hot_stories()
+        except Exception as exc:
+            hot_items = []
+            hot_note = f"Today's HN hot data source failed: HN official API request failed ({exc})."
 
     algolia_candidates = [_ai_candidate(story) for story in algolia_items]
     ai_candidates = [candidate for candidate in algolia_candidates if candidate.matched_keywords]
@@ -79,7 +96,10 @@ def run_generate(
     data_path = Path(data_dir) / f"{label}-hn-candidates.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     data_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(render_markdown(label, ai_items, selected_hot_items), encoding="utf-8")
+    output_path.write_text(
+        render_markdown(label, ai_items, selected_hot_items, ai_note=ai_note, hot_note=hot_note),
+        encoding="utf-8",
+    )
     data_path.write_text(render_candidates_json(candidates), encoding="utf-8")
     return GenerateResult(brief_path=output_path, data_path=data_path)
 
