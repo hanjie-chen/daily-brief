@@ -105,19 +105,49 @@ def test_score_developer_tools_gets_topic_bonus_with_high_signal():
     assert round(scored.score, 2) == 13.14
 
 
-def test_score_weak_keywords_add_one_bonus_max_with_stronger_match():
+def test_score_weak_keywords_add_no_bonus_with_medium_match():
     candidate = Candidate(
-        story=story(1, "AI developer tools workflow", points=100, comments=20),
+        story=story(1, "AI model workflow", points=100, comments=20),
         matched_keywords=[
             match("AI", "medium", 1.5),
-            match("developer tools", "weak", 0.0),
+            match("model", "weak", 0.0),
             match("workflow", "weak", 0.0),
         ],
     )
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 8.64
+    assert round(scored.score, 2) == 7.64
+
+
+def test_score_weak_keywords_add_one_bonus_max_with_high_match():
+    candidate = Candidate(
+        story=story(1, "Claude model workflow", points=100, comments=20),
+        matched_keywords=[
+            match("Claude", "high", 4.0),
+            match("model", "weak", 0.0),
+            match("workflow", "weak", 0.0),
+        ],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 11.14
+
+
+def test_score_weak_keywords_add_one_bonus_max_with_medium_high_match():
+    candidate = Candidate(
+        story=story(1, "Gemini model workflow", points=100, comments=20),
+        matched_keywords=[
+            match("Gemini", "medium_high", 2.5),
+            match("model", "weak", 0.0),
+            match("workflow", "weak", 0.0),
+        ],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 9.64
 
 
 def test_select_ai_requires_score_and_minimum_points():
