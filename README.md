@@ -48,8 +48,10 @@ daily-brief generate --dry-run
 当前机器使用 `+08` 时区时，可以用 cron 每天 08:00 自动生成：
 
 ```cron
-0 8 * * * cd /home/plain/projects/daily-brief && mkdir -p briefs data logs && /home/plain/.venv/website/bin/python -m daily_brief generate >> logs/daily-brief.log 2>&1
+0 8 * * * cd /home/plain/projects/daily-brief && mkdir -p briefs data logs && PATH=/home/plain/.npm-global/bin:/usr/local/bin:/usr/bin:/bin /home/plain/.venv/website/bin/python -m daily_brief generate >> logs/daily-brief.log 2>&1
 ```
+
+cron 默认使用精简的 `PATH`。这里显式加入 npm global bin，确保摘要阶段能够找到 `codex` 可执行文件。
 
 `logs/` 不是内容数据目录。它只保存 cron 运行时的 stdout/stderr，方便排查网络失败、认证失败、`codex exec` 失败等问题。真正用于复盘筛选规则的原始候选数据在 `data/`。
 

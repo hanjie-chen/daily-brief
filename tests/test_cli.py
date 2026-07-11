@@ -61,7 +61,7 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
     assert summarizer.titles == ["AI coding agent with Claude", "SQLite release notes"]
 
 
-def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path):
+def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path, capsys):
     result = run_generate(
         output_dir=tmp_path / "briefs",
         data_dir=tmp_path / "data",
@@ -74,6 +74,7 @@ def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path):
     markdown = result.brief_path.read_text(encoding="utf-8")
     assert "AI coding agent with Claude。" in markdown
     assert "摘要生成失败时保留此基础信息。" in markdown
+    assert "Summary failed for AI coding agent with Claude: boom" in capsys.readouterr().err
 
 
 def test_run_generate_writes_files_when_algolia_fetch_fails(tmp_path, monkeypatch):

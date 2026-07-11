@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,7 +91,8 @@ def run_generate(
     for candidate in [*ai_items, *selected_hot_items]:
         try:
             candidate.summary = summary_client.summarize(candidate)
-        except Exception:
+        except Exception as exc:
+            print(f"Summary failed for {candidate.story.title}: {exc}", file=sys.stderr)
             candidate.summary = fallback_summary(candidate)
 
     output_path = Path(output_dir) / f"{label}.md"
