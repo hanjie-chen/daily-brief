@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,11 +17,43 @@ from .selection import dedupe_candidates, select_sections
 from .summarizer import CodexSummarizer, fallback_summary
 from .time_window import daily_window
 
+LOGGER = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class GenerateResult:
     brief_path: Path
     data_path: Path
+
+
+def _fetch_source(
+    source: str,
+    fetch: Callable[[], list[Story]],
+    failure_prefix: str,
+    clock: Callable[[], float],
+) -> tuple[list[Story], str]:
+    started = clock()
+    try:
+        stories = fetch()
+    except Exception as exc:
+        duration = clock() - started
+        LOGGER.error(
+            "source=%s status=failed duration=%.3fs error=%s message=%s",
+            source,
+            duration,
+            type(exc).__name__,
+            exc,
+        )
+        return [], f"{failure_prefix} ({exc})."
+
+    duration = clock() - started
+    LOGGER.info(
+        "source=%s status=success stories=%d duration=%.3fs",
+        source,
+        len(stories),
+        duration,
+    )
+    return stories, ""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,6 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "generate" and not args.dry_run:
@@ -51,6 +90,7 @@ def run_generate(
     algolia_stories: list[Story] | None = None,
     hot_stories: list[Story] | None = None,
     summarizer=None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> GenerateResult:
     window = daily_window()
     label = date_label or window.date_label
@@ -59,20 +99,22 @@ def run_generate(
     if algolia_stories is not None:
         algolia_items = algolia_stories
     else:
-        try:
-            algolia_items = fetch_algolia_stories(window)
-        except Exception as exc:
-            algolia_items = []
-            ai_note = f"Today's AI data source failed: Algolia request failed ({exc})."
+        algolia_items, ai_note = _fetch_source(
+            "algolia",
+            lambda: fetch_algolia_stories(window),
+            "Today's AI data source failed: Algolia request failed",
+            clock,
+        )
 
     if hot_stories is not None:
         hot_items = hot_stories
     else:
-        try:
-            hot_items = fetch_hot_stories()
-        except Exception as exc:
-            hot_items = []
-            hot_note = f"Today's HN hot data source failed: HN official API request failed ({exc})."
+        hot_items, hot_note = _fetch_source(
+            "hn_official",
+            fetch_hot_stories,
+            "Today's HN hot data source failed: HN official API request failed",
+            clock,
+        )
 
     algolia_candidates = [_ai_candidate(story) for story in algolia_items]
     official_hot_candidates = [_hot_candidate(story) for story in hot_items]
@@ -104,6 +146,13 @@ def run_generate(
         encoding="utf-8",
     )
     data_path.write_text(render_candidates_json(candidates), encoding="utf-8")
+    LOGGER.info(
+        "status=completed ai_items=%d hot_items=%d brief=%s data=%s",
+        len(ai_items),
+        len(selected_hot_items),
+        output_path,
+        data_path,
+    )
     return GenerateResult(brief_path=output_path, data_path=data_path)
 
 

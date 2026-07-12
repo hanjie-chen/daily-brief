@@ -1,4 +1,5 @@
 import json
+import logging
 
 from daily_brief import cli
 from daily_brief.cli import build_parser, main, run_generate
@@ -131,6 +132,51 @@ def test_run_generate_writes_files_when_hot_fetch_fails(tmp_path, monkeypatch):
     assert "HN hot data source failed" in markdown
     assert "Non-AI Hot" in markdown
     assert "AI coding agent with Claude" in markdown
+
+
+def test_run_generate_logs_source_success_and_completion(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(
+        cli,
+        "fetch_algolia_stories",
+        lambda window: [story("1", "AI coding agent with Claude", points=40, comments=8)],
+    )
+    monkeypatch.setattr(cli, "fetch_hot_stories", lambda: [])
+    clock = iter([10.0, 12.5, 20.0, 23.0]).__next__
+
+    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+        run_generate(
+            output_dir=tmp_path / "briefs",
+            data_dir=tmp_path / "data",
+            date_label="2026-07-08",
+            summarizer=FakeSummarizer(),
+            clock=clock,
+        )
+
+    assert "source=algolia status=success stories=1 duration=2.500s" in caplog.text
+    assert "source=hn_official status=success stories=0 duration=3.000s" in caplog.text
+    assert "status=completed ai_items=1 hot_items=0" in caplog.text
+
+
+def test_run_generate_logs_terminal_source_failure(tmp_path, monkeypatch, caplog):
+    def raise_algolia_error(window):
+        raise RuntimeError("algolia unavailable")
+
+    monkeypatch.setattr(cli, "fetch_algolia_stories", raise_algolia_error)
+    monkeypatch.setattr(cli, "fetch_hot_stories", lambda: [])
+    clock = iter([10.0, 100.0, 200.0, 201.0]).__next__
+
+    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+        result = run_generate(
+            output_dir=tmp_path / "briefs",
+            data_dir=tmp_path / "data",
+            date_label="2026-07-08",
+            summarizer=FakeSummarizer(),
+            clock=clock,
+        )
+
+    assert "source=algolia status=failed duration=90.000s error=RuntimeError" in caplog.text
+    assert "source=hn_official status=success stories=0 duration=1.000s" in caplog.text
+    assert "AI data source failed" in result.brief_path.read_text(encoding="utf-8")
 
 
 def test_run_generate_keeps_non_ai_algolia_story_out_of_ai_section(tmp_path):
