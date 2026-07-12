@@ -53,6 +53,12 @@ daily-brief generate --dry-run
 
 cron 默认使用精简的 `PATH`。这里显式加入 npm global bin，确保摘要阶段能够找到 `codex` 可执行文件。
 
+### 网络失败与重试
+
+每个 Hacker News HTTP 请求最多尝试 3 次。第一次失败后等待 10 秒，第二次失败后等待 20 秒；第三次仍失败时，该数据源降级为空，并在简报和 `logs/daily-brief.log` 中记录原因。一个数据源失败不会阻止另一个数据源继续生成；两个数据源都失败时仍会生成带失败说明的空简报。
+
+日志会记录每次重试，以及 Algolia、HN official API 的总耗时、story 数量和最终状态。程序不会自动修改 Mihomo 节点或绕过本机代理。
+
 `logs/` 不是内容数据目录。它只保存 cron 运行时的 stdout/stderr，方便排查网络失败、认证失败、`codex exec` 失败等问题。真正用于复盘筛选规则的原始候选数据在 `data/`。
 
 ## 生成文件
