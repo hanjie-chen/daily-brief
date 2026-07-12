@@ -1,8 +1,93 @@
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from daily_brief.hn_client import fetch_algolia_stories, fetch_hot_stories, parse_algolia_hit, parse_hn_item
+import pytest
+
+from daily_brief.hn_client import (
+    RequestFailedError,
+    _get_json,
+    fetch_algolia_stories,
+    fetch_hot_stories,
+    parse_algolia_hit,
+    parse_hn_item,
+)
 from daily_brief.time_window import TimeWindow
+
+
+class FakeResponse:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return self.payload
+
+
+def test_get_json_succeeds_without_sleeping():
+    sleeps = []
+
+    result = _get_json(
+        "https://hn.algolia.com/test",
+        opener=lambda request, timeout: FakeResponse(b'{"ok": true}'),
+        sleep=sleeps.append,
+    )
+
+    assert result == {"ok": True}
+    assert sleeps == []
+
+
+def test_get_json_retries_with_configured_backoff(caplog):
+    outcomes = [TimeoutError("first"), TimeoutError("second"), FakeResponse(b'{"ok": true}')]
+    sleeps = []
+
+    def opener(request, timeout):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    with caplog.at_level(logging.WARNING, logger="daily_brief.hn_client"):
+        result = _get_json(
+            "https://hn.algolia.com/test",
+            opener=opener,
+            sleep=sleeps.append,
+        )
+
+    assert result == {"ok": True}
+    assert sleeps == [10, 20]
+    assert "source=algolia attempt=1/3" in caplog.text
+    assert "retry_in=10s" in caplog.text
+    assert "source=algolia attempt=2/3" in caplog.text
+    assert "retry_in=20s" in caplog.text
+
+
+def test_get_json_raises_after_exactly_three_attempts(caplog):
+    attempts = []
+    sleeps = []
+
+    def opener(request, timeout):
+        attempts.append(timeout)
+        raise TimeoutError(f"failure {len(attempts)}")
+
+    with caplog.at_level(logging.ERROR, logger="daily_brief.hn_client"):
+        with pytest.raises(RequestFailedError, match="algolia request failed after 3 attempts") as raised:
+            _get_json(
+                "https://hn.algolia.com/test",
+                opener=opener,
+                sleep=sleeps.append,
+            )
+
+    assert attempts == [20, 20, 20]
+    assert sleeps == [10, 20]
+    assert isinstance(raised.value.__cause__, TimeoutError)
+    assert str(raised.value.__cause__) == "failure 3"
+    assert "source=algolia attempt=3/3 status=failed" in caplog.text
 
 
 def test_parse_algolia_hit_to_story():

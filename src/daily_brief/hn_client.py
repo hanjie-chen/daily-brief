@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from .models import Story
@@ -13,6 +16,15 @@ HN_TOPSTORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HN_BESTSTORIES_URL = "https://hacker-news.firebaseio.com/v0/beststories.json"
 HN_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
 HN_DISCUSSION_URL = "https://news.ycombinator.com/item?id={item_id}"
+
+LOGGER = logging.getLogger(__name__)
+REQUEST_TIMEOUT_SECONDS = 20
+RETRY_DELAYS_SECONDS = (10, 20)
+MAX_ATTEMPTS = 1 + len(RETRY_DELAYS_SECONDS)
+
+
+class RequestFailedError(RuntimeError):
+    pass
 
 
 def fetch_algolia_stories(window: TimeWindow, page_size: int = 100) -> list[Story]:
@@ -92,7 +104,44 @@ def parse_hn_item(item: dict) -> Story:
     )
 
 
-def _get_json(url: str):
-    request = Request(url, headers={"User-Agent": "daily-brief/0.1"})
-    with urlopen(request, timeout=20) as response:
-        return json.loads(response.read().decode("utf-8"))
+def _source_name(url: str) -> str:
+    return "algolia" if urlparse(url).hostname == "hn.algolia.com" else "hn_official"
+
+
+def _get_json(
+    url: str,
+    *,
+    opener=urlopen,
+    sleep: Callable[[float], None] = time.sleep,
+):
+    source = _source_name(url)
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            request = Request(url, headers={"User-Agent": "daily-brief/0.1"})
+            with opener(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            if attempt == MAX_ATTEMPTS:
+                LOGGER.error(
+                    "source=%s attempt=%d/%d status=failed error=%s message=%s",
+                    source,
+                    attempt,
+                    MAX_ATTEMPTS,
+                    type(exc).__name__,
+                    exc,
+                )
+                raise RequestFailedError(
+                    f"{source} request failed after {MAX_ATTEMPTS} attempts: {exc}"
+                ) from exc
+
+            delay = RETRY_DELAYS_SECONDS[attempt - 1]
+            LOGGER.warning(
+                "source=%s attempt=%d/%d error=%s message=%s retry_in=%ss",
+                source,
+                attempt,
+                MAX_ATTEMPTS,
+                type(exc).__name__,
+                exc,
+                delay,
+            )
+            sleep(delay)
