@@ -1,84 +1,48 @@
 # Daily Brief
 
-个人信息推送聚合项目。
+我自己的每日信息简报生成器。
 
-## 当前目标
+目前的数据源只有 Hacker News，优先筛选 AI 和开发工具相关话题，同时保留少量全站热门内容，生成简短的中文 Markdown 简报。
 
-先从少量信息源开始，抓取并整理内容，输出为简单可读的 Markdown 文件。展示、推送和 Web 面板之后再讨论。
+## Motivation
 
-## 信息源
+以前通过科技媒体了解 AI 领域的最新动态，但很多资讯渠道内容比较杂，夹杂着广告、推广。
 
-- Hacker News
+我希望每天得到一份简报：以我关心的 AI 内容为主，同时保留少量热门话题，既减少信息噪声，也不会错过最近发生的重要事情。
 
-## 本地运行
+Daily Brief 是这个项目当前的起点。长期来看，我希望这个项目成长为一套属于自己的信息聚合与情报整理系统。
 
-建议先创建虚拟环境并安装本项目：
+## Daily Output
+
+Daily Brief 目前生成一份 Markdown 简报，内容分为两部分：
+
+- 最多 5 条 AI 和开发工具相关内容；
+- 最多 2 条 Hacker News 全站热门内容，帮助我关注兴趣范围之外的重要话题。
+
+每条内容包含中文摘要、推荐理由、原文链接、Hacker News 讨论链接以及 points 和 comments。
+
+## How It Works
+
+1. 从 Hacker News 收集过去一天的新内容和当前热门内容；
+2. 根据关键词、points 和 comments 对内容进行筛选和排序；
+3. 对重复内容去重，选出 AI 相关内容和少量全站热门内容；
+4. 使用本地 Codex 生成中文摘要，并输出为 Markdown 简报。
+
+## Run
+
+需要 Python 3.12 或更高版本，并确保本地已经可以使用 `codex` 命令。
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
+
+daily-brief generate
 ```
 
-生成 Hacker News Daily Brief：
+生成结果保存在：
 
-```bash
-daily-brief generate --output-dir briefs --data-dir data
-```
+- `briefs/YYYY-MM-DD.md`：每天阅读的 Markdown 简报；
+- `data/YYYY-MM-DD-hn-candidates.json`：用于复盘筛选结果的候选数据。
 
-也可以直接用模块入口运行：
-
-```bash
-python -m daily_brief generate --output-dir briefs --data-dir data
-```
-
-默认输出：
-
-- `briefs/YYYY-MM-DD.md`：每日可读简报。
-- `data/YYYY-MM-DD-hn-candidates.json`：当天候选 story 快照，用于之后复盘关键词、分数和拒绝原因。
-
-只检查 CLI 参数、不写入文件：
-
-```bash
-daily-brief generate --dry-run
-```
-
-## 定时运行
-
-当前机器使用 `+08` 时区时，可以用 cron 每天 08:00 自动生成：
-
-```cron
-0 8 * * * cd /home/plain/projects/daily-brief && mkdir -p briefs data logs && PATH=/home/plain/.npm-global/bin:/usr/local/bin:/usr/bin:/bin /home/plain/.venv/website/bin/python -m daily_brief generate >> logs/daily-brief.log 2>&1
-```
-
-cron 默认使用精简的 `PATH`。这里显式加入 npm global bin，确保摘要阶段能够找到 `codex` 可执行文件。
-
-### 网络失败与重试
-
-每个 Hacker News HTTP 请求最多尝试 3 次。第一次失败后等待 10 秒，第二次失败后等待 20 秒；第三次仍失败时，该数据源降级为空，并在简报和 `logs/daily-brief.log` 中记录原因。一个数据源失败不会阻止另一个数据源继续生成；两个数据源都失败时仍会生成带失败说明的空简报。
-
-日志会记录每次重试，以及 Algolia、HN official API 的总耗时、story 数量和最终状态。程序不会自动修改 Mihomo 节点或绕过本机代理。
-
-`logs/` 不是内容数据目录。它只保存 cron 运行时的 stdout/stderr，方便排查网络失败、认证失败、`codex exec` 失败等问题。真正用于复盘筛选规则的原始候选数据在 `data/`。
-
-## 生成文件
-
-`briefs/`、`data/`、`logs/` 默认不提交到 Git：
-
-- `briefs/` 每天都会变，适合作为本地阅读产物。
-- `data/` 可能较大，而且是本地调参用的原始快照。
-- `logs/` 是机器运行日志，不应该进入版本库。
-
-## 测试
-
-运行 Task 8 的 CLI 测试：
-
-```bash
-pytest tests/test_cli.py -q
-```
-
-运行完整测试：
-
-```bash
-pytest -q
-```
+当前通过 cron 在每天 08:00（Asia/Singapore）自动生成。
