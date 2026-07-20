@@ -357,6 +357,26 @@ def test_classifier_receives_only_thirty_hottest_unmatched_candidates(tmp_path):
     assert classifier.seen_ids == [str(item_id) for item_id in range(35, 5, -1)]
 
 
+def test_classifier_orders_unmatched_candidates_by_combined_heat(tmp_path):
+    classifier = FakeClassifier()
+
+    run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[
+            story("points", "Higher points", points=100, comments=0),
+            story("discussion", "Hot discussion", points=90, comments=1000),
+        ],
+        hot_stories=[],
+        classifier=classifier,
+        article_fetcher=lambda url: "",
+        summarizer=FakeSummarizer(),
+    )
+
+    assert classifier.seen_ids == ["discussion", "points"]
+
+
 def test_recently_selected_story_is_excluded_and_recorded_in_snapshot(tmp_path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()

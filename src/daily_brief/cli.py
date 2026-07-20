@@ -143,7 +143,7 @@ def run_generate(
     ]
     classification_batch = sorted(
         unmatched_candidates,
-        key=lambda candidate: (candidate.story.points, candidate.story.comments),
+        key=lambda candidate: (candidate.score, candidate.story.points, candidate.story.comments),
         reverse=True,
     )[:TOPIC_CLASSIFIER_MAX_CANDIDATES]
     topic_classifier = classifier or CodexTopicClassifier()
