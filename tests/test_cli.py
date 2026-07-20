@@ -1,9 +1,17 @@
 import json
 import logging
 
+import pytest
+
 from daily_brief import cli
 from daily_brief.cli import build_parser, main, run_generate
 from daily_brief.models import Story
+
+
+@pytest.fixture(autouse=True)
+def prevent_live_classifier_and_article_calls(monkeypatch):
+    monkeypatch.setattr(cli, "CodexTopicClassifier", lambda: FakeClassifier())
+    monkeypatch.setattr(cli, "fetch_article_text", lambda url: "")
 
 
 def test_parser_defaults_to_generate_command():
@@ -48,7 +56,7 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
     assert "Summary for AI coding agent with Claude" in markdown
     assert "SQLite release notes" in markdown
     assert "Summary for SQLite release notes" in markdown
-    assert "OpenAI launches a model" not in markdown
+    assert "OpenAI launches a model" in markdown
 
     candidate_data = json.loads(result.data_path.read_text(encoding="utf-8"))
     by_id = {item["hn_item_id"]: item for item in candidate_data}
@@ -58,8 +66,13 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
     assert by_id["2"]["rejection_reason"] == "below_ai_minimum"
     assert by_id["3"]["selected"] is True
     assert by_id["3"]["section"] == "non_ai_hot"
-    assert "4" not in by_id
-    assert summarizer.titles == ["AI coding agent with Claude", "SQLite release notes"]
+    assert by_id["4"]["selected"] is True
+    assert by_id["4"]["section"] == "ai"
+    assert summarizer.titles == [
+        "OpenAI launches a model",
+        "AI coding agent with Claude",
+        "SQLite release notes",
+    ]
 
 
 def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path, capsys):
@@ -73,8 +86,7 @@ def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path, cap
     )
 
     markdown = result.brief_path.read_text(encoding="utf-8")
-    assert "AI coding agent with Claude。" in markdown
-    assert "摘要生成失败时保留此基础信息。" in markdown
+    assert "未能生成可靠摘要，请查看原文或讨论。" in markdown
     assert "Summary failed for AI coding agent with Claude: boom" in capsys.readouterr().err
 
 
@@ -279,6 +291,163 @@ def test_main_dry_run_does_not_create_output_directories_or_files(tmp_path, monk
     assert not data_dir.exists()
 
 
+def test_classifier_promotes_high_heat_unmatched_story_to_ai(tmp_path):
+    classifier = FakeClassifier({"1"})
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Unseen Neural Product", points=750, comments=500)],
+        hot_stories=[],
+        classifier=classifier,
+        article_fetcher=lambda url: "",
+        summarizer=FakeSummarizer(),
+    )
+
+    markdown = result.brief_path.read_text(encoding="utf-8")
+    assert "Unseen Neural Product" in markdown.split("## Hacker News: AI", 1)[1].split(
+        "## Hacker News: Non-AI Hot", 1
+    )[0]
+    assert "Why: topic classifier: AI" in markdown
+    assert classifier.seen_ids == ["1"]
+
+
+def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
+    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+        result = run_generate(
+            output_dir=tmp_path / "briefs",
+            data_dir=tmp_path / "data",
+            date_label="2026-07-20",
+            algolia_stories=[
+                story("1", "Claude release", points=40, comments=8),
+                story("2", "Unseen Neural Product", points=750, comments=500),
+            ],
+            hot_stories=[],
+            classifier=RaisingClassifier(),
+            article_fetcher=lambda url: "",
+            summarizer=FakeSummarizer(),
+        )
+
+    markdown = result.brief_path.read_text(encoding="utf-8")
+    ai_section = markdown.split("## Hacker News: AI", 1)[1].split("## Hacker News: Non-AI Hot", 1)[0]
+    assert "Claude release" in ai_section
+    assert "Unseen Neural Product" not in ai_section
+    assert "component=topic_classifier status=failed" in caplog.text
+
+
+def test_classifier_receives_only_thirty_hottest_unmatched_candidates(tmp_path):
+    classifier = FakeClassifier()
+    candidates = [
+        story(str(item_id), f"Unmatched story {item_id}", points=item_id, comments=0)
+        for item_id in range(1, 36)
+    ]
+
+    run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=candidates,
+        hot_stories=[],
+        classifier=classifier,
+        article_fetcher=lambda url: "",
+        summarizer=FakeSummarizer(),
+    )
+
+    assert classifier.seen_ids == [str(item_id) for item_id in range(35, 5, -1)]
+
+
+def test_recently_selected_story_is_excluded_and_recorded_in_snapshot(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "recommendation-history.json").write_text(
+        json.dumps({"2026-07-19": ["1"]}),
+        encoding="utf-8",
+    )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=data_dir,
+        date_label="2026-07-20",
+        algolia_stories=[
+            story("1", "Claude yesterday", points=500, comments=80),
+            story("2", "OpenAI today", points=100, comments=20),
+        ],
+        hot_stories=[],
+        summarizer=FakeSummarizer(),
+    )
+
+    records = {item["hn_item_id"]: item for item in json.loads(result.data_path.read_text(encoding="utf-8"))}
+    assert records["1"]["selected"] is False
+    assert records["1"]["rejection_reason"] == "recently_selected"
+    assert records["2"]["selected"] is True
+    assert "Claude yesterday" not in result.brief_path.read_text(encoding="utf-8")
+
+
+def test_same_date_history_does_not_change_rerun_selection(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "recommendation-history.json").write_text(
+        json.dumps({"2026-07-20": ["1"]}),
+        encoding="utf-8",
+    )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=data_dir,
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        summarizer=FakeSummarizer(),
+    )
+
+    assert "Claude release" in result.brief_path.read_text(encoding="utf-8")
+
+
+def test_selected_external_article_text_reaches_summarizer(tmp_path):
+    summarizer = CapturingSummarizer()
+    fetched_urls = []
+
+    def fetch_article(url):
+        fetched_urls.append(url)
+        return "Grounded article facts."
+
+    run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[
+            story("1", "Claude release", points=40, comments=8, url="https://example.com/selected"),
+            story("2", "OpenAI tiny", points=1, comments=0, url="https://example.com/rejected"),
+        ],
+        hot_stories=[],
+        article_fetcher=fetch_article,
+        summarizer=summarizer,
+    )
+
+    assert fetched_urls == ["https://example.com/selected"]
+    assert summarizer.fetched_texts == ["Grounded article facts."]
+
+
+def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
+    def raise_fetch_error(url):
+        raise RuntimeError("article unavailable")
+
+    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+        result = run_generate(
+            output_dir=tmp_path / "briefs",
+            data_dir=tmp_path / "data",
+            date_label="2026-07-20",
+            algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+            hot_stories=[],
+            article_fetcher=raise_fetch_error,
+            summarizer=FakeSummarizer(),
+        )
+
+    assert result.brief_path.exists()
+    assert "component=article_fetch item_id=1 status=failed" in caplog.text
+
+
 class FakeSummarizer:
     def __init__(self):
         self.titles = []
@@ -291,6 +460,30 @@ class FakeSummarizer:
 class RaisingSummarizer:
     def summarize(self, candidate):
         raise RuntimeError("boom")
+
+
+class CapturingSummarizer:
+    def __init__(self):
+        self.fetched_texts = []
+
+    def summarize(self, candidate):
+        self.fetched_texts.append(candidate.story.fetched_text)
+        return "Captured summary"
+
+
+class FakeClassifier:
+    def __init__(self, selected_ids=None):
+        self.selected_ids = set(selected_ids or set())
+        self.seen_ids = []
+
+    def classify(self, candidates):
+        self.seen_ids = [candidate.story.hn_item_id for candidate in candidates]
+        return self.selected_ids
+
+
+class RaisingClassifier:
+    def classify(self, candidates):
+        raise RuntimeError("classifier unavailable")
 
 
 def story(

@@ -5,9 +5,12 @@ import logging
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .article_fetcher import fetch_article_text
+from .config import TOPIC_CLASSIFIER_MAX_CANDIDATES
+from .history import load_history, recent_ids, save_history
 from .hn_client import fetch_algolia_stories, fetch_hot_stories
 from .keywords import match_keywords
 from .models import Candidate, Story
@@ -16,6 +19,7 @@ from .scoring import score_candidate
 from .selection import dedupe_candidates, select_sections
 from .summarizer import CodexSummarizer, fallback_summary
 from .time_window import daily_window
+from .topic_classifier import CodexTopicClassifier
 
 LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +94,8 @@ def run_generate(
     algolia_stories: list[Story] | None = None,
     hot_stories: list[Story] | None = None,
     summarizer=None,
+    classifier=None,
+    article_fetcher=None,
     clock: Callable[[], float] = time.monotonic,
 ) -> GenerateResult:
     window = daily_window()
@@ -116,21 +122,72 @@ def run_generate(
             clock,
         )
 
-    algolia_candidates = [_ai_candidate(story) for story in algolia_items]
-    official_hot_candidates = [_hot_candidate(story) for story in hot_items]
-    ai_candidates = [candidate for candidate in algolia_candidates if _has_non_weak_keyword_match(candidate)]
-    hot_candidates = [
-        *[candidate for candidate in algolia_candidates if not _has_non_weak_keyword_match(candidate)],
-        *[candidate for candidate in official_hot_candidates if not _has_non_weak_keyword_match(candidate)],
+    candidates = dedupe_candidates([*map(_candidate, algolia_items), *map(_candidate, hot_items)])
+    history_path = Path(data_dir) / "recommendation-history.json"
+    recommendation_history = load_history(history_path)
+    recent_item_ids = recent_ids(recommendation_history, label)
+    eligible_candidates: list[Candidate] = []
+    for candidate in candidates:
+        if candidate.story.hn_item_id and candidate.story.hn_item_id in recent_item_ids:
+            candidate.selected = False
+            candidate.section = ""
+            candidate.rejection_reason = "recently_selected"
+        else:
+            eligible_candidates.append(candidate)
+
+    known_ai_candidates = [
+        candidate for candidate in eligible_candidates if _has_non_weak_keyword_match(candidate)
     ]
-    candidates = dedupe_candidates([*ai_candidates, *hot_candidates])
-    retained_candidate_ids = {id(candidate) for candidate in candidates}
-    ai_pool = [candidate for candidate in ai_candidates if id(candidate) in retained_candidate_ids]
-    hot_pool = [candidate for candidate in hot_candidates if id(candidate) in retained_candidate_ids]
+    unmatched_candidates = [
+        candidate for candidate in eligible_candidates if not _has_non_weak_keyword_match(candidate)
+    ]
+    classification_batch = sorted(
+        unmatched_candidates,
+        key=lambda candidate: (candidate.story.points, candidate.story.comments),
+        reverse=True,
+    )[:TOPIC_CLASSIFIER_MAX_CANDIDATES]
+    topic_classifier = classifier or CodexTopicClassifier()
+    try:
+        classified_ai_ids = topic_classifier.classify(classification_batch)
+    except Exception as exc:
+        LOGGER.error(
+            "component=topic_classifier status=failed error=%s message=%s",
+            type(exc).__name__,
+            exc,
+        )
+        classified_ai_ids = set()
+
+    classified_ai_candidates = [
+        candidate for candidate in unmatched_candidates if candidate.story.hn_item_id in classified_ai_ids
+    ]
+    for candidate in classified_ai_candidates:
+        candidate.why = "topic classifier: AI"
+    classified_ai_identity = {id(candidate) for candidate in classified_ai_candidates}
+    ai_pool = [*known_ai_candidates, *classified_ai_candidates]
+    hot_pool = [
+        candidate for candidate in unmatched_candidates if id(candidate) not in classified_ai_identity
+    ]
 
     ai_items, selected_hot_items = select_sections(ai_pool, hot_pool)
+    article_client = article_fetcher or fetch_article_text
     summary_client = summarizer or CodexSummarizer()
     for candidate in [*ai_items, *selected_hot_items]:
+        if (
+            not candidate.story.story_text.strip()
+            and candidate.story.source_url
+            and candidate.story.source_url != candidate.story.hn_discussion_url
+        ):
+            try:
+                fetched_text = article_client(candidate.story.source_url).strip()
+                if fetched_text:
+                    candidate.story = replace(candidate.story, fetched_text=fetched_text)
+            except Exception as exc:
+                LOGGER.error(
+                    "component=article_fetch item_id=%s status=failed error=%s message=%s",
+                    candidate.story.hn_item_id,
+                    type(exc).__name__,
+                    exc,
+                )
         try:
             candidate.summary = summary_client.summarize(candidate)
         except Exception as exc:
@@ -146,6 +203,19 @@ def run_generate(
         encoding="utf-8",
     )
     data_path.write_text(render_candidates_json(candidates), encoding="utf-8")
+    try:
+        save_history(
+            history_path,
+            recommendation_history,
+            label,
+            [candidate.story.hn_item_id for candidate in [*ai_items, *selected_hot_items]],
+        )
+    except Exception as exc:
+        LOGGER.error(
+            "component=recommendation_history status=failed error=%s message=%s",
+            type(exc).__name__,
+            exc,
+        )
     LOGGER.info(
         "status=completed ai_items=%d hot_items=%d brief=%s data=%s",
         len(ai_items),
@@ -156,12 +226,8 @@ def run_generate(
     return GenerateResult(brief_path=output_path, data_path=data_path)
 
 
-def _ai_candidate(story: Story) -> Candidate:
+def _candidate(story: Story) -> Candidate:
     return score_candidate(Candidate(story=story, matched_keywords=_keyword_matches(story)))
-
-
-def _hot_candidate(story: Story) -> Candidate:
-    return Candidate(story=story, matched_keywords=_keyword_matches(story))
 
 
 def _has_non_weak_keyword_match(candidate: Candidate) -> bool:
