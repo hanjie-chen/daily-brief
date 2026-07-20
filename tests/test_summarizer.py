@@ -31,13 +31,10 @@ def candidate(story_text: str = "A demo of an AI coding agent.", fetched_text: s
     )
 
 
-def test_fallback_summary_uses_title_and_stats():
+def test_fallback_summary_reports_that_reliable_summary_is_unavailable():
     text = fallback_summary(candidate())
 
-    assert "AI coding agent" in text
-    assert "30 points" in text
-    assert "5 comments" in text
-    assert "摘要生成失败" in text
+    assert text == "未能生成可靠摘要，请查看原文或讨论。"
 
 
 def test_codex_summarizer_builds_prompt_and_returns_stdout(monkeypatch):
@@ -77,12 +74,13 @@ def test_codex_summarizer_builds_prompt_and_returns_stdout(monkeypatch):
     assert "AI coding agent" in calls["input"]
     assert "https://example.com" in calls["input"]
     assert "https://news.ycombinator.com/item?id=1" in calls["input"]
-    assert "30" in calls["input"]
-    assert "5" in calls["input"]
-    assert "AI coding" in calls["input"]
     assert "A demo of an AI coding agent." in calls["input"]
     assert "中文" in calls["input"]
     assert "untrusted" in calls["input"]
+    assert "不要推断" in calls["input"]
+    assert "Points:" not in calls["input"]
+    assert "Comments:" not in calls["input"]
+    assert "Matched keywords:" not in calls["input"]
 
 
 def test_codex_summarizer_prompt_uses_fetched_text_when_story_text_is_empty(monkeypatch):
