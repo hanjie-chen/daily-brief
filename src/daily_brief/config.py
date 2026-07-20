@@ -18,10 +18,20 @@ HIGH_WEIGHT_KEYWORDS = [
     "MCP",
     "RAG",
     "AI developer tools",
+    "GPT",
+    "Codex",
+    "Qwen",
+    "Kimi",
+    "Grok",
+    "DeepSeek",
+    "Fable",
+    "Moonshot",
+    "Gemini",
+    "open weights",
+    "open-weights",
 ]
 
 MEDIUM_HIGH_WEIGHT_KEYWORDS = [
-    "Gemini",
     "Google AI",
     "Meta AI",
     "xAI",
@@ -68,6 +78,16 @@ LOW_WEIGHT_KEYWORDS = [
 ]
 
 ABBREVIATIONS = {"AI", "LLM", "RAG", "MCP", "GPU"}
+CASE_SENSITIVE_KEYWORDS = {
+    "GPT",
+    "Codex",
+    "Qwen",
+    "Kimi",
+    "Grok",
+    "DeepSeek",
+    "Fable",
+    "Moonshot",
+}
 
 AI_MAX_ITEMS = 5
 AI_MIN_SCORE = 6.0
@@ -79,8 +99,8 @@ HIGH_WEIGHT_BONUS_CAP = 6.0
 MEDIUM_HIGH_WEIGHT_BONUS_CAP = 5.0
 MEDIUM_WEIGHT_BONUS_CAP = 3.0
 LOW_WEIGHT_BONUS_CAP = 1.0
-KEYWORD_BONUS_CAP = 10.0
-TOPIC_BONUS_CAP = 4.0
+KEYWORD_BONUS_CAP = 5.0
+TOPIC_BONUS_CAP = 1.0
 TOPIC_KEYWORDS = {
     "AI coding",
     "coding agent",

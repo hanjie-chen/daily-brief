@@ -33,11 +33,11 @@ def test_score_uses_log_heat_and_bonus_caps():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 16.14
+    assert round(scored.score, 2) == 12.14
     assert scored.why == "keywords: AI coding, Claude, AI agent"
 
 
-def test_score_topic_bonus_adds_two_per_topic_keyword_up_to_cap():
+def test_score_topic_bonus_adds_one_for_topic_keywords_up_to_cap():
     candidate = Candidate(
         story=story(1, "AI coding with AI workflow", points=100, comments=20),
         matched_keywords=[
@@ -48,7 +48,7 @@ def test_score_topic_bonus_adds_two_per_topic_keyword_up_to_cap():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 16.64
+    assert round(scored.score, 2) == 12.14
 
 
 def test_score_topic_bonus_ignores_non_topic_high_match():
@@ -77,7 +77,7 @@ def test_score_caps_combined_keyword_bonus_and_topic_bonus_independently():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 20.14
+    assert round(scored.score, 2) == 12.14
 
 
 def test_score_developer_tools_alone_gets_no_topic_or_keyword_bonus():
@@ -102,7 +102,7 @@ def test_score_developer_tools_gets_topic_bonus_with_high_signal():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 12.64
+    assert round(scored.score, 2) == 11.14
 
 
 def test_score_weak_keywords_add_no_bonus_with_medium_match():
@@ -120,7 +120,7 @@ def test_score_weak_keywords_add_no_bonus_with_medium_match():
     assert round(scored.score, 2) == 7.64
 
 
-def test_score_weak_keywords_add_half_bonus_per_match_with_high_match():
+def test_score_weak_keywords_add_no_bonus_with_high_match():
     candidate = Candidate(
         story=story(1, "Claude model", points=100, comments=20),
         matched_keywords=[
@@ -131,10 +131,10 @@ def test_score_weak_keywords_add_half_bonus_per_match_with_high_match():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 10.64
+    assert round(scored.score, 2) == 10.14
 
 
-def test_score_weak_keywords_add_one_bonus_max_with_high_match():
+def test_score_multiple_weak_keywords_add_no_bonus_with_high_match():
     candidate = Candidate(
         story=story(1, "Claude model workflow", points=100, comments=20),
         matched_keywords=[
@@ -146,10 +146,10 @@ def test_score_weak_keywords_add_one_bonus_max_with_high_match():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 11.14
+    assert round(scored.score, 2) == 10.14
 
 
-def test_score_weak_keywords_add_one_bonus_max_with_medium_high_match():
+def test_score_weak_keywords_add_no_bonus_with_medium_high_match():
     candidate = Candidate(
         story=story(1, "Gemini model workflow", points=100, comments=20),
         matched_keywords=[
@@ -161,7 +161,22 @@ def test_score_weak_keywords_add_one_bonus_max_with_medium_high_match():
 
     scored = score_candidate(candidate)
 
-    assert round(scored.score, 2) == 9.64
+    assert round(scored.score, 2) == 8.64
+
+
+def test_score_and_why_count_duplicate_keyword_occurrences_once():
+    candidate = Candidate(
+        story=story(1, "Claude repeated", points=100, comments=20),
+        matched_keywords=[
+            match("Claude", "high", 4.0),
+            match("Claude", "high", 4.0),
+        ],
+    )
+
+    scored = score_candidate(candidate)
+
+    assert round(scored.score, 2) == 10.14
+    assert scored.why == "keywords: Claude"
 
 
 def test_select_ai_requires_score_and_minimum_points():

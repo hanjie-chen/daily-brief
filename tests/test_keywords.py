@@ -34,3 +34,32 @@ def test_url_tokens_are_weak_only():
     matches = match_keywords(title="A normal release note", story_text="", url="https://example.com/developer/tools")
 
     assert [(match.keyword, match.weight) for match in matches] == [("developer tools", "weak")]
+
+
+def test_current_model_and_product_names_are_non_weak_ai_signals():
+    titles = [
+        "GPT-5.6 release",
+        "OpenAI Codex Micro",
+        "Qwen 3.8",
+        "The Kimi K3 Moment",
+        "Grok Build is open source",
+        "DeepSeek releases a model",
+        "Claude Fable 5",
+        "Moonshot launches a service",
+        "An open-weights model",
+    ]
+
+    for title in titles:
+        matches = match_keywords(title=title, story_text="", url="")
+
+        assert any(match.weight != "weak" for match in matches), title
+
+
+def test_ambiguous_product_names_are_case_sensitive():
+    matches = match_keywords(
+        title="A moonshot fable helps readers grok a difficult idea",
+        story_text="",
+        url="",
+    )
+
+    assert not {"Moonshot", "Fable", "Grok"} & set(names(matches))

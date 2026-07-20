@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from .config import (
     ABBREVIATIONS,
+    CASE_SENSITIVE_KEYWORDS,
     HIGH_WEIGHT_KEYWORDS,
     LOW_WEIGHT_KEYWORDS,
     MEDIUM_HIGH_WEIGHT_KEYWORDS,
@@ -61,7 +62,7 @@ def _match_primary_text(text: str) -> list[KeywordMatch]:
 
 
 def _iter_keyword_matches(text: str, keyword: str):
-    if keyword in ABBREVIATIONS:
+    if keyword in ABBREVIATIONS or keyword in CASE_SENSITIVE_KEYWORDS:
         pattern = rf"(?<![A-Za-z0-9]){re.escape(keyword)}(?![A-Za-z0-9])"
         return re.finditer(pattern, text)
 

@@ -31,19 +31,17 @@ def score_candidate(candidate: Candidate) -> Candidate:
 
 
 def _keyword_bonus(candidate: Candidate) -> float:
+    matches = list(_unique_matches(candidate))
     total = 0.0
     for layer, cap in LAYER_CAPS.items():
-        layer_total = sum(match.bonus for match in candidate.matched_keywords if match.weight == layer)
+        layer_total = sum(match.bonus for match in matches if match.weight == layer)
         total += min(layer_total, cap)
-    if _has_high_or_medium_high_match(candidate):
-        weak_count = sum(1 for match in candidate.matched_keywords if match.weight == "weak")
-        total += min(weak_count * 0.5, 1.0)
     return total
 
 
 def _topic_bonus(candidate: Candidate) -> float:
     return min(
-        sum(2.0 for match in candidate.matched_keywords if _gets_topic_bonus(match.keyword, candidate)),
+        sum(1.0 for match in _unique_matches(candidate) if _gets_topic_bonus(match.keyword, candidate)),
         TOPIC_BONUS_CAP,
     )
 
@@ -55,11 +53,21 @@ def _gets_topic_bonus(keyword: str, candidate: Candidate) -> bool:
 
 
 def _has_high_or_medium_high_match(candidate: Candidate) -> bool:
-    return any(match.weight in {"high", "medium_high"} for match in candidate.matched_keywords)
+    return any(match.weight in {"high", "medium_high"} for match in _unique_matches(candidate))
 
 
 def _why(candidate: Candidate) -> str:
     if not candidate.matched_keywords:
         return ""
-    keywords = ", ".join(match.keyword for match in candidate.matched_keywords[:5])
+    keywords = ", ".join(match.keyword for match in list(_unique_matches(candidate))[:5])
     return f"keywords: {keywords}"
+
+
+def _unique_matches(candidate: Candidate):
+    seen: set[tuple[str, str]] = set()
+    for match in candidate.matched_keywords:
+        key = match.keyword, match.weight
+        if key in seen:
+            continue
+        seen.add(key)
+        yield match
