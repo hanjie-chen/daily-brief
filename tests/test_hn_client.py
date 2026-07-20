@@ -5,6 +5,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from daily_brief.hn_client import (
+    HN_BESTSTORIES_URL,
+    HN_ITEM_URL,
+    HN_TOPSTORIES_URL,
     RequestFailedError,
     _get_json,
     fetch_algolia_stories,
@@ -211,3 +214,50 @@ def test_fetch_hot_stories_dedupes_ids_and_keeps_only_stories(monkeypatch):
         "https://hacker-news.firebaseio.com/v0/item/2.json",
         "https://hacker-news.firebaseio.com/v0/item/4.json",
     ]
+
+
+@pytest.mark.parametrize("failed_list_url", [HN_TOPSTORIES_URL, HN_BESTSTORIES_URL])
+def test_fetch_hot_stories_keeps_successful_list_when_other_list_fails(monkeypatch, failed_list_url):
+    successful_list_url = HN_BESTSTORIES_URL if failed_list_url == HN_TOPSTORIES_URL else HN_TOPSTORIES_URL
+
+    def fake_get_json(url):
+        if url == failed_list_url:
+            raise RequestFailedError("list unavailable")
+        if url == successful_list_url:
+            return [1]
+        return {"id": 1, "type": "story", "title": "kept", "time": 0}
+
+    monkeypatch.setattr("daily_brief.hn_client._get_json", fake_get_json)
+
+    stories = fetch_hot_stories()
+
+    assert [story.hn_item_id for story in stories] == ["1"]
+
+
+def test_fetch_hot_stories_skips_failed_item_and_keeps_later_items(monkeypatch, caplog):
+    def fake_get_json(url):
+        if url == HN_TOPSTORIES_URL:
+            return [1, 2]
+        if url == HN_BESTSTORIES_URL:
+            return []
+        if url == HN_ITEM_URL.format(item_id=1):
+            raise RequestFailedError("item unavailable")
+        return {"id": 2, "type": "story", "title": "kept", "time": 0}
+
+    monkeypatch.setattr("daily_brief.hn_client._get_json", fake_get_json)
+
+    with caplog.at_level(logging.ERROR, logger="daily_brief.hn_client"):
+        stories = fetch_hot_stories()
+
+    assert [story.hn_item_id for story in stories] == ["2"]
+    assert "item_id=1 status=skipped" in caplog.text
+
+
+def test_fetch_hot_stories_raises_when_both_lists_fail(monkeypatch):
+    def fake_get_json(url):
+        raise RequestFailedError(f"unavailable: {url}")
+
+    monkeypatch.setattr("daily_brief.hn_client._get_json", fake_get_json)
+
+    with pytest.raises(RequestFailedError, match="story lists failed"):
+        fetch_hot_stories()

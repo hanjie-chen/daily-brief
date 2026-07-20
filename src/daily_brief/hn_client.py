@@ -54,8 +54,23 @@ def fetch_algolia_stories(window: TimeWindow, page_size: int = 100) -> list[Stor
 
 def fetch_hot_stories(limit_ids: int = 100) -> list[Story]:
     item_ids = []
+    successful_lists = 0
+    last_error: RequestFailedError | None = None
     for url in (HN_TOPSTORIES_URL, HN_BESTSTORIES_URL):
-        item_ids.extend(_get_json(url)[:limit_ids])
+        try:
+            item_ids.extend(_get_json(url)[:limit_ids])
+            successful_lists += 1
+        except RequestFailedError as exc:
+            last_error = exc
+            LOGGER.error(
+                "source=hn_official endpoint=%s status=skipped error=%s message=%s",
+                urlparse(url).path.rsplit("/", 1)[-1],
+                type(exc).__name__,
+                exc,
+            )
+
+    if successful_lists == 0:
+        raise RequestFailedError("hn_official story lists failed") from last_error
 
     seen: set[int] = set()
     stories: list[Story] = []
@@ -64,7 +79,16 @@ def fetch_hot_stories(limit_ids: int = 100) -> list[Story]:
             continue
         seen.add(item_id)
 
-        item = _get_json(HN_ITEM_URL.format(item_id=item_id))
+        try:
+            item = _get_json(HN_ITEM_URL.format(item_id=item_id))
+        except RequestFailedError as exc:
+            LOGGER.error(
+                "source=hn_official item_id=%s status=skipped error=%s message=%s",
+                item_id,
+                type(exc).__name__,
+                exc,
+            )
+            continue
         if item and item.get("type") == "story":
             stories.append(parse_hn_item(item))
 
