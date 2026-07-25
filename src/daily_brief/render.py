@@ -33,6 +33,7 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 "points": story.points,
                 "comments": story.comments,
                 "matched_keywords": [match.keyword for match in candidate.matched_keywords],
+                "topic_route": candidate.topic_route,
                 "score": round(candidate.score, 4),
                 "selected": candidate.selected,
                 "section": candidate.section,

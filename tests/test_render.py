@@ -84,6 +84,7 @@ def test_render_candidates_json_uses_snake_case_fields():
         "points",
         "comments",
         "matched_keywords",
+        "topic_route",
         "score",
         "selected",
         "section",
@@ -98,6 +99,7 @@ def test_render_candidates_json_uses_snake_case_fields():
     assert data[0]["points"] == 30
     assert data[0]["comments"] == 5
     assert data[0]["matched_keywords"] == ["AI coding"]
+    assert data[0]["topic_route"] == "not_evaluated"
     assert data[0]["score"] == 9.2346
     assert data[0]["selected"] is False
     assert data[0]["section"] == "ai"

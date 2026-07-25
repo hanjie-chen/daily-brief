@@ -37,3 +37,4 @@ class Candidate:
     rejection_reason: str = ""
     summary: str = ""
     why: str = ""
+    topic_route: str = "not_evaluated"

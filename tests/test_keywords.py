@@ -1,3 +1,5 @@
+import pytest
+
 from daily_brief.keywords import match_keywords
 
 
@@ -18,6 +20,21 @@ def test_abbreviations_require_uppercase_standalone_tokens():
     assert "AI" in names(match_keywords(title="How AI is reshaping education", story_text="", url=""))
     assert "AI" not in names(match_keywords(title="How ai is reshaping education", story_text="", url=""))
     assert "RAG" not in names(match_keywords(title="average storage wins", story_text="", url=""))
+
+
+def test_abbreviations_accept_plural_suffixes():
+    assert "LLM" in names(match_keywords(title="Protecting our commons from LLMs", story_text="", url=""))
+    assert "GPU" in names(match_keywords(title="Two GPUs for local inference", story_text="", url=""))
+
+
+@pytest.mark.parametrize("title", ["GPT5 release", "GPT5.6 release", "GPT-6 release", "GPTs in production"])
+def test_gpt_accepts_version_and_plural_suffixes(title):
+    assert "GPT" in names(match_keywords(title=title, story_text="", url=""))
+
+
+@pytest.mark.parametrize("title", ["AIRBNB update", "GPTsomething release", "GPT5.6preview release"])
+def test_variant_suffixes_do_not_relax_letter_boundaries(title):
+    assert not {"AI", "GPT"} & set(names(match_keywords(title=title, story_text="", url="")))
 
 
 def test_longest_match_wins_avoids_repeated_short_token_scores():

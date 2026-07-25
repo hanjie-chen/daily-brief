@@ -153,7 +153,7 @@ def test_run_generate_logs_source_success_and_completion(tmp_path, monkeypatch, 
         lambda window: [story("1", "AI coding agent with Claude", points=40, comments=8)],
     )
     monkeypatch.setattr(cli, "fetch_hot_stories", lambda: [])
-    clock = iter([10.0, 12.5, 20.0, 23.0]).__next__
+    clock = iter([10.0, 12.5, 20.0, 23.0, 30.0, 31.25]).__next__
 
     with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
         run_generate(
@@ -166,6 +166,7 @@ def test_run_generate_logs_source_success_and_completion(tmp_path, monkeypatch, 
 
     assert "source=algolia status=success stories=1 duration=2.500s" in caplog.text
     assert "source=hn_official status=success stories=0 duration=3.000s" in caplog.text
+    assert "component=topic_classifier status=success candidates=0 ai_items=0 duration=1.250s" in caplog.text
     assert "status=completed ai_items=1 hot_items=0" in caplog.text
 
 
@@ -175,7 +176,7 @@ def test_run_generate_logs_terminal_source_failure(tmp_path, monkeypatch, caplog
 
     monkeypatch.setattr(cli, "fetch_algolia_stories", raise_algolia_error)
     monkeypatch.setattr(cli, "fetch_hot_stories", lambda: [])
-    clock = iter([10.0, 100.0, 200.0, 201.0]).__next__
+    clock = iter([10.0, 100.0, 200.0, 201.0, 300.0, 301.0]).__next__
 
     with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
         result = run_generate(
@@ -291,26 +292,31 @@ def test_main_dry_run_does_not_create_output_directories_or_files(tmp_path, monk
     assert not data_dir.exists()
 
 
-def test_classifier_promotes_high_heat_unmatched_story_to_ai(tmp_path):
+def test_classifier_promotes_high_heat_unmatched_story_to_ai(tmp_path, caplog):
     classifier = FakeClassifier({"1"})
 
-    result = run_generate(
-        output_dir=tmp_path / "briefs",
-        data_dir=tmp_path / "data",
-        date_label="2026-07-20",
-        algolia_stories=[story("1", "Unseen Neural Product", points=750, comments=500)],
-        hot_stories=[],
-        classifier=classifier,
-        article_fetcher=lambda url: "",
-        summarizer=FakeSummarizer(),
-    )
+    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+        result = run_generate(
+            output_dir=tmp_path / "briefs",
+            data_dir=tmp_path / "data",
+            date_label="2026-07-20",
+            algolia_stories=[story("1", "Unseen Neural Product", points=750, comments=500)],
+            hot_stories=[],
+            classifier=classifier,
+            article_fetcher=lambda url: "",
+            summarizer=FakeSummarizer(),
+            clock=iter([10.0, 12.5]).__next__,
+        )
 
     markdown = result.brief_path.read_text(encoding="utf-8")
+    records = {item["hn_item_id"]: item for item in json.loads(result.data_path.read_text(encoding="utf-8"))}
     assert "Unseen Neural Product" in markdown.split("## Hacker News: AI", 1)[1].split(
         "## Hacker News: Non-AI Hot", 1
     )[0]
     assert "Why: topic classifier: AI" in markdown
     assert classifier.seen_ids == ["1"]
+    assert records["1"]["topic_route"] == "classifier_ai"
+    assert "component=topic_classifier status=success candidates=1 ai_items=1 duration=2.500s" in caplog.text
 
 
 def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
@@ -334,6 +340,9 @@ def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
     assert "Claude release" in ai_section
     assert "Unseen Neural Product" not in ai_section
     assert "component=topic_classifier status=failed" in caplog.text
+    records = {item["hn_item_id"]: item for item in json.loads(result.data_path.read_text(encoding="utf-8"))}
+    assert records["1"]["topic_route"] == "keyword"
+    assert records["2"]["topic_route"] == "classifier_failed"
 
 
 def test_classifier_receives_only_thirty_hottest_unmatched_candidates(tmp_path):
@@ -343,7 +352,7 @@ def test_classifier_receives_only_thirty_hottest_unmatched_candidates(tmp_path):
         for item_id in range(1, 36)
     ]
 
-    run_generate(
+    result = run_generate(
         output_dir=tmp_path / "briefs",
         data_dir=tmp_path / "data",
         date_label="2026-07-20",
@@ -355,6 +364,9 @@ def test_classifier_receives_only_thirty_hottest_unmatched_candidates(tmp_path):
     )
 
     assert classifier.seen_ids == [str(item_id) for item_id in range(35, 5, -1)]
+    records = {item["hn_item_id"]: item for item in json.loads(result.data_path.read_text(encoding="utf-8"))}
+    assert records["35"]["topic_route"] == "classifier_non_ai"
+    assert records["5"]["topic_route"] == "not_evaluated"
 
 
 def test_classifier_orders_unmatched_candidates_by_combined_heat(tmp_path):

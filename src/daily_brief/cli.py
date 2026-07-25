@@ -138,6 +138,8 @@ def run_generate(
     known_ai_candidates = [
         candidate for candidate in eligible_candidates if _has_non_weak_keyword_match(candidate)
     ]
+    for candidate in known_ai_candidates:
+        candidate.topic_route = "keyword"
     unmatched_candidates = [
         candidate for candidate in eligible_candidates if not _has_non_weak_keyword_match(candidate)
     ]
@@ -147,15 +149,35 @@ def run_generate(
         reverse=True,
     )[:TOPIC_CLASSIFIER_MAX_CANDIDATES]
     topic_classifier = classifier or CodexTopicClassifier()
+    classification_started = clock()
     try:
         classified_ai_ids = topic_classifier.classify(classification_batch)
     except Exception as exc:
+        classification_duration = clock() - classification_started
+        for candidate in classification_batch:
+            candidate.topic_route = "classifier_failed"
         LOGGER.error(
-            "component=topic_classifier status=failed error=%s message=%s",
+            "component=topic_classifier status=failed candidates=%d duration=%.3fs error=%s message=%s",
+            len(classification_batch),
+            classification_duration,
             type(exc).__name__,
             exc,
         )
         classified_ai_ids = set()
+    else:
+        classification_duration = clock() - classification_started
+        for candidate in classification_batch:
+            candidate.topic_route = (
+                "classifier_ai"
+                if candidate.story.hn_item_id in classified_ai_ids
+                else "classifier_non_ai"
+            )
+        LOGGER.info(
+            "component=topic_classifier status=success candidates=%d ai_items=%d duration=%.3fs",
+            len(classification_batch),
+            sum(candidate.topic_route == "classifier_ai" for candidate in classification_batch),
+            classification_duration,
+        )
 
     classified_ai_candidates = [
         candidate for candidate in unmatched_candidates if candidate.story.hn_item_id in classified_ai_ids
