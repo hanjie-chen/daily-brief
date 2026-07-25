@@ -21,7 +21,8 @@ This guide documents stable module boundaries, data flow, and maintenance entry 
 6. Candidates with explicit non-weak keyword matches enter the AI pool directly. `topic_classifier.py` evaluates the highest-ranked remaining candidates for AI relevance.
 7. `selection.py` applies eligibility thresholds, ranking, and section limits to select AI stories and a small number of non-AI hot stories.
 8. `article_fetcher.py` retrieves article text when needed, and `summarizer.py` invokes local Codex to generate a Chinese summary.
-9. `render.py` produces the Markdown brief and candidate JSON, and `history.py` records the selected story IDs.
+9. `render.py` produces the Markdown brief, schema-versioned public JSON, and candidate JSON, and `history.py` records the selected story IDs.
+10. `publisher.py` sends changed public JSON files to the website and records successful content hashes for idempotent retry.
 
 Data sources, the topic classifier, article fetching, summarization, and history writes each have their own failure handling. Preserve the pipeline's ability to produce partial results when changing these stages.
 
@@ -44,6 +45,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 | `article_fetcher.py` | Bounded public HTTP(S) article fetching and visible-text extraction | Article retrieval, parsing, or network safety |
 | `summarizer.py` | Codex summaries and fallback text | Summary prompts, execution, or fallback behavior |
 | `render.py` | Markdown brief and candidate JSON serialization | Output format |
+| `publisher.py` | Authenticated website publishing, retry, and local success state | Delivery behavior or publish configuration |
 
 ## Important Invariants
 
@@ -53,6 +55,9 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - A failure in one external source must not discard successful results from another source. Classifier, article-fetch, and summarizer failures must retain their documented fallback behavior.
 - `data/recommendation-history.json` suppresses recently selected story IDs. `data/YYYY-MM-DD-hn-candidates.json` is a per-run audit artifact for selection review; the two files are not interchangeable.
 - Mutations to `Candidate` fields—including `selected`, `section`, `rejection_reason`, `summary`, `why`, and `topic_route`—are observable in rendered output or candidate audit data. Update tests when their meaning changes.
+- Public brief JSON is schema version 1. Every published item carries its stable `hn_item_id`, and the website requires that ID to match the Hacker News discussion URL.
+- Publisher credentials come only from `DAILY_BRIEF_PUBLISH_URL` and `DAILY_BRIEF_PUBLISH_TOKEN`. Never write the token into generated artifacts, logs, Git, or tests.
+- `data/publish-state.json` records only successful content hashes. Network and server failures must leave an item pending so a later run can retry it.
 
 ## Common Change Paths
 
@@ -74,7 +79,7 @@ Follow `article_fetcher.py` -> `summarizer.py` -> `cli.py`. Preserve the network
 
 ### Change Generated Files
 
-Start with `render.py` for content shape and `cli.py` for paths and write timing. Check `tests/test_render.py` and `tests/test_cli.py`; update the root README if user-visible output or run behavior changes.
+Start with `render.py` for content shape and `cli.py` for paths and write timing. For website delivery, follow `publisher.py` and `tests/test_publisher.py`. Check `tests/test_render.py` and `tests/test_cli.py`; update the root README if user-visible output or run behavior changes.
 
 ## Verification
 

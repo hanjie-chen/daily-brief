@@ -6,15 +6,17 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 
 from .article_fetcher import fetch_article_text
-from .config import TOPIC_CLASSIFIER_MAX_CANDIDATES
+from .config import TIMEZONE, TOPIC_CLASSIFIER_MAX_CANDIDATES
 from .history import load_history, recent_ids, save_history
 from .hn_client import fetch_algolia_stories, fetch_hot_stories
 from .keywords import match_keywords
 from .models import Candidate, Story
-from .render import render_candidates_json, render_markdown
+from .publisher import PublishError, publish_pending
+from .render import render_candidates_json, render_markdown, render_public_brief_json
 from .scoring import score_candidate
 from .selection import dedupe_candidates, select_sections
 from .summarizer import CodexSummarizer, fallback_summary
@@ -28,6 +30,7 @@ LOGGER = logging.getLogger(__name__)
 class GenerateResult:
     brief_path: Path
     data_path: Path
+    public_json_path: Path
 
 
 def _fetch_source(
@@ -66,11 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="generate",
-        choices=["generate"],
+        choices=["generate", "publish"],
         help="Command to run.",
     )
     parser.add_argument("--output-dir", default="briefs")
     parser.add_argument("--data-dir", default="data")
+    parser.add_argument("--date")
+    parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -82,8 +87,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "generate" and not args.dry_run:
+    if args.dry_run:
+        return 0
+    if args.command == "generate":
         run_generate(output_dir=args.output_dir, data_dir=args.data_dir)
+    elif args.command == "publish":
+        try:
+            result = publish_pending(
+                brief_dir=args.output_dir,
+                data_dir=args.data_dir,
+                date_label=args.date,
+                force=args.force,
+            )
+        except PublishError as exc:
+            LOGGER.error("component=publisher status=failed message=%s", exc)
+            return 1
+        LOGGER.info(
+            "component=publisher status=completed published=%d skipped=%d",
+            result.published,
+            result.skipped,
+        )
     return 0
 
 
@@ -97,6 +120,7 @@ def run_generate(
     classifier=None,
     article_fetcher=None,
     clock: Callable[[], float] = time.monotonic,
+    generated_at: str | None = None,
 ) -> GenerateResult:
     window = daily_window()
     label = date_label or window.date_label
@@ -122,7 +146,9 @@ def run_generate(
             clock,
         )
 
-    candidates = dedupe_candidates([*map(_candidate, algolia_items), *map(_candidate, hot_items)])
+    candidates = dedupe_candidates(
+        [*map(_candidate, algolia_items), *map(_candidate, hot_items)]
+    )
     history_path = Path(data_dir) / "recommendation-history.json"
     recommendation_history = load_history(history_path)
     recent_item_ids = recent_ids(recommendation_history, label)
@@ -136,16 +162,24 @@ def run_generate(
             eligible_candidates.append(candidate)
 
     known_ai_candidates = [
-        candidate for candidate in eligible_candidates if _has_non_weak_keyword_match(candidate)
+        candidate
+        for candidate in eligible_candidates
+        if _has_non_weak_keyword_match(candidate)
     ]
     for candidate in known_ai_candidates:
         candidate.topic_route = "keyword"
     unmatched_candidates = [
-        candidate for candidate in eligible_candidates if not _has_non_weak_keyword_match(candidate)
+        candidate
+        for candidate in eligible_candidates
+        if not _has_non_weak_keyword_match(candidate)
     ]
     classification_batch = sorted(
         unmatched_candidates,
-        key=lambda candidate: (candidate.score, candidate.story.points, candidate.story.comments),
+        key=lambda candidate: (
+            candidate.score,
+            candidate.story.points,
+            candidate.story.comments,
+        ),
         reverse=True,
     )[:TOPIC_CLASSIFIER_MAX_CANDIDATES]
     topic_classifier = classifier or CodexTopicClassifier()
@@ -175,19 +209,26 @@ def run_generate(
         LOGGER.info(
             "component=topic_classifier status=success candidates=%d ai_items=%d duration=%.3fs",
             len(classification_batch),
-            sum(candidate.topic_route == "classifier_ai" for candidate in classification_batch),
+            sum(
+                candidate.topic_route == "classifier_ai"
+                for candidate in classification_batch
+            ),
             classification_duration,
         )
 
     classified_ai_candidates = [
-        candidate for candidate in unmatched_candidates if candidate.story.hn_item_id in classified_ai_ids
+        candidate
+        for candidate in unmatched_candidates
+        if candidate.story.hn_item_id in classified_ai_ids
     ]
     for candidate in classified_ai_candidates:
         candidate.why = "topic classifier: AI"
     classified_ai_identity = {id(candidate) for candidate in classified_ai_candidates}
     ai_pool = [*known_ai_candidates, *classified_ai_candidates]
     hot_pool = [
-        candidate for candidate in unmatched_candidates if id(candidate) not in classified_ai_identity
+        candidate
+        for candidate in unmatched_candidates
+        if id(candidate) not in classified_ai_identity
     ]
 
     ai_items, selected_hot_items = select_sections(ai_pool, hot_pool)
@@ -202,7 +243,9 @@ def run_generate(
             try:
                 fetched_text = article_client(candidate.story.source_url).strip()
                 if fetched_text:
-                    candidate.story = replace(candidate.story, fetched_text=fetched_text)
+                    candidate.story = replace(
+                        candidate.story, fetched_text=fetched_text
+                    )
             except Exception as exc:
                 LOGGER.error(
                     "component=article_fetch item_id=%s status=failed error=%s message=%s",
@@ -217,11 +260,27 @@ def run_generate(
             candidate.summary = fallback_summary(candidate)
 
     output_path = Path(output_dir) / f"{label}.md"
+    public_json_path = Path(output_dir) / f"{label}.json"
     data_path = Path(data_dir) / f"{label}-hn-candidates.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     data_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        render_markdown(label, ai_items, selected_hot_items, ai_note=ai_note, hot_note=hot_note),
+        render_markdown(
+            label, ai_items, selected_hot_items, ai_note=ai_note, hot_note=hot_note
+        ),
+        encoding="utf-8",
+    )
+    public_json_path.write_text(
+        render_public_brief_json(
+            label,
+            generated_at or datetime.now(TIMEZONE).isoformat(timespec="seconds"),
+            ai_items,
+            selected_hot_items,
+            ai_note=("AI 数据源本次不可用，当前栏目可能不完整。" if ai_note else ""),
+            hot_note=(
+                "HN 热门数据源本次不可用，当前栏目可能不完整。" if hot_note else ""
+            ),
+        ),
         encoding="utf-8",
     )
     data_path.write_text(render_candidates_json(candidates), encoding="utf-8")
@@ -230,7 +289,10 @@ def run_generate(
             history_path,
             recommendation_history,
             label,
-            [candidate.story.hn_item_id for candidate in [*ai_items, *selected_hot_items]],
+            [
+                candidate.story.hn_item_id
+                for candidate in [*ai_items, *selected_hot_items]
+            ],
         )
     except Exception as exc:
         LOGGER.error(
@@ -245,11 +307,17 @@ def run_generate(
         output_path,
         data_path,
     )
-    return GenerateResult(brief_path=output_path, data_path=data_path)
+    return GenerateResult(
+        brief_path=output_path,
+        data_path=data_path,
+        public_json_path=public_json_path,
+    )
 
 
 def _candidate(story: Story) -> Candidate:
-    return score_candidate(Candidate(story=story, matched_keywords=_keyword_matches(story)))
+    return score_candidate(
+        Candidate(story=story, matched_keywords=_keyword_matches(story))
+    )
 
 
 def _has_non_weak_keyword_match(candidate: Candidate) -> bool:

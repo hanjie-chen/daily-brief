@@ -22,6 +22,8 @@ def test_parser_defaults_to_generate_command():
     assert args.command == "generate"
     assert args.output_dir == "briefs"
     assert args.data_dir == "data"
+    assert args.date is None
+    assert args.force is False
     assert args.dry_run is False
 
 
@@ -35,20 +37,41 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
         data_dir=data_dir,
         date_label="2026-07-08",
         algolia_stories=[
-            story("1", "AI coding agent with Claude", points=40, comments=8, story_text="A new coding agent."),
+            story(
+                "1",
+                "AI coding agent with Claude",
+                points=40,
+                comments=8,
+                story_text="A new coding agent.",
+            ),
             story("2", "Tiny AI mention", points=1, comments=0),
         ],
         hot_stories=[
-            story("3", "SQLite release notes", source="hn_official", points=350, comments=20),
-            story("4", "OpenAI launches a model", source="hn_official", points=500, comments=80),
+            story(
+                "3",
+                "SQLite release notes",
+                source="hn_official",
+                points=350,
+                comments=20,
+            ),
+            story(
+                "4",
+                "OpenAI launches a model",
+                source="hn_official",
+                points=500,
+                comments=80,
+            ),
         ],
         summarizer=summarizer,
+        generated_at="2026-07-08T08:04:00+08:00",
     )
 
     assert result.brief_path == output_dir / "2026-07-08.md"
     assert result.data_path == data_dir / "2026-07-08-hn-candidates.json"
+    assert result.public_json_path == output_dir / "2026-07-08.json"
     assert result.brief_path.exists()
     assert result.data_path.exists()
+    assert result.public_json_path.exists()
 
     markdown = result.brief_path.read_text(encoding="utf-8")
     assert "# Daily Brief - 2026-07-08" in markdown
@@ -74,20 +97,39 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
         "SQLite release notes",
     ]
 
+    public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    assert public_payload["schema_version"] == 1
+    assert public_payload["date"] == "2026-07-08"
+    assert public_payload["generated_at"] == "2026-07-08T08:04:00+08:00"
+    assert [
+        item["hn_item_id"] for item in public_payload["sections"]["ai"]["items"]
+    ] == [
+        "4",
+        "1",
+    ]
+    assert [
+        item["hn_item_id"] for item in public_payload["sections"]["non_ai_hot"]["items"]
+    ] == ["3"]
+
 
 def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path, capsys):
     result = run_generate(
         output_dir=tmp_path / "briefs",
         data_dir=tmp_path / "data",
         date_label="2026-07-08",
-        algolia_stories=[story("1", "AI coding agent with Claude", points=40, comments=8)],
+        algolia_stories=[
+            story("1", "AI coding agent with Claude", points=40, comments=8)
+        ],
         hot_stories=[],
         summarizer=RaisingSummarizer(),
     )
 
     markdown = result.brief_path.read_text(encoding="utf-8")
     assert "未能生成可靠摘要，请查看原文或讨论。" in markdown
-    assert "Summary failed for AI coding agent with Claude: boom" in capsys.readouterr().err
+    assert (
+        "Summary failed for AI coding agent with Claude: boom"
+        in capsys.readouterr().err
+    )
 
 
 def test_run_generate_writes_files_when_algolia_fetch_fails(tmp_path, monkeypatch):
@@ -101,7 +143,15 @@ def test_run_generate_writes_files_when_algolia_fetch_fails(tmp_path, monkeypatc
     monkeypatch.setattr(
         cli,
         "fetch_hot_stories",
-        lambda: [story("3", "SQLite release notes", source="hn_official", points=350, comments=20)],
+        lambda: [
+            story(
+                "3",
+                "SQLite release notes",
+                source="hn_official",
+                points=350,
+                comments=20,
+            )
+        ],
     )
 
     result = run_generate(
@@ -118,6 +168,13 @@ def test_run_generate_writes_files_when_algolia_fetch_fails(tmp_path, monkeypatc
     assert "AI data source failed" in markdown
     assert "Algolia" in markdown
     assert "SQLite release notes" in markdown
+    public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    assert public_payload["sections"]["ai"]["note"] == (
+        "AI 数据源本次不可用，当前栏目可能不完整。"
+    )
+    assert "algolia unavailable" not in result.public_json_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_run_generate_writes_files_when_hot_fetch_fails(tmp_path, monkeypatch):
@@ -133,7 +190,9 @@ def test_run_generate_writes_files_when_hot_fetch_fails(tmp_path, monkeypatch):
         output_dir=output_dir,
         data_dir=data_dir,
         date_label="2026-07-08",
-        algolia_stories=[story("1", "AI coding agent with Claude", points=40, comments=8)],
+        algolia_stories=[
+            story("1", "AI coding agent with Claude", points=40, comments=8)
+        ],
         summarizer=FakeSummarizer(),
     )
 
@@ -150,7 +209,9 @@ def test_run_generate_logs_source_success_and_completion(tmp_path, monkeypatch, 
     monkeypatch.setattr(
         cli,
         "fetch_algolia_stories",
-        lambda window: [story("1", "AI coding agent with Claude", points=40, comments=8)],
+        lambda window: [
+            story("1", "AI coding agent with Claude", points=40, comments=8)
+        ],
     )
     monkeypatch.setattr(cli, "fetch_hot_stories", lambda: [])
     clock = iter([10.0, 12.5, 20.0, 23.0, 30.0, 31.25]).__next__
@@ -166,7 +227,10 @@ def test_run_generate_logs_source_success_and_completion(tmp_path, monkeypatch, 
 
     assert "source=algolia status=success stories=1 duration=2.500s" in caplog.text
     assert "source=hn_official status=success stories=0 duration=3.000s" in caplog.text
-    assert "component=topic_classifier status=success candidates=0 ai_items=0 duration=1.250s" in caplog.text
+    assert (
+        "component=topic_classifier status=success candidates=0 ai_items=0 duration=1.250s"
+        in caplog.text
+    )
     assert "status=completed ai_items=1 hot_items=0" in caplog.text
 
 
@@ -187,7 +251,10 @@ def test_run_generate_logs_terminal_source_failure(tmp_path, monkeypatch, caplog
             clock=clock,
         )
 
-    assert "source=algolia status=failed duration=90.000s error=RuntimeError" in caplog.text
+    assert (
+        "source=algolia status=failed duration=90.000s error=RuntimeError"
+        in caplog.text
+    )
     assert "source=hn_official status=success stories=0 duration=1.000s" in caplog.text
     assert "AI data source failed" in result.brief_path.read_text(encoding="utf-8")
 
@@ -211,7 +278,9 @@ def test_run_generate_keeps_non_ai_algolia_story_out_of_ai_section(tmp_path):
     assert by_id["1"]["section"] == "non_ai_hot"
 
     markdown = result.brief_path.read_text(encoding="utf-8")
-    ai_section = markdown.split("## Hacker News: AI", 1)[1].split("## Hacker News: Non-AI Hot", 1)[0]
+    ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
+        "## Hacker News: Non-AI Hot", 1
+    )[0]
     assert "SQLite release notes" not in ai_section
     assert "## Hacker News: Non-AI Hot" in markdown
     assert "SQLite release notes" in markdown
@@ -226,7 +295,13 @@ def test_run_generate_treats_weak_only_matches_as_non_ai_hot_candidates(tmp_path
             story("1", "Database model migration guide", points=1200, comments=300),
         ],
         hot_stories=[
-            story("2", "New workflow engine reaches stable release", source="hn_official", points=1300, comments=350),
+            story(
+                "2",
+                "New workflow engine reaches stable release",
+                source="hn_official",
+                points=1300,
+                comments=350,
+            ),
         ],
         summarizer=FakeSummarizer(),
     )
@@ -243,7 +318,9 @@ def test_run_generate_treats_weak_only_matches_as_non_ai_hot_candidates(tmp_path
     assert by_id["2"]["section"] == "non_ai_hot"
 
     markdown = result.brief_path.read_text(encoding="utf-8")
-    ai_section = markdown.split("## Hacker News: AI", 1)[1].split("## Hacker News: Non-AI Hot", 1)[0]
+    ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
+        "## Hacker News: Non-AI Hot", 1
+    )[0]
     assert "Database model migration guide" not in ai_section
     assert "New workflow engine reaches stable release" not in ai_section
 
@@ -257,14 +334,30 @@ def test_run_generate_dedupes_hot_candidates_before_writing_json(tmp_path):
         date_label="2026-07-08",
         algolia_stories=[],
         hot_stories=[
-            story("1", "Original SQLite writeup", source="hn_official", points=120, comments=30, url=duplicate_url),
-            story("2", "Popular SQLite discussion", source="hn_official", points=350, comments=80, url=duplicate_url),
+            story(
+                "1",
+                "Original SQLite writeup",
+                source="hn_official",
+                points=120,
+                comments=30,
+                url=duplicate_url,
+            ),
+            story(
+                "2",
+                "Popular SQLite discussion",
+                source="hn_official",
+                points=350,
+                comments=80,
+                url=duplicate_url,
+            ),
         ],
         summarizer=FakeSummarizer(),
     )
 
     candidate_data = json.loads(result.data_path.read_text(encoding="utf-8"))
-    duplicate_records = [item for item in candidate_data if item["source_url"] == duplicate_url]
+    duplicate_records = [
+        item for item in candidate_data if item["source_url"] == duplicate_url
+    ]
 
     assert len(duplicate_records) == 1
     assert duplicate_records[0]["hn_item_id"] == "2"
@@ -276,7 +369,9 @@ def test_run_generate_dedupes_hot_candidates_before_writing_json(tmp_path):
     assert duplicate_records[0]["title"] in markdown
 
 
-def test_main_dry_run_does_not_create_output_directories_or_files(tmp_path, monkeypatch):
+def test_main_dry_run_does_not_create_output_directories_or_files(
+    tmp_path, monkeypatch
+):
     output_dir = tmp_path / "briefs"
     data_dir = tmp_path / "data"
 
@@ -285,7 +380,16 @@ def test_main_dry_run_does_not_create_output_directories_or_files(tmp_path, monk
 
     monkeypatch.setattr(cli, "run_generate", fail_if_called)
 
-    exit_code = main(["generate", "--output-dir", str(output_dir), "--data-dir", str(data_dir), "--dry-run"])
+    exit_code = main(
+        [
+            "generate",
+            "--output-dir",
+            str(output_dir),
+            "--data-dir",
+            str(data_dir),
+            "--dry-run",
+        ]
+    )
 
     assert exit_code == 0
     assert not output_dir.exists()
@@ -300,7 +404,9 @@ def test_classifier_promotes_high_heat_unmatched_story_to_ai(tmp_path, caplog):
             output_dir=tmp_path / "briefs",
             data_dir=tmp_path / "data",
             date_label="2026-07-20",
-            algolia_stories=[story("1", "Unseen Neural Product", points=750, comments=500)],
+            algolia_stories=[
+                story("1", "Unseen Neural Product", points=750, comments=500)
+            ],
             hot_stories=[],
             classifier=classifier,
             article_fetcher=lambda url: "",
@@ -309,14 +415,23 @@ def test_classifier_promotes_high_heat_unmatched_story_to_ai(tmp_path, caplog):
         )
 
     markdown = result.brief_path.read_text(encoding="utf-8")
-    records = {item["hn_item_id"]: item for item in json.loads(result.data_path.read_text(encoding="utf-8"))}
-    assert "Unseen Neural Product" in markdown.split("## Hacker News: AI", 1)[1].split(
-        "## Hacker News: Non-AI Hot", 1
-    )[0]
+    records = {
+        item["hn_item_id"]: item
+        for item in json.loads(result.data_path.read_text(encoding="utf-8"))
+    }
+    assert (
+        "Unseen Neural Product"
+        in markdown.split("## Hacker News: AI", 1)[1].split(
+            "## Hacker News: Non-AI Hot", 1
+        )[0]
+    )
     assert "Why: topic classifier: AI" in markdown
     assert classifier.seen_ids == ["1"]
     assert records["1"]["topic_route"] == "classifier_ai"
-    assert "component=topic_classifier status=success candidates=1 ai_items=1 duration=2.500s" in caplog.text
+    assert (
+        "component=topic_classifier status=success candidates=1 ai_items=1 duration=2.500s"
+        in caplog.text
+    )
 
 
 def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
@@ -336,11 +451,16 @@ def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
         )
 
     markdown = result.brief_path.read_text(encoding="utf-8")
-    ai_section = markdown.split("## Hacker News: AI", 1)[1].split("## Hacker News: Non-AI Hot", 1)[0]
+    ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
+        "## Hacker News: Non-AI Hot", 1
+    )[0]
     assert "Claude release" in ai_section
     assert "Unseen Neural Product" not in ai_section
     assert "component=topic_classifier status=failed" in caplog.text
-    records = {item["hn_item_id"]: item for item in json.loads(result.data_path.read_text(encoding="utf-8"))}
+    records = {
+        item["hn_item_id"]: item
+        for item in json.loads(result.data_path.read_text(encoding="utf-8"))
+    }
     assert records["1"]["topic_route"] == "keyword"
     assert records["2"]["topic_route"] == "classifier_failed"
 
@@ -364,7 +484,10 @@ def test_classifier_receives_only_thirty_hottest_unmatched_candidates(tmp_path):
     )
 
     assert classifier.seen_ids == [str(item_id) for item_id in range(35, 5, -1)]
-    records = {item["hn_item_id"]: item for item in json.loads(result.data_path.read_text(encoding="utf-8"))}
+    records = {
+        item["hn_item_id"]: item
+        for item in json.loads(result.data_path.read_text(encoding="utf-8"))
+    }
     assert records["35"]["topic_route"] == "classifier_non_ai"
     assert records["5"]["topic_route"] == "not_evaluated"
 
@@ -409,7 +532,10 @@ def test_recently_selected_story_is_excluded_and_recorded_in_snapshot(tmp_path):
         summarizer=FakeSummarizer(),
     )
 
-    records = {item["hn_item_id"]: item for item in json.loads(result.data_path.read_text(encoding="utf-8"))}
+    records = {
+        item["hn_item_id"]: item
+        for item in json.loads(result.data_path.read_text(encoding="utf-8"))
+    }
     assert records["1"]["selected"] is False
     assert records["1"]["rejection_reason"] == "recently_selected"
     assert records["2"]["selected"] is True
@@ -449,8 +575,20 @@ def test_selected_external_article_text_reaches_summarizer(tmp_path):
         data_dir=tmp_path / "data",
         date_label="2026-07-20",
         algolia_stories=[
-            story("1", "Claude release", points=40, comments=8, url="https://example.com/selected"),
-            story("2", "OpenAI tiny", points=1, comments=0, url="https://example.com/rejected"),
+            story(
+                "1",
+                "Claude release",
+                points=40,
+                comments=8,
+                url="https://example.com/selected",
+            ),
+            story(
+                "2",
+                "OpenAI tiny",
+                points=1,
+                comments=0,
+                url="https://example.com/rejected",
+            ),
         ],
         hot_stories=[],
         article_fetcher=fetch_article,

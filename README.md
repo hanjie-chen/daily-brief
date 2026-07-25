@@ -1,6 +1,6 @@
 # Daily Brief
 
-个人每日信息简报生成器，生成简短的中文 Markdown 简报
+个人每日信息简报生成器，生成简短的中文简报，并可自动发布到 `hanjie-chen.com`。
 
 数据源: 
 
@@ -54,6 +54,29 @@ daily-brief generate
 生成结果保存在：
 
 - `briefs/YYYY-MM-DD.md`：每天阅读的 Markdown 简报；
+- `briefs/YYYY-MM-DD.json`：用于网站发布的 schema-versioned 结构化简报；
 - `data/YYYY-MM-DD-hn-candidates.json`：用于复盘筛选结果的候选数据。
 
-当前通过 cron 在每天 08:00（Asia/Singapore）自动生成。
+网站发布需要配置：
+
+```bash
+export DAILY_BRIEF_PUBLISH_URL="https://hanjie-chen.com/internal/briefs"
+export DAILY_BRIEF_PUBLISH_TOKEN="<shared-secret>"
+daily-brief publish
+```
+
+`publish` 默认发送所有尚未成功发布或内容已经变化的 JSON，并在 `data/publish-state.json` 记录成功内容的 SHA-256。网络错误和 5xx 会有限重试；失败内容不会写入成功状态，因此下次运行会自动补发。修正某天内容后可使用：
+
+```bash
+daily-brief publish --date YYYY-MM-DD --force
+```
+
+当前 cron 在每天 08:00（Asia/Singapore）运行。完成 website 接口部署和 shared secret 配置后，定时流程应依次执行：
+
+```bash
+daily-brief generate && daily-brief publish
+```
+
+发布 secret 应保存在仓库外、权限为 `0600` 的环境配置文件中，不应写进 Git 或直接展开在 crontab 中。现有 Markdown 不回填；网站归档从结构化 JSON 发布启用之日开始。
+
+首轮上线后的 1–2 周使用固定的 `Daily Brief Feedback` 对话记录 `opened`、`useful`、`noisy` 对应的 `hn_item_id` 和可选 `note`，每周汇总一次，用于后续校准筛选策略。
