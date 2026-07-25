@@ -1,7 +1,11 @@
 import json
 
 from daily_brief.models import Candidate, KeywordMatch, Story
-from daily_brief.render import render_candidates_json, render_markdown
+from daily_brief.render import (
+    render_candidates_json,
+    render_markdown,
+    render_public_brief_json,
+)
 
 
 def candidate(section="ai", selected=True, title="AI coding agent"):
@@ -104,3 +108,77 @@ def test_render_candidates_json_uses_snake_case_fields():
     assert data[0]["selected"] is False
     assert data[0]["section"] == "ai"
     assert data[0]["rejection_reason"] == "not_selected"
+
+
+def test_render_public_brief_json_contains_stable_schema_and_selected_items():
+    ai_item = candidate(title="中文 <AI> agent")
+    hot_item = candidate(section="non_ai_hot", title="SQLite release")
+
+    rendered = render_public_brief_json(
+        "2026-07-08",
+        "2026-07-08T08:04:00+08:00",
+        [ai_item],
+        [hot_item],
+        ai_note="栏目可能不完整。",
+    )
+    payload = json.loads(rendered)
+
+    assert payload == {
+        "schema_version": 1,
+        "date": "2026-07-08",
+        "generated_at": "2026-07-08T08:04:00+08:00",
+        "timezone": "Asia/Singapore",
+        "sections": {
+            "ai": {
+                "note": "栏目可能不完整。",
+                "items": [
+                    {
+                        "hn_item_id": "1",
+                        "title": "中文 <AI> agent",
+                        "summary": "这是一个 AI coding agent 项目。",
+                        "why": "keywords: AI coding",
+                        "source_url": "https://example.com",
+                        "discussion_url": "https://news.ycombinator.com/item?id=1",
+                        "points": 30,
+                        "comments": 5,
+                    }
+                ],
+            },
+            "non_ai_hot": {
+                "note": "",
+                "items": [
+                    {
+                        "hn_item_id": "1",
+                        "title": "SQLite release",
+                        "summary": "这是一个 AI coding agent 项目。",
+                        "why": "keywords: AI coding",
+                        "source_url": "https://example.com",
+                        "discussion_url": "https://news.ycombinator.com/item?id=1",
+                        "points": 30,
+                        "comments": 5,
+                    }
+                ],
+            },
+        },
+    }
+    assert rendered.endswith("\n")
+
+
+def test_render_public_brief_json_normalizes_untrusted_multiline_text():
+    item = candidate(title="Title\nInjected")
+    item.summary = "First\nSecond"
+    item.why = "because\tkeywords"
+
+    payload = json.loads(
+        render_public_brief_json(
+            "2026-07-08",
+            "2026-07-08T08:04:00+08:00",
+            [item],
+            [],
+        )
+    )
+    public_item = payload["sections"]["ai"]["items"][0]
+
+    assert public_item["title"] == "Title Injected"
+    assert public_item["summary"] == "First Second"
+    assert public_item["why"] == "because keywords"

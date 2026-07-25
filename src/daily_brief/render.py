@@ -32,7 +32,9 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 "created_at": story.created_at,
                 "points": story.points,
                 "comments": story.comments,
-                "matched_keywords": [match.keyword for match in candidate.matched_keywords],
+                "matched_keywords": [
+                    match.keyword for match in candidate.matched_keywords
+                ],
                 "topic_route": candidate.topic_route,
                 "score": round(candidate.score, 4),
                 "selected": candidate.selected,
@@ -40,6 +42,33 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 "rejection_reason": candidate.rejection_reason,
             }
         )
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def render_public_brief_json(
+    date_label: str,
+    generated_at: str,
+    ai_items: list[Candidate],
+    hot_items: list[Candidate],
+    ai_note: str = "",
+    hot_note: str = "",
+) -> str:
+    payload = {
+        "schema_version": 1,
+        "date": date_label,
+        "generated_at": generated_at,
+        "timezone": "Asia/Singapore",
+        "sections": {
+            "ai": {
+                "note": ai_note,
+                "items": [_public_item(item) for item in ai_items],
+            },
+            "non_ai_hot": {
+                "note": hot_note,
+                "items": [_public_item(item) for item in hot_items],
+            },
+        },
+    }
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
@@ -70,3 +99,17 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
 
 def _single_line_display_text(value: str) -> str:
     return " ".join(value.split())
+
+
+def _public_item(candidate: Candidate) -> dict:
+    story = candidate.story
+    return {
+        "hn_item_id": story.hn_item_id,
+        "title": _single_line_display_text(story.title),
+        "summary": _single_line_display_text(candidate.summary),
+        "why": _single_line_display_text(candidate.why),
+        "source_url": story.source_url,
+        "discussion_url": story.hn_discussion_url,
+        "points": story.points,
+        "comments": story.comments,
+    }
