@@ -34,6 +34,11 @@ Daily Brief 目前生成一份 Markdown 简报，内容分为两部分：
 3. 对重复内容去重，选出 AI 相关内容和少量全站热门内容；
 4. 使用本地 Codex 生成中文摘要，并输出为 Markdown 简报。
 
+## Architecture
+
+Python package 的生成链路、模块职责、关键不变量与常见改动入口见
+[`src/daily_brief/README.md`](./src/daily_brief/README.md)。根 README 只保留项目层面的目标、使用方式和整体行为。
+
 ## Run
 
 需要 Python 3.12 或更高版本，并确保本地已经可以使用 `codex` 命令。
