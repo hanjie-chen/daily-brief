@@ -22,7 +22,7 @@ WEIGHT_BONUS = {
     "weak": 0.0,
 }
 
-VERSIONED_KEYWORDS = {"GPT"}
+VERSIONED_KEYWORDS = {"GPT", "Qwen", "Grok"}
 
 
 def match_keywords(title: str, story_text: str, url: str) -> list[KeywordMatch]:

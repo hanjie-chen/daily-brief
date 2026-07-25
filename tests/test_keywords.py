@@ -27,14 +27,36 @@ def test_abbreviations_accept_plural_suffixes():
     assert "GPU" in names(match_keywords(title="Two GPUs for local inference", story_text="", url=""))
 
 
-@pytest.mark.parametrize("title", ["GPT5 release", "GPT5.6 release", "GPT-6 release", "GPTs in production"])
-def test_gpt_accepts_version_and_plural_suffixes(title):
-    assert "GPT" in names(match_keywords(title=title, story_text="", url=""))
+@pytest.mark.parametrize(
+    ("keyword", "title"),
+    [
+        ("GPT", "GPT5 release"),
+        ("GPT", "GPT5.6 release"),
+        ("GPT", "GPT-6 release"),
+        ("GPT", "GPTs in production"),
+        ("Qwen", "Qwen2.5 release"),
+        ("Qwen", "Qwen3.8 Max is out"),
+        ("Grok", "Grok3 is available"),
+    ],
+)
+def test_versioned_keywords_accept_version_and_plural_suffixes(keyword, title):
+    assert keyword in names(match_keywords(title=title, story_text="", url=""))
 
 
-@pytest.mark.parametrize("title", ["AIRBNB update", "GPTsomething release", "GPT5.6preview release"])
+@pytest.mark.parametrize(
+    "title",
+    [
+        "AIRBNB update",
+        "GPTsomething release",
+        "GPT5.6preview release",
+        "Qwensomething release",
+        "Grokking algorithms",
+    ],
+)
 def test_variant_suffixes_do_not_relax_letter_boundaries(title):
-    assert not {"AI", "GPT"} & set(names(match_keywords(title=title, story_text="", url="")))
+    assert not {"AI", "GPT", "Qwen", "Grok"} & set(
+        names(match_keywords(title=title, story_text="", url=""))
+    )
 
 
 def test_longest_match_wins_avoids_repeated_short_token_scores():
