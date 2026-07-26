@@ -399,6 +399,33 @@ def test_main_dry_run_does_not_create_output_directories_or_files(
     assert not data_dir.exists()
 
 
+def test_main_rejects_gemini_backend_for_production_generate():
+    with pytest.raises(SystemExit, match="2"):
+        main(["generate", "--backend", "gemini"])
+
+
+def test_main_reports_missing_gemini_key_for_evaluation(
+    tmp_path, monkeypatch, caplog
+):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+        exit_code = main(
+            [
+                "evaluate-model",
+                "--date",
+                "2026-07-20",
+                "--data-dir",
+                str(tmp_path / "data"),
+                "--backend",
+                "gemini",
+            ]
+        )
+
+    assert exit_code == 1
+    assert "GEMINI_API_KEY is not configured" in caplog.text
+
+
 def test_main_evaluate_model_replays_captured_input(tmp_path):
     data_dir = tmp_path / "data"
     input_path = data_dir / "model-eval-inputs/2026-07-20.json"

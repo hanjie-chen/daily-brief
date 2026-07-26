@@ -1,7 +1,11 @@
 import pytest
 
 from daily_brief.models import Candidate, KeywordMatch, Story
-from daily_brief.summarizer import CodexSummarizer, fallback_summary
+from daily_brief.summarizer import (
+    SUMMARY_SYSTEM_INSTRUCTION,
+    CodexSummarizer,
+    fallback_summary,
+)
 
 
 def candidate(story_text: str = "A demo of an AI coding agent.", fetched_text: str = ""):
@@ -64,6 +68,7 @@ def test_codex_summarizer_builds_prompt_and_returns_stdout(monkeypatch):
     assert "--sandbox" in calls["args"]
     assert "read-only" in calls["args"]
     assert "--cd" in calls["args"]
+    assert calls["args"][-1] == SUMMARY_SYSTEM_INSTRUCTION
     neutral_cwd = calls["args"][calls["args"].index("--cd") + 1]
     assert neutral_cwd
     assert neutral_cwd != "."

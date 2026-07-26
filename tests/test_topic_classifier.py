@@ -1,7 +1,7 @@
 import pytest
 
 from daily_brief.models import Candidate, Story
-from daily_brief.topic_classifier import CodexTopicClassifier
+from daily_brief.topic_classifier import CODEX_SYSTEM_INSTRUCTION, CodexTopicClassifier
 
 
 def candidate(item_id: str, title: str, url: str = "https://example.com/article") -> Candidate:
@@ -44,6 +44,7 @@ def test_classifier_returns_only_ids_from_supplied_batch(monkeypatch):
     assert "--sandbox" in args
     assert "read-only" in args
     assert "--cd" in args
+    assert args[-1] == CODEX_SYSTEM_INSTRUCTION
     assert args[args.index("--cd") + 1] not in {"", "."}
     assert "Qwen 3.8" in prompt
     assert "SQLite release" in prompt
