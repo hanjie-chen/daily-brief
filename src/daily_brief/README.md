@@ -31,7 +31,7 @@ fallback behavior.
 
 `gemini_backend.py` implements the same boundary for controlled evaluation. It
 uses the Interactions REST API directly through the Python standard library,
-pins separate GA models for classification and summarization, requests structured
+pins classification and summarization model IDs independently, requests structured
 JSON, and validates provider output again against application invariants. The
 adapter keeps its endpoint fixed, authenticates only with the `x-goog-api-key`
 header, disables interaction storage, and performs bounded retry with backoff and

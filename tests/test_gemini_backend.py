@@ -158,6 +158,13 @@ def test_classifier_skips_api_for_empty_input():
     assert opener.calls == []
 
 
+def test_default_models_use_flash_lite():
+    backend = GeminiBackend(api_key="secret-key", opener=RecordingOpener())
+
+    assert backend.classifier_model == "gemini-3.5-flash-lite"
+    assert backend.summarizer_model == "gemini-3.5-flash-lite"
+
+
 def test_summarizer_uses_fetched_text_and_logs_usage(caplog):
     opener = RecordingOpener(
         FakeResponse(

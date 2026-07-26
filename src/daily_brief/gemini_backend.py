@@ -22,7 +22,7 @@ LOGGER = logging.getLogger(__name__)
 
 INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 DEFAULT_CLASSIFIER_MODEL = "gemini-3.5-flash-lite"
-DEFAULT_SUMMARIZER_MODEL = "gemini-3.6-flash"
+DEFAULT_SUMMARIZER_MODEL = "gemini-3.5-flash-lite"
 MODEL_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 RETRYABLE_HTTP_STATUSES = {408, 429}
 MAX_RESPONSE_BYTES = 256 * 1024

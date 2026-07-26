@@ -78,7 +78,10 @@ Gemini backend 使用官方 [Interactions REST API](https://ai.google.dev/api/in
 runtime dependency。默认固定使用：
 
 - `gemini-3.5-flash-lite`：主题分类；
-- `gemini-3.6-flash`：中文摘要。
+- `gemini-3.5-flash-lite`：中文摘要。
+
+摘要模型经过真实输入盲测后选择 Lite：它与 `gemini-3.6-flash` 的质量接近，但 Free Tier
+额度更适合日常运行和迭代。`gemini-3.6-flash` 仍可通过模型环境变量用于对照评测。
 
 创建 Gemini auth API key 后，把 secret 放进仓库外、权限为 `0600` 的环境文件，不要粘贴到
 聊天、提交到 Git 或写入命令行参数。加载 `GEMINI_API_KEY` 后运行：
