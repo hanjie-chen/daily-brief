@@ -29,6 +29,19 @@ summarization. Production currently constructs `CodexBackend`, which delegates t
 the existing Codex classifier and summarizer without changing their prompts or
 fallback behavior.
 
+`gemini_backend.py` implements the same boundary for controlled evaluation. It
+uses the Interactions REST API directly through the Python standard library,
+pins separate GA models for classification and summarization, requests structured
+JSON, and validates provider output again against application invariants. The
+adapter keeps its endpoint fixed, authenticates only with the `x-goog-api-key`
+header, disables interaction storage, and performs bounded retry with backoff and
+jitter only for network failures, HTTP 408/429, and 5xx responses. Provider retry
+delays from `Retry-After`, structured `google.rpc.RetryInfo` details, or Gemini's
+explicit `Please retry in ...` quota message take precedence over local backoff
+and are capped at 60 seconds. The summarization generation budget leaves room for
+model thinking tokens, while the returned summary remains constrained by the
+structured schema and a local character cap.
+
 Model comparisons use an explicit two-step flow. `generate
 --capture-model-inputs` writes the exact classifier batch and post-fetch summary
 inputs to `data/model-eval-inputs/YYYY-MM-DD.json`. `evaluate-model --date
@@ -51,6 +64,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 | `hn_client.py` | Algolia and official Hacker News API clients | Sources, retries, parsing, or Hacker News URLs |
 | `keywords.py` | Keyword and URL-token matching | AI keyword recognition |
 | `model_backend.py` | Provider-neutral model contracts and the current Codex adapter | Adding a model provider or changing provider selection |
+| `gemini_backend.py` | Gemini Interactions API adapter, structured-output validation, and bounded retry | Gemini models, request/response handling, provider errors, or usage logging |
 | `model_evaluation.py` | Versioned model-input capture and side-effect-free replay | Comparing classifier or summarizer backends on identical inputs |
 | `topic_classifier.py` | Codex classification for candidates without strong keyword evidence | Topic routing or classifier prompts |
 | `scoring.py` | Heat, keyword, and topic scoring | Ranking formulas or recommendation reasons |
@@ -68,6 +82,9 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - Tests must be deterministic and must not call live Hacker News APIs or the real `codex` command.
 - Model evaluation input is schema-versioned, bounded to the production classifier and section limits, and contains only the exact candidate fields used by model prompts. Keep generated evaluation inputs and results under the Git-ignored `data/` directory because they can include public article text.
 - `evaluate-model` is read-only with respect to its input, `recommendation-history.json`, and `publish-state.json`. It may write only its backend-specific result file under `data/model-evaluations/`.
+- Gemini is evaluation-only until an explicit production cutover. `generate --backend gemini` must remain rejected so an operator cannot mistake an evaluation provider for the active production backend.
+- Gemini credentials come only from `GEMINI_API_KEY`; model overrides come from `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`. Do not add an environment-configurable API endpoint, put the key in URLs or logs, or persist it in evaluation artifacts.
+- Gemini requests set `store` to false, but that does not override provider-level Free Tier data-use terms. Only captured public content approved for provider processing belongs in model evaluations.
 - A failure in one external source must not discard successful results from another source. Classifier, article-fetch, and summarizer failures must retain their documented fallback behavior.
 - `data/recommendation-history.json` suppresses recently selected story IDs. `data/YYYY-MM-DD-hn-candidates.json` is a per-run audit artifact for selection review; the two files are not interchangeable.
 - Mutations to `Candidate` fields—including `selected`, `section`, `rejection_reason`, `summary`, `why`, and `topic_route`—are observable in rendered output or candidate audit data. Update tests when their meaning changes.

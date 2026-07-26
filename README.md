@@ -52,7 +52,7 @@ daily-brief generate
 ```
 
 当前生产 backend 仍然是本地 Codex。为了在不影响每日生成、推荐历史和发布状态的
-前提下比较后续的 Gemini 等 provider，可以在某次正常生成时显式捕获模型的精确输入：
+前提下比较 Gemini 等 provider，可以在某次正常生成时显式捕获模型的精确输入：
 
 ```bash
 daily-brief generate --capture-model-inputs
@@ -65,10 +65,36 @@ daily-brief generate --capture-model-inputs
 daily-brief evaluate-model --date YYYY-MM-DD --backend codex
 ```
 
-结果写入 `data/model-evaluations/YYYY-MM-DD-codex.json`，记录分类结果、每条摘要、耗时和
+结果写入 `data/model-evaluations/YYYY-MM-DD-<backend>.json`，记录分类结果、每条摘要、耗时和
 失败信息。`evaluate-model` 不抓取网络内容，不生成或发布简报，也不会修改
 `recommendation-history.json` 或 `publish-state.json`。捕获输入和评测结果可能包含公开
 文章正文，均位于被 Git 忽略的 `data/` 目录中，不应提交到仓库。
+
+### Gemini evaluation
+
+Gemini backend 使用官方 [Interactions REST API](https://ai.google.dev/api/interactions-api)
+和 [structured output](https://ai.google.dev/gemini-api/docs/structured-output)，不增加 Python
+runtime dependency。默认固定使用：
+
+- `gemini-3.5-flash-lite`：主题分类；
+- `gemini-3.6-flash`：中文摘要。
+
+创建 Gemini auth API key 后，把 secret 放进仓库外、权限为 `0600` 的环境文件，不要粘贴到
+聊天、提交到 Git 或写入命令行参数。加载 `GEMINI_API_KEY` 后运行：
+
+```bash
+daily-brief evaluate-model --date YYYY-MM-DD --backend gemini
+```
+
+如需评测其他固定模型，可通过 `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` 和
+`DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL` 覆盖默认值；不要使用会自动切换的 `latest` alias。
+API key 只通过 request header 发送，调用显式设置 `store: false`。客户端只重试网络错误、
+408、429 和 5xx，且不会把 key 写入日志。`store: false` 不改变 Gemini Free Tier 的数据使用
+[Free Tier 数据条款](https://ai.google.dev/gemini-api/docs/pricing)；评测输入应继续只包含
+可接受发送给 provider 的公开内容。
+
+`--backend gemini` 当前仅允许用于 `evaluate-model`。在评测质量通过并明确切换前，正式
+`generate` 仍固定使用 Codex。
 
 生成结果保存在：
 

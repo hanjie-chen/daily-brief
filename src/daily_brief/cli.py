@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .article_fetcher import fetch_article_text
 from .config import TIMEZONE, TOPIC_CLASSIFIER_MAX_CANDIDATES
+from .gemini_backend import GeminiBackend
 from .history import load_history, recent_ids, save_history
 from .hn_client import fetch_algolia_stories, fetch_hot_stories
 from .keywords import match_keywords
@@ -84,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--capture-model-inputs", action="store_true")
-    parser.add_argument("--backend", choices=["codex"], default="codex")
+    parser.add_argument("--backend", choices=["codex", "gemini"], default="codex")
     return parser
 
 
@@ -95,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command != "evaluate-model" and args.backend != "codex":
+        parser.error("--backend gemini is currently limited to evaluate-model")
     if args.dry_run:
         return 0
     if args.command == "generate":
@@ -365,6 +368,8 @@ def run_generate(
 def _model_backend(name: str) -> ModelBackend:
     if name == "codex":
         return CodexBackend()
+    if name == "gemini":
+        return GeminiBackend.from_environment()
     raise ValueError(f"unsupported model backend: {name}")
 
 
