@@ -14,14 +14,19 @@ from .config import TIMEZONE, TOPIC_CLASSIFIER_MAX_CANDIDATES
 from .history import load_history, recent_ids, save_history
 from .hn_client import fetch_algolia_stories, fetch_hot_stories
 from .keywords import match_keywords
+from .model_backend import CodexBackend, ModelBackend
+from .model_evaluation import (
+    ModelEvaluationInputError,
+    capture_model_evaluation_input,
+    run_model_evaluation,
+)
 from .models import Candidate, Story
 from .publisher import PublishError, publish_pending
 from .render import render_candidates_json, render_markdown, render_public_brief_json
 from .scoring import score_candidate
 from .selection import dedupe_candidates, select_sections
-from .summarizer import CodexSummarizer, fallback_summary
+from .summarizer import fallback_summary
 from .time_window import daily_window
-from .topic_classifier import CodexTopicClassifier
 
 LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +36,7 @@ class GenerateResult:
     brief_path: Path
     data_path: Path
     public_json_path: Path
+    model_input_path: Path | None = None
 
 
 def _fetch_source(
@@ -69,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="generate",
-        choices=["generate", "publish"],
+        choices=["generate", "publish", "evaluate-model"],
         help="Command to run.",
     )
     parser.add_argument("--output-dir", default="briefs")
@@ -77,6 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--date")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--capture-model-inputs", action="store_true")
+    parser.add_argument("--backend", choices=["codex"], default="codex")
     return parser
 
 
@@ -90,7 +98,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         return 0
     if args.command == "generate":
-        run_generate(output_dir=args.output_dir, data_dir=args.data_dir)
+        run_generate(
+            output_dir=args.output_dir,
+            data_dir=args.data_dir,
+            capture_model_inputs=args.capture_model_inputs,
+        )
     elif args.command == "publish":
         try:
             result = publish_pending(
@@ -107,6 +119,26 @@ def main(argv: list[str] | None = None) -> int:
             result.published,
             result.skipped,
         )
+    elif args.command == "evaluate-model":
+        if not args.date:
+            parser.error("evaluate-model requires --date YYYY-MM-DD")
+        input_path = Path(args.data_dir) / "model-eval-inputs" / f"{args.date}.json"
+        try:
+            result = run_model_evaluation(
+                input_path,
+                Path(args.data_dir) / "model-evaluations",
+                _model_backend(args.backend),
+            )
+        except (ModelEvaluationInputError, OSError, ValueError) as exc:
+            LOGGER.error("component=model_evaluation status=failed message=%s", exc)
+            return 1
+        LOGGER.info(
+            "component=model_evaluation status=completed backend=%s failures=%d output=%s",
+            args.backend,
+            result.failures,
+            result.output_path,
+        )
+        return 1 if result.failures else 0
     return 0
 
 
@@ -121,6 +153,8 @@ def run_generate(
     article_fetcher=None,
     clock: Callable[[], float] = time.monotonic,
     generated_at: str | None = None,
+    model_backend: ModelBackend | None = None,
+    capture_model_inputs: bool = False,
 ) -> GenerateResult:
     window = daily_window()
     label = date_label or window.date_label
@@ -182,7 +216,10 @@ def run_generate(
         ),
         reverse=True,
     )[:TOPIC_CLASSIFIER_MAX_CANDIDATES]
-    topic_classifier = classifier or CodexTopicClassifier()
+    backend = model_backend
+    if classifier is None or summarizer is None:
+        backend = backend or CodexBackend()
+    topic_classifier = classifier or backend
     classification_started = clock()
     try:
         classified_ai_ids = topic_classifier.classify(classification_batch)
@@ -233,8 +270,9 @@ def run_generate(
 
     ai_items, selected_hot_items = select_sections(ai_pool, hot_pool)
     article_client = article_fetcher or fetch_article_text
-    summary_client = summarizer or CodexSummarizer()
-    for candidate in [*ai_items, *selected_hot_items]:
+    summary_client = summarizer or backend
+    summary_candidates = [*ai_items, *selected_hot_items]
+    for candidate in summary_candidates:
         if (
             not candidate.story.story_text.strip()
             and candidate.story.source_url
@@ -284,6 +322,15 @@ def run_generate(
         encoding="utf-8",
     )
     data_path.write_text(render_candidates_json(candidates), encoding="utf-8")
+    model_input_path = None
+    if capture_model_inputs:
+        model_input_path = Path(data_dir) / "model-eval-inputs" / f"{label}.json"
+        capture_model_evaluation_input(
+            model_input_path,
+            label,
+            classification_batch,
+            summary_candidates,
+        )
     try:
         save_history(
             history_path,
@@ -311,7 +358,14 @@ def run_generate(
         brief_path=output_path,
         data_path=data_path,
         public_json_path=public_json_path,
+        model_input_path=model_input_path,
     )
+
+
+def _model_backend(name: str) -> ModelBackend:
+    if name == "codex":
+        return CodexBackend()
+    raise ValueError(f"unsupported model backend: {name}")
 
 
 def _candidate(story: Story) -> Candidate:

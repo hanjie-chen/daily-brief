@@ -5,12 +5,13 @@ import pytest
 
 from daily_brief import cli
 from daily_brief.cli import build_parser, main, run_generate
-from daily_brief.models import Story
+from daily_brief.model_evaluation import capture_model_evaluation_input
+from daily_brief.models import Candidate, Story
 
 
 @pytest.fixture(autouse=True)
 def prevent_live_classifier_and_article_calls(monkeypatch):
-    monkeypatch.setattr(cli, "CodexTopicClassifier", lambda: FakeClassifier())
+    monkeypatch.setattr(cli, "CodexBackend", lambda: FakeModelBackend())
     monkeypatch.setattr(cli, "fetch_article_text", lambda url: "")
 
 
@@ -25,6 +26,8 @@ def test_parser_defaults_to_generate_command():
     assert args.date is None
     assert args.force is False
     assert args.dry_run is False
+    assert args.capture_model_inputs is False
+    assert args.backend == "codex"
 
 
 def test_run_generate_writes_markdown_and_json(tmp_path):
@@ -396,6 +399,34 @@ def test_main_dry_run_does_not_create_output_directories_or_files(
     assert not data_dir.exists()
 
 
+def test_main_evaluate_model_replays_captured_input(tmp_path):
+    data_dir = tmp_path / "data"
+    input_path = data_dir / "model-eval-inputs/2026-07-20.json"
+    capture_model_evaluation_input(
+        input_path,
+        "2026-07-20",
+        [Candidate(story("1", "AI tool"))],
+        [Candidate(story("1", "AI tool", story_text="Grounded facts."))],
+    )
+
+    exit_code = main(
+        [
+            "evaluate-model",
+            "--date",
+            "2026-07-20",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    output_path = data_dir / "model-evaluations/2026-07-20-fake.json"
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["backend"] == "fake"
+    assert payload["classifier"]["status"] == "success"
+    assert payload["summaries"][0]["summary"] == "Summary for AI tool"
+
+
 def test_classifier_promotes_high_heat_unmatched_story_to_ai(tmp_path, caplog):
     classifier = FakeClassifier({"1"})
 
@@ -599,6 +630,46 @@ def test_selected_external_article_text_reaches_summarizer(tmp_path):
     assert summarizer.fetched_texts == ["Grounded article facts."]
 
 
+def test_run_generate_can_capture_exact_model_inputs(tmp_path):
+    data_dir = tmp_path / "data"
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=data_dir,
+        date_label="2026-07-20",
+        algolia_stories=[
+            story(
+                "1",
+                "Claude release",
+                points=40,
+                comments=8,
+                url="https://example.com/selected",
+            ),
+            story("2", "Database release", points=20, comments=3),
+        ],
+        hot_stories=[],
+        classifier=FakeClassifier(),
+        article_fetcher=lambda url: "Grounded article facts.",
+        summarizer=FakeSummarizer(),
+        capture_model_inputs=True,
+    )
+
+    assert result.model_input_path == data_dir / "model-eval-inputs/2026-07-20.json"
+    payload = json.loads(result.model_input_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert [item["hn_item_id"] for item in payload["classifier_candidates"]] == [
+        "2"
+    ]
+    assert [item["hn_item_id"] for item in payload["summary_candidates"]] == [
+        "1",
+        "2",
+    ]
+    assert (
+        payload["summary_candidates"][0]["fetched_text"]
+        == "Grounded article facts."
+    )
+
+
 def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
     def raise_fetch_error(url):
         raise RuntimeError("article unavailable")
@@ -649,6 +720,14 @@ class FakeClassifier:
     def classify(self, candidates):
         self.seen_ids = [candidate.story.hn_item_id for candidate in candidates]
         return self.selected_ids
+
+
+class FakeModelBackend(FakeSummarizer, FakeClassifier):
+    name = "fake"
+
+    def __init__(self):
+        FakeSummarizer.__init__(self)
+        FakeClassifier.__init__(self)
 
 
 class RaisingClassifier:
