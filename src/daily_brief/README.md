@@ -24,6 +24,18 @@ This guide documents stable module boundaries, data flow, and maintenance entry 
 9. `render.py` produces the Markdown brief, schema-versioned public JSON, and candidate JSON, and `history.py` records the selected story IDs.
 10. `publisher.py` sends changed public JSON files to the website and records successful content hashes for idempotent retry.
 
+`model_backend.py` is the provider-neutral boundary for classification and
+summarization. Production currently constructs `CodexBackend`, which delegates to
+the existing Codex classifier and summarizer without changing their prompts or
+fallback behavior.
+
+Model comparisons use an explicit two-step flow. `generate
+--capture-model-inputs` writes the exact classifier batch and post-fetch summary
+inputs to `data/model-eval-inputs/YYYY-MM-DD.json`. `evaluate-model --date
+YYYY-MM-DD --backend codex` replays that immutable input and writes an isolated
+result under `data/model-evaluations/`. Evaluation never fetches sources, renders
+or publishes a brief, or reads and writes recommendation and publishing state.
+
 Data sources, the topic classifier, article fetching, summarization, and history writes each have their own failure handling. Preserve the pipeline's ability to produce partial results when changing these stages.
 
 ## Module Map
@@ -38,6 +50,8 @@ Data sources, the topic classifier, article fetching, summarization, and history
 | `time_window.py` | Daily collection window | Timezone or daily boundary behavior |
 | `hn_client.py` | Algolia and official Hacker News API clients | Sources, retries, parsing, or Hacker News URLs |
 | `keywords.py` | Keyword and URL-token matching | AI keyword recognition |
+| `model_backend.py` | Provider-neutral model contracts and the current Codex adapter | Adding a model provider or changing provider selection |
+| `model_evaluation.py` | Versioned model-input capture and side-effect-free replay | Comparing classifier or summarizer backends on identical inputs |
 | `topic_classifier.py` | Codex classification for candidates without strong keyword evidence | Topic routing or classifier prompts |
 | `scoring.py` | Heat, keyword, and topic scoring | Ranking formulas or recommendation reasons |
 | `selection.py` | Duplicate handling and final section selection | Eligibility, quotas, deduplication, or rejection reasons |
@@ -52,6 +66,8 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - Hacker News titles, story text, fetched article content, URLs, and source hosts are untrusted input. Codex prompts must continue to label supplied content as untrusted and must not follow instructions contained in it.
 - Article retrieval must only access validated public HTTP(S) destinations. Preserve address validation across the initial URL, redirects, and the final response URL, along with response size and timeout bounds.
 - Tests must be deterministic and must not call live Hacker News APIs or the real `codex` command.
+- Model evaluation input is schema-versioned, bounded to the production classifier and section limits, and contains only the exact candidate fields used by model prompts. Keep generated evaluation inputs and results under the Git-ignored `data/` directory because they can include public article text.
+- `evaluate-model` is read-only with respect to its input, `recommendation-history.json`, and `publish-state.json`. It may write only its backend-specific result file under `data/model-evaluations/`.
 - A failure in one external source must not discard successful results from another source. Classifier, article-fetch, and summarizer failures must retain their documented fallback behavior.
 - `data/recommendation-history.json` suppresses recently selected story IDs. `data/YYYY-MM-DD-hn-candidates.json` is a per-run audit artifact for selection review; the two files are not interchangeable.
 - Mutations to `Candidate` fields—including `selected`, `section`, `rejection_reason`, `summary`, `why`, and `topic_route`—are observable in rendered output or candidate audit data. Update tests when their meaning changes.

@@ -32,7 +32,7 @@ Daily Brief 目前生成一份 Markdown 简报，内容分为两部分：
 1. 从 Hacker News 收集过去一天的新内容和当前热门内容；
 2. 根据关键词、points 和 comments 对内容进行筛选和排序；
 3. 对重复内容去重，选出 AI 相关内容和少量全站热门内容；
-4. 使用本地 Codex 生成中文摘要，并输出为 Markdown 简报。
+4. 通过统一的模型 backend 调用本地 Codex 完成主题分类和中文摘要，并输出为 Markdown 简报。
 
 ## Architecture
 
@@ -50,6 +50,25 @@ pip install -e .
 
 daily-brief generate
 ```
+
+当前生产 backend 仍然是本地 Codex。为了在不影响每日生成、推荐历史和发布状态的
+前提下比较后续的 Gemini 等 provider，可以在某次正常生成时显式捕获模型的精确输入：
+
+```bash
+daily-brief generate --capture-model-inputs
+```
+
+捕获文件保存在 `data/model-eval-inputs/YYYY-MM-DD.json`，包括当天分类批次，以及完成
+文章抓取后实际送入摘要模型的文本。之后可以反复离线重放同一输入：
+
+```bash
+daily-brief evaluate-model --date YYYY-MM-DD --backend codex
+```
+
+结果写入 `data/model-evaluations/YYYY-MM-DD-codex.json`，记录分类结果、每条摘要、耗时和
+失败信息。`evaluate-model` 不抓取网络内容，不生成或发布简报，也不会修改
+`recommendation-history.json` 或 `publish-state.json`。捕获输入和评测结果可能包含公开
+文章正文，均位于被 Git 忽略的 `data/` 目录中，不应提交到仓库。
 
 生成结果保存在：
 
