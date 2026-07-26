@@ -91,16 +91,29 @@ def interaction(output, *, usage=None, status="completed"):
     return payload
 
 
-def http_error(status: int, message: str, retry_after: str | None = None):
+def http_error(
+    status: int,
+    message: str,
+    retry_after: str | None = None,
+    retry_delay: str | None = None,
+):
     headers = Message()
     if retry_after is not None:
         headers["Retry-After"] = retry_after
+    error = {"message": message}
+    if retry_delay is not None:
+        error["details"] = [
+            {
+                "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                "retryDelay": retry_delay,
+            }
+        ]
     return HTTPError(
         INTERACTIONS_URL,
         status,
         message,
         headers,
-        io.BytesIO(json.dumps({"error": {"message": message}}).encode()),
+        io.BytesIO(json.dumps({"error": error}).encode()),
     )
 
 
@@ -171,6 +184,7 @@ def test_summarizer_uses_fetched_text_and_logs_usage(caplog):
     assert payload["model"] == DEFAULT_SUMMARIZER_MODEL
     assert "Grounded article facts." in payload["input"]
     assert payload["response_format"]["schema"]["required"] == ["summary"]
+    assert payload["generation_config"] == {"max_output_tokens": 2048}
     assert "input_tokens=100" in caplog.text
     assert "thought_tokens=10" in caplog.text
     assert "secret-key" not in caplog.text
@@ -194,6 +208,24 @@ def test_transient_http_errors_retry_with_retry_after_and_backoff():
     assert backend.classify([candidate("1", "Database")]) == set()
     assert len(opener.calls) == 3
     assert delays == [2.5, 2.25]
+
+
+def test_quota_error_retries_with_bounded_provider_retry_delay():
+    delays = []
+    opener = RecordingOpener(
+        http_error(429, "quota reached. Please retry in 39.106525668s."),
+        http_error(429, "quota reached", retry_delay="999s"),
+        FakeResponse(interaction({"selected_ids": []})),
+    )
+    backend = GeminiBackend(
+        api_key="secret-key",
+        opener=opener,
+        sleeper=delays.append,
+    )
+
+    assert backend.classify([candidate("1", "Database")]) == set()
+    assert len(opener.calls) == 3
+    assert delays == [39.106525668, 60.0]
 
 
 def test_network_error_retries_only_up_to_configured_limit():

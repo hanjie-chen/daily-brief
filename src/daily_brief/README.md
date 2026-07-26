@@ -35,7 +35,12 @@ pins separate GA models for classification and summarization, requests structure
 JSON, and validates provider output again against application invariants. The
 adapter keeps its endpoint fixed, authenticates only with the `x-goog-api-key`
 header, disables interaction storage, and performs bounded retry with backoff and
-jitter only for network failures, HTTP 408/429, and 5xx responses.
+jitter only for network failures, HTTP 408/429, and 5xx responses. Provider retry
+delays from `Retry-After`, structured `google.rpc.RetryInfo` details, or Gemini's
+explicit `Please retry in ...` quota message take precedence over local backoff
+and are capped at 60 seconds. The summarization generation budget leaves room for
+model thinking tokens, while the returned summary remains constrained by the
+structured schema and a local character cap.
 
 Model comparisons use an explicit two-step flow. `generate
 --capture-model-inputs` writes the exact classifier batch and post-fetch summary

@@ -28,7 +28,11 @@ RETRYABLE_HTTP_STATUSES = {408, 429}
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_SUMMARY_CHARS = 1000
 CLASSIFIER_MAX_OUTPUT_TOKENS = 512
-SUMMARY_MAX_OUTPUT_TOKENS = 1024
+SUMMARY_MAX_OUTPUT_TOKENS = 2048
+RETRY_DELAY_PATTERN = re.compile(r"^(\d+)(?:\.(\d{1,9}))?s$")
+RETRY_MESSAGE_PATTERN = re.compile(
+    r"(?:^|\s)Please retry in (\d+(?:\.\d{1,9})?)s(?:[.\s]|$)"
+)
 
 
 class GeminiConfigurationError(ValueError):
@@ -220,7 +224,9 @@ class GeminiBackend:
             except HTTPError as exc:
                 error_body = exc.read(MAX_RESPONSE_BYTES + 1)
                 if _is_retryable_status(exc.code) and attempt < self.max_retries:
-                    self.sleeper(self._retry_delay(attempt, exc.headers))
+                    self.sleeper(
+                        self._retry_delay(attempt, exc.headers, error_body)
+                    )
                     continue
                 raise GeminiAPIError(
                     _http_error_message(exc.code, error_body)
@@ -244,13 +250,18 @@ class GeminiBackend:
             return decoded
         raise AssertionError("Gemini retry loop ended unexpectedly")
 
-    def _retry_delay(self, attempt: int, headers) -> float:
+    def _retry_delay(
+        self, attempt: int, headers, error_body: bytes | None = None
+    ) -> float:
         retry_after = headers.get("Retry-After") if headers is not None else None
         if retry_after is not None:
             try:
                 return min(max(float(retry_after), 0.0), 60.0)
             except ValueError:
                 pass
+        provider_delay = _retry_delay_from_error(error_body)
+        if provider_delay is not None:
+            return min(max(provider_delay, 0.0), 60.0)
         base_delay = self.retry_base_seconds * (2**attempt)
         return min(base_delay + self.jitter(0.0, self.retry_base_seconds), 60.0)
 
@@ -277,6 +288,42 @@ def _http_error_message(status: int, body: bytes) -> str:
         pass
     suffix = f": {message}" if message else ""
     return f"Gemini API HTTP {status}{suffix}"
+
+
+def _retry_delay_from_error(body: bytes | None) -> float | None:
+    if not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    details = error.get("details") if isinstance(error, dict) else None
+    if isinstance(details, list):
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            detail_type = detail.get("@type")
+            retry_delay = detail.get("retryDelay")
+            if (
+                not isinstance(detail_type, str)
+                or not detail_type.endswith("google.rpc.RetryInfo")
+                or not isinstance(retry_delay, str)
+            ):
+                continue
+            match = RETRY_DELAY_PATTERN.fullmatch(retry_delay)
+            if match is None:
+                continue
+            fraction = match.group(2) or ""
+            return float(match.group(1)) + (
+                int(fraction) / (10 ** len(fraction)) if fraction else 0.0
+            )
+    message = error.get("message") if isinstance(error, dict) else None
+    if isinstance(message, str):
+        match = RETRY_MESSAGE_PATTERN.search(message)
+        if match is not None:
+            return float(match.group(1))
+    return None
 
 
 def _extract_output_text(response: dict) -> str:
