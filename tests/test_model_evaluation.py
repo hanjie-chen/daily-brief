@@ -54,6 +54,11 @@ class PartiallyFailingBackend(FakeBackend):
         return super().summarize(item)
 
 
+class MixedScriptBackend(FakeBackend):
+    def summarize(self, item):
+        return "  Anthropic发布Claude 5模型。\n"
+
+
 def test_capture_and_load_preserve_exact_unicode_model_inputs(tmp_path):
     input_path = tmp_path / "input.json"
     capture_model_evaluation_input(
@@ -140,6 +145,26 @@ def test_evaluation_records_partial_failures_and_continues(tmp_path):
     assert payload["summaries"][0]["status"] == "success"
     assert payload["summaries"][1]["status"] == "failed"
     assert payload["summaries"][1]["summary"] == ""
+
+
+def test_evaluation_normalizes_summary_before_writing_artifact(tmp_path):
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(
+        input_path,
+        "2026-07-20",
+        [],
+        [candidate("1", "AI tool")],
+    )
+
+    result = run_model_evaluation(
+        input_path,
+        tmp_path / "results",
+        MixedScriptBackend(),
+        clock=iter([1.0, 1.1, 2.0, 2.2]).__next__,
+    )
+
+    payload = json.loads(result.output_path.read_text(encoding="utf-8"))
+    assert payload["summaries"][0]["summary"] == "Anthropic 发布 Claude 5 模型。"
 
 
 @pytest.mark.parametrize(

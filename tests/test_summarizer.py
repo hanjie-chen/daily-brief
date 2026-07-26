@@ -5,6 +5,7 @@ from daily_brief.summarizer import (
     SUMMARY_SYSTEM_INSTRUCTION,
     CodexSummarizer,
     fallback_summary,
+    normalize_summary_text,
 )
 
 
@@ -39,6 +40,19 @@ def test_fallback_summary_reports_that_reliable_summary_is_unavailable():
     text = fallback_summary(candidate())
 
     assert text == "未能生成可靠摘要，请查看原文或讨论。"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Anthropic发布Claude 5模型。", "Anthropic 发布 Claude 5 模型。"),
+        ("第3代AI模型", "第 3 代 AI 模型"),
+        ("已规范 Claude 3.5 Flash 文本。", "已规范 Claude 3.5 Flash 文本。"),
+        ("  中文摘要。\n", "中文摘要。"),
+    ],
+)
+def test_normalize_summary_text_adds_han_ascii_boundary_spaces(raw, expected):
+    assert normalize_summary_text(raw) == expected
 
 
 def test_codex_summarizer_builds_prompt_and_returns_stdout(monkeypatch):
@@ -83,6 +97,10 @@ def test_codex_summarizer_builds_prompt_and_returns_stdout(monkeypatch):
     assert "中文" in calls["input"]
     assert "untrusted" in calls["input"]
     assert "不要推断" in calls["input"]
+    assert "简单内容优先用一句话" in calls["input"]
+    assert "重要的英文技术术语" in calls["input"]
+    assert "Source URL 和 HN Discussion 仅是元数据" in calls["input"]
+    assert "不得根据 URL、域名或" in calls["input"]
     assert "Points:" not in calls["input"]
     assert "Comments:" not in calls["input"]
     assert "Matched keywords:" not in calls["input"]

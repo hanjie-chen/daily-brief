@@ -26,7 +26,7 @@ from .publisher import PublishError, publish_pending
 from .render import render_candidates_json, render_markdown, render_public_brief_json
 from .scoring import score_candidate
 from .selection import dedupe_candidates, select_sections
-from .summarizer import fallback_summary
+from .summarizer import fallback_summary, normalize_summary_text
 from .time_window import daily_window
 
 LOGGER = logging.getLogger(__name__)
@@ -295,7 +295,9 @@ def run_generate(
                     exc,
                 )
         try:
-            candidate.summary = summary_client.summarize(candidate)
+            candidate.summary = normalize_summary_text(
+                summary_client.summarize(candidate)
+            )
         except Exception as exc:
             print(f"Summary failed for {candidate.story.title}: {exc}", file=sys.stderr)
             candidate.summary = fallback_summary(candidate)

@@ -18,6 +18,7 @@ from .config import (
 )
 from .model_backend import ModelBackend, ensure_selected_ids
 from .models import Candidate, Story
+from .summarizer import normalize_summary_text
 
 SCHEMA_VERSION = 1
 MAX_SUMMARY_CANDIDATES = AI_MAX_ITEMS + NON_AI_MAX_ITEMS
@@ -145,7 +146,7 @@ def run_model_evaluation(
     for candidate in evaluation_input.summary_candidates:
         summary_started = clock()
         try:
-            summary = backend.summarize(candidate).strip()
+            summary = normalize_summary_text(backend.summarize(candidate))
             if not summary:
                 raise RuntimeError("model backend returned an empty summary")
         except Exception as exc:

@@ -135,6 +135,22 @@ def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path, cap
     )
 
 
+def test_run_generate_normalizes_summary_before_writing_outputs(tmp_path):
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        summarizer=MixedScriptSummarizer(),
+    )
+
+    expected = "Anthropic 发布 Claude 5 模型。"
+    assert expected in result.brief_path.read_text(encoding="utf-8")
+    public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    assert public_payload["sections"]["ai"]["items"][0]["summary"] == expected
+
+
 def test_run_generate_writes_files_when_algolia_fetch_fails(tmp_path, monkeypatch):
     output_dir = tmp_path / "briefs"
     data_dir = tmp_path / "data"
@@ -728,6 +744,11 @@ class FakeSummarizer:
 class RaisingSummarizer:
     def summarize(self, candidate):
         raise RuntimeError("boom")
+
+
+class MixedScriptSummarizer:
+    def summarize(self, candidate):
+        return "  Anthropic发布Claude 5模型。\n"
 
 
 class CapturingSummarizer:

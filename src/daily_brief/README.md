@@ -20,7 +20,7 @@ This guide documents stable module boundaries, data flow, and maintenance entry 
 5. `selection.py` first deduplicates candidates, and `history.py` excludes stories recommended recently.
 6. Candidates with explicit non-weak keyword matches enter the AI pool directly. `topic_classifier.py` evaluates the highest-ranked remaining candidates for AI relevance.
 7. `selection.py` applies eligibility thresholds, ranking, and section limits to select AI stories and a small number of non-AI hot stories.
-8. `article_fetcher.py` retrieves article text when needed, and `summarizer.py` invokes local Codex to generate a Chinese summary.
+8. `article_fetcher.py` retrieves article text when needed, and `summarizer.py` supplies the shared grounded-summary prompt, invokes local Codex, and canonicalizes model output before it enters rendering or evaluation artifacts.
 9. `render.py` produces the Markdown brief, schema-versioned public JSON, and candidate JSON, and `history.py` records the selected story IDs.
 10. `publisher.py` sends changed public JSON files to the website and records successful content hashes for idempotent retry.
 
@@ -71,7 +71,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 | `selection.py` | Duplicate handling and final section selection | Eligibility, quotas, deduplication, or rejection reasons |
 | `history.py` | Recent recommendation history | Repeat suppression or history retention |
 | `article_fetcher.py` | Bounded public HTTP(S) article fetching and visible-text extraction | Article retrieval, parsing, or network safety |
-| `summarizer.py` | Codex summaries and fallback text | Summary prompts, execution, or fallback behavior |
+| `summarizer.py` | Shared summary prompt, Codex execution, provider-neutral typography normalization, and fallback text | Summary prompts, execution, output normalization, or fallback behavior |
 | `render.py` | Markdown brief and candidate JSON serialization | Output format |
 | `publisher.py` | Authenticated website publishing, retry, and local success state | Delivery behavior or publish configuration |
 
@@ -85,6 +85,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - Gemini is evaluation-only until an explicit production cutover. `generate --backend gemini` must remain rejected so an operator cannot mistake an evaluation provider for the active production backend.
 - Gemini credentials come only from `GEMINI_API_KEY`; model overrides come from `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`. Do not add an environment-configurable API endpoint, put the key in URLs or logs, or persist it in evaluation artifacts.
 - Gemini requests set `store` to false, but that does not override provider-level Free Tier data-use terms. Only captured public content approved for provider processing belongs in model evaluations.
+- Production and evaluation summaries use the same deterministic boundary normalization: adjacent Han characters and ASCII letters or digits are separated by one space before summaries enter output artifacts.
 - A failure in one external source must not discard successful results from another source. Classifier, article-fetch, and summarizer failures must retain their documented fallback behavior.
 - `data/recommendation-history.json` suppresses recently selected story IDs. `data/YYYY-MM-DD-hn-candidates.json` is a per-run audit artifact for selection review; the two files are not interchangeable.
 - Mutations to `Candidate` fields—including `selected`, `section`, `rejection_reason`, `summary`, `why`, and `topic_route`—are observable in rendered output or candidate audit data. Update tests when their meaning changes.

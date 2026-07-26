@@ -26,6 +26,7 @@ Daily Brief 目前生成一份 Markdown 简报，内容分为两部分：
 - 最多 2 条 Hacker News 全站热门内容，帮助我关注兴趣范围之外的重要话题。
 
 每条内容包含中文摘要、推荐理由、原文链接、Hacker News 讨论链接以及 points 和 comments。
+摘要在写入输出前会统一规范中文与英文、数字交界处的空格，避免不同模型带来排版差异。
 
 ## How It Works
 
