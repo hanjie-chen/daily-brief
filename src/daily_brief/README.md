@@ -18,18 +18,18 @@ This guide documents stable module boundaries, data flow, and maintenance entry 
 3. `Story` and `Candidate` in `models.py` carry source content and selection state through the pipeline.
 4. `keywords.py` matches keywords, and `scoring.py` calculates a score from keyword evidence, points, and comments.
 5. `selection.py` first deduplicates candidates, and `history.py` excludes stories recommended recently.
-6. Candidates with explicit non-weak keyword matches enter the AI pool directly. `topic_classifier.py` evaluates the highest-ranked remaining candidates for AI relevance.
+6. Candidates with explicit non-weak keyword matches enter the AI pool directly. `topic_classifier.py` evaluates the highest-ranked remaining candidates for AI relevance using titles, source hosts, and bounded excerpts of already-available Hacker News story text.
 7. `selection.py` applies eligibility thresholds, ranking, and section limits to select AI stories and a small number of non-AI hot stories.
-8. `article_fetcher.py` retrieves article text when needed, and `summarizer.py` supplies the shared grounded-summary prompt, invokes local Codex, and canonicalizes model output before it enters rendering or evaluation artifacts.
+8. `article_fetcher.py` retrieves article text when needed, and `summarizer.py` supplies the shared grounded-summary prompt and canonicalizes model output before it enters rendering or evaluation artifacts.
 9. `render.py` produces the Markdown brief, schema-versioned public JSON, and candidate JSON, and `history.py` records the selected story IDs.
 10. `publisher.py` sends changed public JSON files to the website and records successful content hashes for idempotent retry.
 
 `model_backend.py` is the provider-neutral boundary for classification and
-summarization. Production currently constructs `CodexBackend`, which delegates to
-the existing Codex classifier and summarizer without changing their prompts or
-fallback behavior.
+summarization. Production constructs `GeminiBackend` by default. `CodexBackend`
+remains available as an explicit local fallback and delegates to the existing
+Codex classifier and summarizer.
 
-`gemini_backend.py` implements the same boundary for controlled evaluation. It
+`gemini_backend.py` implements the production and evaluation provider boundary. It
 uses the Interactions REST API directly through the Python standard library,
 pins classification and summarization model IDs independently, requests structured
 JSON, and validates provider output again against application invariants. The
@@ -63,10 +63,10 @@ Data sources, the topic classifier, article fetching, summarization, and history
 | `time_window.py` | Daily collection window | Timezone or daily boundary behavior |
 | `hn_client.py` | Algolia and official Hacker News API clients | Sources, retries, parsing, or Hacker News URLs |
 | `keywords.py` | Keyword and URL-token matching | AI keyword recognition |
-| `model_backend.py` | Provider-neutral model contracts and the current Codex adapter | Adding a model provider or changing provider selection |
+| `model_backend.py` | Provider-neutral model contracts and the local Codex fallback adapter | Adding a model provider or changing provider selection |
 | `gemini_backend.py` | Gemini Interactions API adapter, structured-output validation, and bounded retry | Gemini models, request/response handling, provider errors, or usage logging |
 | `model_evaluation.py` | Versioned model-input capture and side-effect-free replay | Comparing classifier or summarizer backends on identical inputs |
-| `topic_classifier.py` | Codex classification for candidates without strong keyword evidence | Topic routing or classifier prompts |
+| `topic_classifier.py` | Shared classification prompt and local Codex classifier for candidates without strong keyword evidence | Topic routing, bounded story-text context, or classifier prompts |
 | `scoring.py` | Heat, keyword, and topic scoring | Ranking formulas or recommendation reasons |
 | `selection.py` | Duplicate handling and final section selection | Eligibility, quotas, deduplication, or rejection reasons |
 | `history.py` | Recent recommendation history | Repeat suppression or history retention |
@@ -77,14 +77,15 @@ Data sources, the topic classifier, article fetching, summarization, and history
 
 ## Important Invariants
 
-- Hacker News titles, story text, fetched article content, URLs, and source hosts are untrusted input. Codex prompts must continue to label supplied content as untrusted and must not follow instructions contained in it.
+- Hacker News titles, story text, fetched article content, URLs, and source hosts are untrusted input. Model prompts must continue to label supplied content as untrusted and must not follow instructions contained in it.
 - Article retrieval must only access validated public HTTP(S) destinations. Preserve address validation across the initial URL, redirects, and the final response URL, along with response size and timeout bounds.
-- Tests must be deterministic and must not call live Hacker News APIs or the real `codex` command.
+- Tests must be deterministic and must not call live Hacker News APIs, Gemini, or the real `codex` command.
 - Model evaluation input is schema-versioned, bounded to the production classifier and section limits, and contains only the exact candidate fields used by model prompts. Keep generated evaluation inputs and results under the Git-ignored `data/` directory because they can include public article text.
 - `evaluate-model` is read-only with respect to its input, `recommendation-history.json`, and `publish-state.json`. It may write only its backend-specific result file under `data/model-evaluations/`.
-- Gemini is evaluation-only until an explicit production cutover. `generate --backend gemini` must remain rejected so an operator cannot mistake an evaluation provider for the active production backend.
+- Production `generate` defaults to Gemini; Codex remains an explicit operator-selected fallback. Backend construction must happen before source fetching so missing production credentials fail without partially running the pipeline.
 - Gemini credentials come only from `GEMINI_API_KEY`; model overrides come from `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`. Do not add an environment-configurable API endpoint, put the key in URLs or logs, or persist it in evaluation artifacts.
-- Gemini requests set `store` to false, but that does not override provider-level Free Tier data-use terms. Only captured public content approved for provider processing belongs in model evaluations.
+- Gemini requests set `store` to false, but that does not override provider-level Free Tier data-use terms. Only public content approved for provider processing belongs in production requests and model evaluations.
+- Topic classification may include only an 800-character, whitespace-normalized excerpt of already-available `story_text` per candidate. It must not add article fetches before selection, and all excerpts remain untrusted prompt content.
 - Production and evaluation summaries use the same deterministic boundary normalization: adjacent Han characters and ASCII letters or digits are separated by one space before summaries enter output artifacts.
 - A failure in one external source must not discard successful results from another source. Classifier, article-fetch, and summarizer failures must retain their documented fallback behavior.
 - `data/recommendation-history.json` suppresses recently selected story IDs. `data/YYYY-MM-DD-hn-candidates.json` is a per-run audit artifact for selection review; the two files are not interchangeable.

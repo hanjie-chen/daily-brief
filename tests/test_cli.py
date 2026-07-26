@@ -5,6 +5,7 @@ import pytest
 
 from daily_brief import cli
 from daily_brief.cli import build_parser, main, run_generate
+from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
 from daily_brief.model_evaluation import capture_model_evaluation_input
 from daily_brief.models import Candidate, Story
 
@@ -12,6 +13,7 @@ from daily_brief.models import Candidate, Story
 @pytest.fixture(autouse=True)
 def prevent_live_classifier_and_article_calls(monkeypatch):
     monkeypatch.setattr(cli, "CodexBackend", lambda: FakeModelBackend())
+    monkeypatch.setattr(cli, "GeminiBackend", FakeGeminiBackendFactory)
     monkeypatch.setattr(cli, "fetch_article_text", lambda url: "")
 
 
@@ -27,7 +29,7 @@ def test_parser_defaults_to_generate_command():
     assert args.force is False
     assert args.dry_run is False
     assert args.capture_model_inputs is False
-    assert args.backend == "codex"
+    assert args.backend == "gemini"
 
 
 def test_run_generate_writes_markdown_and_json(tmp_path):
@@ -415,14 +417,33 @@ def test_main_dry_run_does_not_create_output_directories_or_files(
     assert not data_dir.exists()
 
 
-def test_main_rejects_gemini_backend_for_production_generate():
-    with pytest.raises(SystemExit, match="2"):
-        main(["generate", "--backend", "gemini"])
+def test_main_uses_gemini_backend_for_production_generate(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "run_generate", lambda **kwargs: calls.append(kwargs))
+
+    assert main(["generate"]) == 0
+
+    assert len(calls) == 1
+    assert calls[0]["model_backend"].name == "fake"
+
+
+def test_main_reports_missing_gemini_key_for_production_generate(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(cli, "GeminiBackend", RealGeminiBackend)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+        exit_code = main(["generate"])
+
+    assert exit_code == 1
+    assert "GEMINI_API_KEY is not configured" in caplog.text
 
 
 def test_main_reports_missing_gemini_key_for_evaluation(
     tmp_path, monkeypatch, caplog
 ):
+    monkeypatch.setattr(cli, "GeminiBackend", RealGeminiBackend)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
@@ -776,6 +797,12 @@ class FakeModelBackend(FakeSummarizer, FakeClassifier):
     def __init__(self):
         FakeSummarizer.__init__(self)
         FakeClassifier.__init__(self)
+
+
+class FakeGeminiBackendFactory:
+    @classmethod
+    def from_environment(cls):
+        return FakeModelBackend()
 
 
 class RaisingClassifier:

@@ -33,7 +33,7 @@ Daily Brief 目前生成一份 Markdown 简报，内容分为两部分：
 1. 从 Hacker News 收集过去一天的新内容和当前热门内容；
 2. 根据关键词、points 和 comments 对内容进行筛选和排序；
 3. 对重复内容去重，选出 AI 相关内容和少量全站热门内容；
-4. 通过统一的模型 backend 调用本地 Codex 完成主题分类和中文摘要，并输出为 Markdown 简报。
+4. 通过统一的模型 backend 调用 Gemini Flash-Lite 完成主题分类和中文摘要，并输出为 Markdown 简报。
 
 ## Architecture
 
@@ -42,18 +42,24 @@ Python package 的生成链路、模块职责、关键不变量与常见改动�
 
 ## Run
 
-需要 Python 3.12 或更高版本，并确保本地已经可以使用 `codex` 命令。
+需要 Python 3.12 或更高版本，以及可用的 Gemini API key。key 保存在 Git 忽略的本地
+`.env` 中，文件权限应为 `0600`；不要把 key 粘贴到聊天、提交到 Git 或写入命令行参数。
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
+set -a
+source .env
+set +a
 daily-brief generate
 ```
 
-当前生产 backend 仍然是本地 Codex。为了在不影响每日生成、推荐历史和发布状态的
-前提下比较 Gemini 等 provider，可以在某次正常生成时显式捕获模型的精确输入：
+正式 `generate` 默认使用 `gemini-3.5-flash-lite` 完成分类和摘要。分类会在标题和 source
+host 之外使用每条最多 800 字符的已有 Hacker News `story_text` 摘录，不会为分类额外抓取
+外部文章。为了在不影响每日生成、推荐历史和发布状态的前提下比较其他 provider，可以
+在某次正常生成时显式捕获模型的精确输入：
 
 ```bash
 daily-brief generate --capture-model-inputs
@@ -71,7 +77,7 @@ daily-brief evaluate-model --date YYYY-MM-DD --backend codex
 `recommendation-history.json` 或 `publish-state.json`。捕获输入和评测结果可能包含公开
 文章正文，均位于被 Git 忽略的 `data/` 目录中，不应提交到仓库。
 
-### Gemini evaluation
+### Gemini backend
 
 Gemini backend 使用官方 [Interactions REST API](https://ai.google.dev/api/interactions-api)
 和 [structured output](https://ai.google.dev/gemini-api/docs/structured-output)，不增加 Python
@@ -83,8 +89,7 @@ runtime dependency。默认固定使用：
 摘要模型经过真实输入盲测后选择 Lite：它与 `gemini-3.6-flash` 的质量接近，但 Free Tier
 额度更适合日常运行和迭代。`gemini-3.6-flash` 仍可通过模型环境变量用于对照评测。
 
-创建 Gemini auth API key 后，把 secret 放进仓库外、权限为 `0600` 的环境文件，不要粘贴到
-聊天、提交到 Git 或写入命令行参数。加载 `GEMINI_API_KEY` 后运行：
+加载 `GEMINI_API_KEY` 后，可以离线重放已捕获的输入：
 
 ```bash
 daily-brief evaluate-model --date YYYY-MM-DD --backend gemini
@@ -97,8 +102,8 @@ API key 只通过 request header 发送，调用显式设置 `store: false`。�
 [Free Tier 数据条款](https://ai.google.dev/gemini-api/docs/pricing)；评测输入应继续只包含
 可接受发送给 provider 的公开内容。
 
-`--backend gemini` 当前仅允许用于 `evaluate-model`。在评测质量通过并明确切换前，正式
-`generate` 仍固定使用 Codex。
+如需临时回退到本地 Codex，可显式运行 `daily-brief generate --backend codex`；它不再是
+默认生产路径。
 
 生成结果保存在：
 
@@ -126,6 +131,8 @@ daily-brief publish --date YYYY-MM-DD --force
 daily-brief generate && daily-brief publish
 ```
 
-发布 secret 应保存在仓库外、权限为 `0600` 的环境配置文件中，不应写进 Git 或直接展开在 crontab 中。现有 Markdown 不回填；网站归档从结构化 JSON 发布启用之日开始。
+cron 会从 Git 忽略且权限为 `0600` 的 `.env` 加载 Gemini key，并从仓库外的发布配置加载
+website secret；secret 不应直接展开在 crontab 中。现有 Markdown 不回填；网站归档从
+结构化 JSON 发布启用之日开始。
 
 首轮上线后的 1–2 周使用固定的 `Daily Brief Feedback` 对话记录 `opened`、`useful`、`noisy` 对应的 `hn_item_id` 和可选 `note`，每周汇总一次，用于后续校准筛选策略。

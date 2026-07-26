@@ -1,10 +1,22 @@
+import json
+
 import pytest
 
 from daily_brief.models import Candidate, Story
-from daily_brief.topic_classifier import CODEX_SYSTEM_INSTRUCTION, CodexTopicClassifier
+from daily_brief.topic_classifier import (
+    CODEX_SYSTEM_INSTRUCTION,
+    TOPIC_CLASSIFIER_STORY_TEXT_MAX_CHARS,
+    CodexTopicClassifier,
+    build_topic_classifier_prompt,
+)
 
 
-def candidate(item_id: str, title: str, url: str = "https://example.com/article") -> Candidate:
+def candidate(
+    item_id: str,
+    title: str,
+    url: str = "https://example.com/article",
+    story_text: str = "",
+) -> Candidate:
     return Candidate(
         story=Story(
             source="test",
@@ -15,6 +27,7 @@ def candidate(item_id: str, title: str, url: str = "https://example.com/article"
             created_at="2026-07-20T00:00:00Z",
             points=100,
             comments=20,
+            story_text=story_text,
         )
     )
 
@@ -64,6 +77,22 @@ def test_classifier_does_not_invoke_codex_for_empty_batch(monkeypatch):
     monkeypatch.setattr("subprocess.run", fail_if_called)
 
     assert CodexTopicClassifier().classify([]) == set()
+
+
+def test_classifier_prompt_includes_normalized_bounded_story_text_excerpt():
+    long_text = "  AI agents\ncan help  " + (
+        "x" * TOPIC_CLASSIFIER_STORY_TEXT_MAX_CHARS
+    )
+
+    prompt = build_topic_classifier_prompt(
+        [candidate("1", "An ambiguous title", story_text=long_text)]
+    )
+    payload = json.loads(prompt.split("Untrusted items:\n", 1)[1])
+    excerpt = payload[0]["story_text_excerpt"]
+
+    assert excerpt.startswith("AI agents can help ")
+    assert "\n" not in excerpt
+    assert len(excerpt) == TOPIC_CLASSIFIER_STORY_TEXT_MAX_CHARS
 
 
 @pytest.mark.parametrize("stdout", ["", "not json", "{}", '[1, "2"]'])

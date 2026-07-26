@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--capture-model-inputs", action="store_true")
-    parser.add_argument("--backend", choices=["codex", "gemini"], default="codex")
+    parser.add_argument("--backend", choices=["codex", "gemini"], default="gemini")
     return parser
 
 
@@ -96,15 +96,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command != "evaluate-model" and args.backend != "codex":
-        parser.error("--backend gemini is currently limited to evaluate-model")
     if args.dry_run:
         return 0
     if args.command == "generate":
+        try:
+            backend = _model_backend(args.backend)
+        except ValueError as exc:
+            LOGGER.error("component=model_backend status=failed message=%s", exc)
+            return 1
         run_generate(
             output_dir=args.output_dir,
             data_dir=args.data_dir,
             capture_model_inputs=args.capture_model_inputs,
+            model_backend=backend,
         )
     elif args.command == "publish":
         try:
@@ -221,7 +225,7 @@ def run_generate(
     )[:TOPIC_CLASSIFIER_MAX_CANDIDATES]
     backend = model_backend
     if classifier is None or summarizer is None:
-        backend = backend or CodexBackend()
+        backend = backend or GeminiBackend.from_environment()
     topic_classifier = classifier or backend
     classification_started = clock()
     try:

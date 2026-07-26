@@ -23,7 +23,7 @@ class ModelBackend(Summarizer, TopicClassifier, Protocol):
 
 @dataclass
 class CodexBackend:
-    """Current local model backend, kept behind the provider-neutral contract."""
+    """Local fallback backend kept behind the provider-neutral contract."""
 
     name: ClassVar[str] = "codex"
     summarizer: Summarizer = field(default_factory=CodexSummarizer)
