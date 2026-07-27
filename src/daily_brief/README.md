@@ -92,6 +92,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - Mutations to `Candidate` fields—including `selected`, `section`, `rejection_reason`, `summary`, `why`, and `topic_route`—are observable in rendered output or candidate audit data. Update tests when their meaning changes.
 - Public brief JSON is schema version 1. Every published item carries its stable `hn_item_id`, and the website requires that ID to match the Hacker News discussion URL.
 - Publisher credentials come only from `DAILY_BRIEF_PUBLISH_URL` and `DAILY_BRIEF_PUBLISH_TOKEN`. Never write the token into generated artifacts, logs, Git, or tests.
+- Publisher requests use the stable `daily-brief-publisher/1.0` user agent so the authenticated machine-to-machine endpoint is not mistaken for a malformed browser client by the public edge.
 - `data/publish-state.json` records only successful content hashes. Network and server failures must leave an item pending so a later run can retry it.
 
 ## Common Change Paths

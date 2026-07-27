@@ -16,6 +16,7 @@ PUBLISH_URL_ENV = "DAILY_BRIEF_PUBLISH_URL"
 PUBLISH_TOKEN_ENV = "DAILY_BRIEF_PUBLISH_TOKEN"
 MAX_ATTEMPTS = 3
 REQUEST_TIMEOUT_SECONDS = 10
+PUBLISH_USER_AGENT = "daily-brief-publisher/1.0"
 
 
 class PublishError(RuntimeError):
@@ -127,6 +128,7 @@ def _post_with_retry(url, token, payload_bytes, opener, sleeper) -> None:
         data=payload_bytes,
         headers={
             "Content-Type": "application/json",
+            "User-Agent": PUBLISH_USER_AGENT,
             "X-Daily-Brief-Token": token,
         },
         method="POST",

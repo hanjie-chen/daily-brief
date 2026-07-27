@@ -66,6 +66,7 @@ def test_publish_sends_auth_header_and_records_success_hash(tmp_path):
     assert request.full_url == "https://hanjie-chen.com/internal/briefs"
     assert request.get_header("X-daily-brief-token") == "secret"
     assert request.get_header("Content-type") == "application/json"
+    assert request.get_header("User-agent") == "daily-brief-publisher/1.0"
     assert timeout == 10
     state = json.loads((data_dir / "publish-state.json").read_text(encoding="utf-8"))
     assert (
