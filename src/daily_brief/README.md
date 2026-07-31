@@ -22,7 +22,7 @@ This guide documents stable module boundaries, data flow, and maintenance entry 
 7. `selection.py` applies eligibility thresholds, ranking, and section limits to select AI stories and a small number of non-AI hot stories.
 8. `article_fetcher.py` retrieves article text when needed, and `summarizer.py` supplies the shared grounded-summary prompt and canonicalizes model output before it enters rendering or evaluation artifacts.
 9. `render.py` produces the Markdown brief, schema-versioned public JSON, and candidate JSON, and `history.py` records the selected story IDs.
-10. `publisher.py` sends changed public JSON files to the website and records successful content hashes for idempotent retry.
+10. `publisher.py` sends only the targeted daily public JSON to the website and records its successful content hash for idempotent retry. Normal scheduled publishing targets the current Daily Brief date; historical publishing is explicit.
 
 `model_backend.py` is the provider-neutral boundary for classification and
 summarization. Production constructs `GeminiBackend` by default. `CodexBackend`
@@ -93,7 +93,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - Public brief JSON is schema version 1. Every published item carries its stable `hn_item_id`, and the website requires that ID to match the Hacker News discussion URL.
 - Publisher credentials come only from `DAILY_BRIEF_PUBLISH_URL` and `DAILY_BRIEF_PUBLISH_TOKEN`. Never write the token into generated artifacts, logs, Git, or tests.
 - Publisher requests use the stable `daily-brief-publisher/1.0` user agent so the authenticated machine-to-machine endpoint is not mistaken for a malformed browser client by the public edge.
-- `data/publish-state.json` records only successful content hashes. Network and server failures must leave an item pending so a later run can retry it.
+- `data/publish-state.json` records only successful content hashes. Scheduled publishing targets one date and must never scan or automatically catch up historical files; operators can retry or repair a historical date explicitly with `publish --date`.
 
 ## Common Change Paths
 

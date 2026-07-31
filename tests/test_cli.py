@@ -1,5 +1,6 @@
 import json
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -415,6 +416,46 @@ def test_main_dry_run_does_not_create_output_directories_or_files(
     assert exit_code == 0
     assert not output_dir.exists()
     assert not data_dir.exists()
+
+
+def test_main_publish_targets_current_daily_brief_date(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "daily_window",
+        lambda: SimpleNamespace(date_label="2026-07-31"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "publish_brief",
+        lambda **kwargs: calls.append(kwargs)
+        or SimpleNamespace(published=1, skipped=0),
+    )
+
+    assert main(["publish"]) == 0
+
+    assert calls[0]["date_label"] == "2026-07-31"
+
+
+def test_main_publish_explicit_date_overrides_current_date(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "daily_window",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("explicit publish date must not read the current window")
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "publish_brief",
+        lambda **kwargs: calls.append(kwargs)
+        or SimpleNamespace(published=1, skipped=0),
+    )
+
+    assert main(["publish", "--date", "2026-07-25"]) == 0
+
+    assert calls[0]["date_label"] == "2026-07-25"
 
 
 def test_main_uses_gemini_backend_for_production_generate(monkeypatch):

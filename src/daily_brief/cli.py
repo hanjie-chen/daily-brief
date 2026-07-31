@@ -22,7 +22,7 @@ from .model_evaluation import (
     run_model_evaluation,
 )
 from .models import Candidate, Story
-from .publisher import PublishError, publish_pending
+from .publisher import PublishError, publish_brief
 from .render import render_candidates_json, render_markdown, render_public_brief_json
 from .scoring import score_candidate
 from .selection import dedupe_candidates, select_sections
@@ -111,11 +111,12 @@ def main(argv: list[str] | None = None) -> int:
             model_backend=backend,
         )
     elif args.command == "publish":
+        date_label = args.date or daily_window().date_label
         try:
-            result = publish_pending(
+            result = publish_brief(
                 brief_dir=args.output_dir,
                 data_dir=args.data_dir,
-                date_label=args.date,
+                date_label=date_label,
                 force=args.force,
             )
         except PublishError as exc:

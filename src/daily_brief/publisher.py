@@ -29,10 +29,10 @@ class PublishResult:
     skipped: int
 
 
-def publish_pending(
+def publish_brief(
     brief_dir,
     data_dir,
-    date_label: str | None = None,
+    date_label: str,
     force: bool = False,
     endpoint: str | None = None,
     token: str | None = None,
@@ -46,55 +46,37 @@ def publish_pending(
     if not publish_token:
         raise PublishError(f"{PUBLISH_TOKEN_ENV} is required")
 
-    brief_paths = _brief_paths(Path(brief_dir), date_label)
+    brief_path = _brief_path(Path(brief_dir), date_label)
     state_path = Path(data_dir) / "publish-state.json"
     published_hashes = _load_state(state_path)
-    published_count = 0
-    skipped_count = 0
+    payload_bytes = brief_path.read_bytes()
+    _validate_local_payload(brief_path, payload_bytes)
+    content_hash = hashlib.sha256(payload_bytes).hexdigest()
+    if not force and published_hashes.get(date_label) == content_hash:
+        return PublishResult(published=0, skipped=1)
 
-    for path in brief_paths:
-        payload_bytes = path.read_bytes()
-        _validate_local_payload(path, payload_bytes)
-        content_hash = hashlib.sha256(payload_bytes).hexdigest()
-        label = path.stem
-        if not force and published_hashes.get(label) == content_hash:
-            skipped_count += 1
-            continue
-
-        _post_with_retry(
-            publish_url,
-            publish_token,
-            payload_bytes,
-            opener=opener,
-            sleeper=sleeper,
-        )
-        published_hashes[label] = content_hash
-        _write_state(state_path, published_hashes)
-        published_count += 1
-        LOGGER.info("component=publisher status=success date=%s", label)
-
-    return PublishResult(published=published_count, skipped=skipped_count)
+    _post_with_retry(
+        publish_url,
+        publish_token,
+        payload_bytes,
+        opener=opener,
+        sleeper=sleeper,
+    )
+    published_hashes[date_label] = content_hash
+    _write_state(state_path, published_hashes)
+    LOGGER.info("component=publisher status=success date=%s", date_label)
+    return PublishResult(published=1, skipped=0)
 
 
-def _brief_paths(brief_dir: Path, date_label: str | None) -> list[Path]:
-    if date_label is not None:
-        try:
-            date.fromisoformat(date_label)
-        except ValueError as exc:
-            raise PublishError(f"invalid date: {date_label}") from exc
-        path = brief_dir / f"{date_label}.json"
-        if not path.is_file():
-            raise PublishError(f"brief JSON not found: {path}")
-        return [path]
-
-    paths = []
-    for path in sorted(brief_dir.glob("*.json")):
-        try:
-            date.fromisoformat(path.stem)
-        except ValueError:
-            continue
-        paths.append(path)
-    return paths
+def _brief_path(brief_dir: Path, date_label: str) -> Path:
+    try:
+        date.fromisoformat(date_label)
+    except ValueError as exc:
+        raise PublishError(f"invalid date: {date_label}") from exc
+    path = brief_dir / f"{date_label}.json"
+    if not path.is_file():
+        raise PublishError(f"brief JSON not found: {path}")
+    return path
 
 
 def _validate_local_payload(path: Path, payload_bytes: bytes) -> None:

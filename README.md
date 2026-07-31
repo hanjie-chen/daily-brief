@@ -119,7 +119,7 @@ export DAILY_BRIEF_PUBLISH_TOKEN="<shared-secret>"
 daily-brief publish
 ```
 
-`publish` 默认发送所有尚未成功发布或内容已经变化的 JSON，并在 `data/publish-state.json` 记录成功内容的 SHA-256。网络错误和 5xx 会有限重试；失败内容不会写入成功状态，因此下次运行会自动补发。修正某天内容后可使用：
+`publish` 默认只发送当前 Daily Brief 日界线对应的 JSON，不会扫描或补发历史日期；这样过去某天的坏文件不会阻塞今天发布。它会在 `data/publish-state.json` 记录成功内容的 SHA-256，同一天重复运行时跳过未变化的内容。网络错误和 5xx 会有限重试。修正或补发某个历史日期时可显式使用：
 
 ```bash
 daily-brief publish --date YYYY-MM-DD --force

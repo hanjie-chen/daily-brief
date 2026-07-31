@@ -5,7 +5,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from daily_brief.publisher import PublishError, publish_pending
+from daily_brief.publisher import PublishError, publish_brief
 
 
 def _payload(date_label="2026-07-25"):
@@ -52,9 +52,10 @@ def test_publish_sends_auth_header_and_records_success_hash(tmp_path):
         calls.append((request, timeout))
         return FakeResponse()
 
-    result = publish_pending(
+    result = publish_brief(
         brief_dir,
         data_dir,
+        date_label="2026-07-25",
         endpoint="https://hanjie-chen.com/internal/briefs",
         token="secret",
         opener=opener,
@@ -85,13 +86,23 @@ def test_publish_skips_unchanged_payload_and_force_resends(tmp_path):
         calls.append(request)
         return FakeResponse(200)
 
-    first = publish_pending(
-        brief_dir, data_dir, endpoint="https://example.com", token="x", opener=opener
+    first = publish_brief(
+        brief_dir,
+        data_dir,
+        date_label="2026-07-25",
+        endpoint="https://example.com",
+        token="x",
+        opener=opener,
     )
-    second = publish_pending(
-        brief_dir, data_dir, endpoint="https://example.com", token="x", opener=opener
+    second = publish_brief(
+        brief_dir,
+        data_dir,
+        date_label="2026-07-25",
+        endpoint="https://example.com",
+        token="x",
+        opener=opener,
     )
-    forced = publish_pending(
+    forced = publish_brief(
         brief_dir,
         data_dir,
         date_label="2026-07-25",
@@ -125,9 +136,10 @@ def test_publish_retries_network_and_server_failures(tmp_path):
             raise result
         return result
 
-    result = publish_pending(
+    result = publish_brief(
         brief_dir,
         tmp_path / "data",
+        date_label="2026-07-25",
         endpoint="https://example.com",
         token="x",
         opener=opener,
@@ -149,9 +161,10 @@ def test_publish_does_not_retry_client_error_or_record_state(tmp_path):
         raise HTTPError("https://example.com", 403, "forbidden", {}, BytesIO())
 
     with pytest.raises(PublishError, match="HTTP 403"):
-        publish_pending(
+        publish_brief(
             brief_dir,
             data_dir,
+            date_label="2026-07-25",
             endpoint="https://example.com",
             token="x",
             opener=opener,
@@ -170,9 +183,10 @@ def test_publish_rejects_empty_brief(tmp_path):
     (brief_dir / "2026-07-25.json").write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(PublishError, match="empty brief"):
-        publish_pending(
+        publish_brief(
             brief_dir,
             tmp_path / "data",
+            date_label="2026-07-25",
             endpoint="https://example.com",
             token="x",
             opener=lambda *_args, **_kwargs: FakeResponse(),
@@ -181,7 +195,45 @@ def test_publish_rejects_empty_brief(tmp_path):
 
 def test_publish_requires_endpoint_and_token(tmp_path):
     with pytest.raises(PublishError, match="DAILY_BRIEF_PUBLISH_URL"):
-        publish_pending(tmp_path, tmp_path, endpoint="", token="")
+        publish_brief(
+            tmp_path, tmp_path, "2026-07-25", endpoint="", token=""
+        )
 
     with pytest.raises(PublishError, match="DAILY_BRIEF_PUBLISH_TOKEN"):
-        publish_pending(tmp_path, tmp_path, endpoint="https://example.com", token="")
+        publish_brief(
+            tmp_path,
+            tmp_path,
+            "2026-07-25",
+            endpoint="https://example.com",
+            token="",
+        )
+
+
+def test_publish_requested_date_ignores_invalid_older_brief(tmp_path):
+    brief_dir = tmp_path / "briefs"
+    data_dir = tmp_path / "data"
+    older_path = _write_brief(brief_dir, "2026-07-30")
+    older_payload = json.loads(older_path.read_text(encoding="utf-8"))
+    older_payload["sections"]["ai"]["items"] = []
+    older_path.write_text(json.dumps(older_payload), encoding="utf-8")
+    requested_path = _write_brief(brief_dir, "2026-07-31")
+    calls = []
+
+    def opener(request, timeout):
+        calls.append(json.loads(request.data))
+        return FakeResponse()
+
+    result = publish_brief(
+        brief_dir,
+        data_dir,
+        date_label="2026-07-31",
+        endpoint="https://example.com",
+        token="x",
+        opener=opener,
+    )
+
+    assert result.published == 1
+    assert result.skipped == 0
+    assert calls == [json.loads(requested_path.read_text(encoding="utf-8"))]
+    state = json.loads((data_dir / "publish-state.json").read_text(encoding="utf-8"))
+    assert set(state["published"]) == {"2026-07-31"}
