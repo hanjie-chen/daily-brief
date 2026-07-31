@@ -3,3 +3,4 @@ briefs/
 data/
 logs/
 docs/superpowers/
+.env

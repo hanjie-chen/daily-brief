@@ -1,138 +1,102 @@
 # Daily Brief
 
-个人每日信息简报生成器，生成简短的中文简报，并可自动发布到 `hanjie-chen.com`。
+个人使用的资讯简报生成器，生成简短的中文简报。
 
-数据源: 
+目前数据源来自 Hacker News，筛选少量更可能值得我关注的内容，代替我通过微信公众号获取资讯的习惯。
 
-- Hacker News: AI 和开发工具相关话题 + 少量全站热门内容.
+简报每天发布到 [hanjie-chen.com](https://hanjie-chen.com/)。项目动机、成功标准与产品方向见 [`docs/product.md`](./docs/product.md)。
 
-## Motivation
+## Output
 
-我希望每天得到一份简报：以我关心的内容为主，同时保留少量热门话题，减少信息噪声，也不会错过最近发生的重要事情。
+每天生成一份中文简报，分为两个栏目：
 
-Daily Brief 目前仅仅是一个起点。长期来看，我希望这个项目成长为一套属于自己的信息聚合与情报整理系统作为我的每日的优质上下文，而不是去一堆垃圾中手动收集和过滤好的内容。
+- 最多 5 条 AI 相关内容；
+- 最多 2 条 Hacker News 全站热门的非 AI 内容，提供少量核心兴趣之外的探索。
 
-如何从中判断一条信息对于我来说是否足够优质：
+每条内容包含：原标题、中文摘要、推荐理由、原文链接、HN 讨论链接、points 和评论数。实际条数可以少于上限。
 
-- 是否点开原文或讨论区了吗？（点了 = 选题至少勾住了你）
-- 读完后是否知道了一件之前不知道、且我在乎的事吗？（是 = 这条有效）
-- 如果这条没出现在简报里，是否会觉得可惜吗?（会 = 真正的优质）
+每次运行写出三类文件：
 
-## Daily Output
-
-Daily Brief 目前生成一份 Markdown 简报，内容分为两部分：
-
-- 最多 5 条 AI 和开发工具相关内容；
-- 最多 2 条 Hacker News 全站热门内容，帮助我关注兴趣范围之外的重要话题。
-
-每条内容包含中文摘要、推荐理由、原文链接、Hacker News 讨论链接以及 points 和 comments。
-摘要在写入输出前会统一规范中文与英文、数字交界处的空格，避免不同模型带来排版差异。
+- `briefs/YYYY-MM-DD.md` — 用于阅读的 Markdown；
+- `briefs/YYYY-MM-DD.json` — 用于网站发布的结构化数据；
+- `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因，用于复盘。
 
 ## How It Works
 
-1. 从 Hacker News 收集过去一天的新内容和当前热门内容；
-2. 根据关键词、points 和 comments 对内容进行筛选和排序；
-3. 对重复内容去重，选出 AI 相关内容和少量全站热门内容；
-4. 通过统一的模型 backend 调用 Gemini Flash-Lite 完成主题分类和中文摘要，并输出为 Markdown 简报。
+每天 08:00（Asia/Singapore）通过
 
-## Architecture
+- Algolia HN Search API 收集过去 24 小时的新 stories
+- HN 官方 API 收集当前 top/best stories（不受时间窗口限制）
 
-Python package 的生成链路、模块职责、关键不变量与常见改动入口见
-[`src/daily_brief/README.md`](./src/daily_brief/README.md)。根 README 只保留项目层面的目标、使用方式和整体行为。
+然后合并去重，并排除最近 7 天已推荐的内容。
+
+候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会抓取原文，由模型生成接地的中文摘要，渲染为 Markdown 与 JSON 后发布到网站。
+
+打分权重、入选门槛等参数集中在 `src/daily_brief/config.py`。模块职责、生成链路与关键不变量见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
+
+## Design Principles
+
+- 确定性优先：抓取、匹配、打分、去重、排序、渲染、发布都是确定性逻辑；模型只负责主题分类和摘要两处。
+- 局部降级：数据源、分类、原文抓取、摘要中的单项失败都不会让整份简报生成失败。
+- 摘要必须接地：摘要只陈述材料中明确存在的事实；无法生成可靠摘要时显示固定文案，而不是编造。
+- 反馈校准：通过真实阅读记录（`opened` / `useful` / `noisy` / `note`）定期复盘筛选规则，而不是预先假定什么值得注意力。
+- 克制的范围：现阶段只使用 Hacker News 一个信息源，这是有意的选择，不是尚未完成的功能。
 
 ## Run
 
-需要 Python 3.12 或更高版本，以及可用的 Gemini API key。key 保存在 Git 忽略的本地
-`.env` 中，文件权限应为 `0600`；不要把 key 粘贴到聊天、提交到 Git 或写入命令行参数。
+需要 Python 3.12+，无额外 runtime 依赖：
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-
-set -a
-source .env
-set +a
-daily-brief generate
 ```
 
-正式 `generate` 默认使用 `gemini-3.5-flash-lite` 完成分类和摘要。分类会在标题和 source
-host 之外使用每条最多 800 字符的已有 Hacker News `story_text` 摘录，不会为分类额外抓取
-外部文章。为了在不影响每日生成、推荐历史和发布状态的前提下比较其他 provider，可以
-在某次正常生成时显式捕获模型的精确输入：
+生产生成默认使用 Gemini（分类与摘要均为 `gemini-3.5-flash-lite`，可通过环境变量覆盖），需要提供 `GEMINI_API_KEY`：
 
 ```bash
-daily-brief generate --capture-model-inputs
+set -a && source .env && set +a   # .env 权限应为 0600
+daily-brief generate              # 不带子命令时默认即 generate
 ```
 
-捕获文件保存在 `data/model-eval-inputs/YYYY-MM-DD.json`，包括当天分类批次，以及完成
-文章抓取后实际送入摘要模型的文本。之后可以反复离线重放同一输入：
+临时使用本地 Codex backend：
 
 ```bash
-daily-brief evaluate-model --date YYYY-MM-DD --backend codex
+daily-brief generate --backend codex
 ```
 
-结果写入 `data/model-evaluations/YYYY-MM-DD-<backend>.json`，记录分类结果、每条摘要、耗时和
-失败信息。`evaluate-model` 不抓取网络内容，不生成或发布简报，也不会修改
-`recommendation-history.json` 或 `publish-state.json`。捕获输入和评测结果可能包含公开
-文章正文，均位于被 Git 忽略的 `data/` 目录中，不应提交到仓库。
+## Publish
 
-### Gemini backend
-
-Gemini backend 使用官方 [Interactions REST API](https://ai.google.dev/api/interactions-api)
-和 [structured output](https://ai.google.dev/gemini-api/docs/structured-output)，不增加 Python
-runtime dependency。默认固定使用：
-
-- `gemini-3.5-flash-lite`：主题分类；
-- `gemini-3.5-flash-lite`：中文摘要。
-
-摘要模型经过真实输入盲测后选择 Lite：它与 `gemini-3.6-flash` 的质量接近，但 Free Tier
-额度更适合日常运行和迭代。`gemini-3.6-flash` 仍可通过模型环境变量用于对照评测。
-
-加载 `GEMINI_API_KEY` 后，可以离线重放已捕获的输入：
-
-```bash
-daily-brief evaluate-model --date YYYY-MM-DD --backend gemini
-```
-
-如需评测其他固定模型，可通过 `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` 和
-`DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL` 覆盖默认值；不要使用会自动切换的 `latest` alias。
-API key 只通过 request header 发送，调用显式设置 `store: false`。客户端只重试网络错误、
-408、429 和 5xx，且不会把 key 写入日志。`store: false` 不改变 Gemini Free Tier 的数据使用
-[Free Tier 数据条款](https://ai.google.dev/gemini-api/docs/pricing)；评测输入应继续只包含
-可接受发送给 provider 的公开内容。
-
-如需临时回退到本地 Codex，可显式运行 `daily-brief generate --backend codex`；它不再是
-默认生产路径。
-
-生成结果保存在：
-
-- `briefs/YYYY-MM-DD.md`：每天阅读的 Markdown 简报；
-- `briefs/YYYY-MM-DD.json`：用于网站发布的 schema-versioned 结构化简报；
-- `data/YYYY-MM-DD-hn-candidates.json`：用于复盘筛选结果的候选数据。
-
-网站发布需要配置：
+发布到网站需要提供发布地址和 shared secret：
 
 ```bash
 export DAILY_BRIEF_PUBLISH_URL="https://hanjie-chen.com/internal/briefs"
 export DAILY_BRIEF_PUBLISH_TOKEN="<shared-secret>"
+
 daily-brief publish
 ```
 
-`publish` 默认只发送当前 Daily Brief 日界线对应的 JSON，不会扫描或补发历史日期；这样过去某天的坏文件不会阻塞今天发布。它会在 `data/publish-state.json` 记录成功内容的 SHA-256，同一天重复运行时跳过未变化的内容。网络错误和 5xx 会有限重试。修正或补发某个历史日期时可显式使用：
+`publish` 发送所有尚未成功发布或内容已变化的 JSON，成功内容的 SHA-256 记录在 `data/publish-state.json`；失败内容不会被标记成功，后续运行自动补发。修正某天的简报后可强制重发：
 
 ```bash
 daily-brief publish --date YYYY-MM-DD --force
 ```
 
-当前 cron 在每天 08:00（Asia/Singapore）运行。完成 website 接口部署和 shared secret 配置后，定时流程应依次执行：
+自动流程每天 08:00（Asia/Singapore）依次执行 `daily-brief generate && daily-brief publish`。
+
+## Model Evaluation
+
+在一次正常生成时捕获模型实际收到的输入，之后可离线重放，用于对比不同模型：
 
 ```bash
-daily-brief generate && daily-brief publish
+daily-brief generate --capture-model-inputs
+daily-brief evaluate-model --date YYYY-MM-DD --backend gemini
+daily-brief evaluate-model --date YYYY-MM-DD --backend codex
 ```
 
-cron 会从 Git 忽略且权限为 `0600` 的 `.env` 加载 Gemini key，并从仓库外的发布配置加载
-website secret；secret 不应直接展开在 crontab 中。现有 Markdown 不回填；网站归档从
-结构化 JSON 发布启用之日开始。
+捕获输入保存在 `data/model-eval-inputs/`，评测结果保存在 `data/model-evaluations/`。评测不访问网络、不生成或发布简报、不修改推荐历史和发布状态。评测其他 Gemini 模型可通过 `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` / `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL` 覆盖。
 
-首轮上线后的 1–2 周使用固定的 `Daily Brief Feedback` 对话记录 `opened`、`useful`、`noisy` 对应的 `hn_item_id` 和可选 `note`，每周汇总一次，用于后续校准筛选策略。
+## Docs
+
+- [`docs/product.md`](./docs/product.md) — 动机、成功标准、日常使用体验与产品方向
+- [`src/daily_brief/README.md`](./src/daily_brief/README.md) — 内部架构说明
