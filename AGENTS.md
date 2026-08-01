@@ -17,3 +17,7 @@
 - For code or behavior changes, run the smallest relevant tests during development and `pytest -q` before completion.
 - Keep tests deterministic; do not call the live Hacker News APIs, `codex`, or the Gemini API from tests.
 - For documentation-only changes, review accuracy and run `git diff --check`; the full test suite is not required.
+
+## Git Workflow
+
+- Make requested changes directly on `main` by default; create branches or pull requests only when the user explicitly asks.
