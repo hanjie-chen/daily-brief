@@ -20,7 +20,7 @@ This guide documents stable module boundaries, data flow, and maintenance entry 
 5. `selection.py` first deduplicates candidates, and `history.py` excludes stories recommended recently.
 6. Candidates with explicit non-weak keyword matches enter the AI pool directly. `topic_classifier.py` evaluates the highest-ranked remaining candidates for AI relevance using titles, source hosts, and bounded excerpts of already-available Hacker News story text.
 7. `selection.py` applies eligibility thresholds, ranking, and section limits to select AI stories and a small number of non-AI hot stories.
-8. `article_fetcher.py` retrieves article text when needed, and `summarizer.py` supplies the shared grounded-summary prompt and canonicalizes model output before it enters rendering or evaluation artifacts.
+8. `article_fetcher.py` retrieves article text when needed. Direct requests that explicitly return a Cloudflare Challenge use Jina Reader as a bounded fallback; other HTTP failures do not. `summarizer.py` supplies the shared grounded-summary prompt and canonicalizes model output before it enters rendering or evaluation artifacts.
 9. `render.py` produces the Markdown brief, schema-versioned public JSON, and candidate JSON, and `history.py` records the selected story IDs.
 10. `publisher.py` sends only the targeted daily public JSON to the website and records its successful content hash for idempotent retry. Normal scheduled publishing targets the current Daily Brief date; historical publishing is explicit.
 
@@ -79,6 +79,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 
 - Hacker News titles, story text, fetched article content, URLs, and source hosts are untrusted input. Model prompts must continue to label supplied content as untrusted and must not follow instructions contained in it.
 - Article retrieval must only access validated public HTTP(S) destinations. Preserve address validation across the initial URL, redirects, and the final response URL, along with response size and timeout bounds.
+- Jina Reader is an anonymous retrieval fallback only for responses explicitly marked `cf-mitigated: challenge`. Its request uses the same timeout and response-size bounds as direct retrieval and accepts at most a five-minute cached result. Do not broaden it to ordinary 403, 404, login-wall, parsing, or content-type failures without a separate product decision.
 - Tests must be deterministic and must not call live Hacker News APIs, Gemini, or the real `codex` command.
 - Model evaluation input is schema-versioned, bounded to the production classifier and section limits, and contains only the exact candidate fields used by model prompts. Keep generated evaluation inputs and results under the Git-ignored `data/` directory because they can include public article text.
 - `evaluate-model` is read-only with respect to its input, `recommendation-history.json`, and `publish-state.json`. It may write only its backend-specific result file under `data/model-evaluations/`.

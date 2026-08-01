@@ -30,7 +30,7 @@
 
 然后合并去重，并排除最近 7 天已推荐的内容。
 
-候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会抓取原文，由模型生成接地的中文摘要，渲染为 Markdown 与 JSON 后发布到网站。
+候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会抓取原文；若直接获取明确遇到 Cloudflare Challenge，则通过 Jina Reader 做一次 retrieval fallback。取得的正文再由模型生成接地的中文摘要，渲染为 Markdown 与 JSON 后发布到网站。
 
 打分权重、入选门槛等参数集中在 `src/daily_brief/config.py`。模块职责、生成链路与关键不变量见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
 

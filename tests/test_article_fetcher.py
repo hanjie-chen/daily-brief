@@ -1,8 +1,14 @@
 from email.message import Message
+from urllib.error import HTTPError
 
 import pytest
 
-from daily_brief.article_fetcher import ArticleFetchError, extract_html, fetch_article_text
+from daily_brief.article_fetcher import (
+    ArticleFetchError,
+    extract_html,
+    fetch_article_text,
+    fetch_jina_reader_text,
+)
 
 
 PUBLIC_ADDRESS = "93.184.216.34"
@@ -33,6 +39,13 @@ class FakeResponse:
 
     def geturl(self):
         return self.final_url
+
+
+def http_error(url, code, **headers):
+    response_headers = Message()
+    for name, value in headers.items():
+        response_headers[name.replace("_", "-")] = value
+    return HTTPError(url, code, "request failed", response_headers, None)
 
 
 def resolver_for(addresses):
@@ -126,6 +139,96 @@ def test_fetch_article_text_rejects_oversized_content():
 
     with pytest.raises(ArticleFetchError, match="too large"):
         fetch_article_text(
+            "https://example.com/article",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            max_bytes=10,
+        )
+
+
+def test_fetch_article_text_uses_jina_for_cloudflare_challenge(caplog):
+    requests = []
+    jina_response = FakeResponse(
+        b"Luna costs 80% less.",
+        content_type="text/plain",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+
+    def open_response(request, timeout):
+        requests.append((request, timeout))
+        if len(requests) == 1:
+            raise http_error(
+                request.full_url, 403, server="cloudflare", cf_mitigated="challenge"
+            )
+        return jina_response
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        text = fetch_article_text(
+            "https://example.com/article",
+            opener=open_response,
+            resolver=resolver_for({}),
+            timeout_seconds=7,
+        )
+
+    assert text == "Luna costs 80% less."
+    assert [request.full_url for request, _ in requests] == [
+        "https://example.com/article",
+        "https://r.jina.ai/https://example.com/article",
+    ]
+    assert [timeout for _, timeout in requests] == [7, 7]
+    assert requests[1][0].get_header("Accept") == "text/plain"
+    assert requests[1][0].get_header("X-cache-tolerance") == "300"
+    assert "method=direct status=cloudflare_challenge fallback=jina" in caplog.text
+    assert "method=jina status=success" in caplog.text
+
+
+@pytest.mark.parametrize("status_code", [403, 404])
+def test_fetch_article_text_does_not_use_jina_for_other_http_errors(status_code):
+    requested_urls = []
+
+    def deny(request, timeout):
+        requested_urls.append(request.full_url)
+        raise http_error(request.full_url, status_code, server="cloudflare")
+
+    with pytest.raises(ArticleFetchError, match="direct article request failed"):
+        fetch_article_text(
+            "https://example.com/article",
+            opener=deny,
+            resolver=resolver_for({}),
+        )
+
+    assert requested_urls == ["https://example.com/article"]
+
+
+def test_fetch_article_text_reports_direct_and_jina_failures():
+    def fail(request, timeout):
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 502)
+        raise http_error(request.full_url, 403, cf_mitigated="challenge")
+
+    with pytest.raises(
+        ArticleFetchError,
+        match=(
+            "article retrieval failed: direct=cloudflare challenge; "
+            "jina=Jina Reader request failed"
+        ),
+    ):
+        fetch_article_text(
+            "https://example.com/article",
+            opener=fail,
+            resolver=resolver_for({}),
+        )
+
+
+def test_fetch_jina_reader_text_reuses_response_size_limit():
+    response = FakeResponse(
+        b"x" * 11,
+        content_type="text/plain",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+
+    with pytest.raises(ArticleFetchError, match="too large"):
+        fetch_jina_reader_text(
             "https://example.com/article",
             opener=lambda request, timeout: response,
             resolver=resolver_for({}),
