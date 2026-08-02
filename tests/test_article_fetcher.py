@@ -9,6 +9,8 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from daily_brief.article_fetcher import (
     ArticleFetchError,
+    _create_public_connection,
+    _validate_public_http_url,
     extract_html,
     fetch_article,
     fetch_article_text,
@@ -486,6 +488,40 @@ def test_direct_pdf_extracts_layout_text_in_subprocess():
     assert result.extractor == "pypdf"
 
 
+def test_direct_pdf_accepts_octet_stream_when_url_identifies_pdf():
+    response = FakeResponse(
+        make_pdf("Octet-stream PDF facts."),
+        content_type="application/octet-stream",
+        final_url="https://example.com/report.pdf?download=1",
+    )
+
+    result = fetch_article(
+        "https://example.com/report.pdf?download=1",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+    )
+
+    assert result.text == "Octet-stream PDF facts."
+    assert result.method == "direct"
+    assert result.extractor == "pypdf"
+
+
+def test_direct_octet_stream_is_rejected_when_url_does_not_identify_pdf():
+    response = FakeResponse(
+        make_pdf("Unidentified PDF facts."),
+        content_type="application/octet-stream",
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/download",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+        )
+
+    assert caught.value.error_code == "unsupported_content_type"
+
+
 def test_direct_pdf_rejects_non_pdf_mime_with_pdf_magic():
     response = FakeResponse(
         make_pdf("Grounded PDF facts."),
@@ -650,6 +686,61 @@ def test_fetch_article_text_revalidates_final_redirect_url():
             opener=lambda request, timeout: response,
             resolver=resolver_for({"127.0.0.1": "127.0.0.1"}),
         )
+
+
+def test_connection_revalidates_and_rejects_dns_rebinding(monkeypatch):
+    resolutions = iter([PUBLIC_ADDRESS, "127.0.0.1"])
+
+    def rebinding_resolver(host, port, type):
+        address = next(resolutions)
+        return resolver_for({host: address})(host, port, type)
+
+    opened_sockets = []
+    monkeypatch.setattr(
+        "daily_brief.article_fetcher.socket.socket",
+        lambda *args: opened_sockets.append(args),
+    )
+
+    _validate_public_http_url("https://example.com/article", rebinding_resolver)
+    with pytest.raises(ArticleFetchError) as caught:
+        _create_public_connection(
+            ("example.com", 443),
+            resolver=rebinding_resolver,
+        )
+
+    assert caught.value.error_code == "unsafe_url"
+    assert opened_sockets == []
+
+
+def test_connection_uses_the_exact_validated_socket_address(monkeypatch):
+    connected_addresses = []
+
+    class FakeSocket:
+        def settimeout(self, timeout):
+            pass
+
+        def bind(self, source_address):
+            pass
+
+        def connect(self, address):
+            connected_addresses.append(address)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "daily_brief.article_fetcher.socket.socket",
+        lambda *args: FakeSocket(),
+    )
+
+    connection = _create_public_connection(
+        ("example.com", 443),
+        timeout=3,
+        resolver=resolver_for({"example.com": PUBLIC_ADDRESS}),
+    )
+
+    assert isinstance(connection, FakeSocket)
+    assert connected_addresses == [(PUBLIC_ADDRESS, 443)]
 
 
 def test_fetch_article_text_rejects_pdf_with_invalid_magic():
