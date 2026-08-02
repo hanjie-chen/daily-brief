@@ -31,6 +31,7 @@ class KeywordMatch:
 class ArticleRetrieval:
     status: str = "not_attempted"
     method: str = ""
+    extractor: str = ""
     fallback_attempted: bool = False
     fallback_reason: str = ""
     error_type: str = ""

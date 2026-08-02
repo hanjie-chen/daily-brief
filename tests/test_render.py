@@ -114,6 +114,7 @@ def test_render_candidates_json_uses_snake_case_fields():
     assert data[0]["article_retrieval"] == {
         "status": "not_attempted",
         "method": "",
+        "extractor": "",
         "fallback_attempted": False,
         "fallback_reason": "",
         "error_type": "",

@@ -5,3 +5,4 @@ logs/
 docs/superpowers/
 .env
 handoff.md
+*.egg-info/

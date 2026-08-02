@@ -290,6 +290,7 @@ def run_generate(
             candidate.article_retrieval = ArticleRetrieval(
                 status="not_needed",
                 method="story_text",
+                extractor="plain_text",
             )
             candidate.summary_basis = "story_text"
         elif (
@@ -302,10 +303,12 @@ def run_generate(
                 if isinstance(fetch_result, ArticleFetchResult):
                     fetched_text = fetch_result.text.strip()
                     method = fetch_result.method
+                    extractor = fetch_result.extractor
                     fallback_reason = fetch_result.fallback_reason
                 elif isinstance(fetch_result, str):
                     fetched_text = fetch_result.strip()
                     method = "direct"
+                    extractor = "plain_text"
                     fallback_reason = ""
                 else:
                     raise ArticleFetchError(
@@ -318,6 +321,7 @@ def run_generate(
                         "article response contained no visible text",
                         error_code="empty_content",
                         method=method,
+                        extractor=extractor,
                     )
                 candidate.story = replace(
                     candidate.story, fetched_text=fetched_text
@@ -325,26 +329,30 @@ def run_generate(
                 candidate.article_retrieval = ArticleRetrieval(
                     status="success",
                     method=method,
+                    extractor=extractor,
                     fallback_attempted=bool(fallback_reason),
                     fallback_reason=fallback_reason,
                 )
                 candidate.summary_basis = "fetched_article"
                 LOGGER.info(
                     "component=article_fetch item_id=%s status=success method=%s "
-                    "fallback_reason=%s",
+                    "extractor=%s fallback_reason=%s",
                     candidate.story.hn_item_id,
                     method,
+                    extractor or "none",
                     fallback_reason or "none",
                 )
             except Exception as exc:
                 error_message = _bounded_error_message(exc)
                 error_code = getattr(exc, "error_code", "fetch_failed")
                 method = getattr(exc, "method", "") or "direct"
+                extractor = getattr(exc, "extractor", "")
                 fallback_attempted = getattr(exc, "fallback_attempted", False)
                 fallback_reason = getattr(exc, "fallback_reason", "")
                 candidate.article_retrieval = ArticleRetrieval(
                     status="failed",
                     method=method,
+                    extractor=extractor,
                     fallback_attempted=fallback_attempted,
                     fallback_reason=fallback_reason,
                     error_type=type(exc).__name__,
@@ -356,9 +364,10 @@ def run_generate(
                 candidate.summary_status = "skipped"
                 LOGGER.error(
                     "component=article_fetch item_id=%s status=failed method=%s "
-                    "error=%s code=%s message=%s",
+                    "extractor=%s error=%s code=%s message=%s",
                     candidate.story.hn_item_id,
                     method,
+                    extractor or "none",
                     type(exc).__name__,
                     error_code,
                     error_message,

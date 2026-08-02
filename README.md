@@ -19,7 +19,7 @@
 
 - `briefs/YYYY-MM-DD.md` — 用于阅读的 Markdown；
 - `briefs/YYYY-MM-DD.json` — 用于网站发布的结构化数据；每条内容的 `content_status` 标明正文和摘要是否正常；
-- `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文抓取方式与错误、摘要依据，用于复盘。
+- `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文 transport、正文 extractor 与错误、摘要依据，用于复盘。
 
 ## How It Works
 
@@ -30,7 +30,7 @@
 
 然后合并去重，并排除最近 7 天已推荐的内容。
 
-候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会补全原文：已有 HN story text 时直接使用；标准 GitHub 仓库链接通过 GitHub 官方 API 获取 README；其他链接直接抓取，若明确遇到 Cloudflare Challenge，则通过 Jina Reader 做一次 retrieval fallback。系统记录正文来自 HN story text、GitHub README、直接抓取还是 Jina，以及摘要实际依据的材料。取得正文后再由模型生成接地的中文摘要；抓取失败时直接显示错误并跳过摘要模型，最后渲染为 Markdown 与 JSON 后发布到网站。
+候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会补全原文：已有 HN story text 时直接使用；标准 GitHub 仓库链接通过 GitHub 官方 API 获取 README；GitHub blob 链接转换为精确的 raw 文件 URL；普通 HTML 使用本地 `trafilatura` 提取正文，PDF 使用受限 subprocess 中的本地 `pypdf` 提取 text layer。只有直接请求明确遇到 Cloudflare Challenge 时，才通过 Jina Reader 做一次 retrieval fallback。系统分别记录正文 transport（如 direct、GitHub raw、Jina）和 extractor（如 `trafilatura`、`pypdf`），以及摘要实际依据的材料。取得正文后再由模型生成接地的中文摘要；下载、类型验证或提取失败时直接显示错误并跳过摘要模型，最后渲染为 Markdown 与 JSON 后发布到网站。
 
 打分权重、入选门槛等参数集中在 `src/daily_brief/config.py`。模块职责、生成链路与关键不变量见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
 
@@ -44,7 +44,7 @@
 
 ## Run
 
-需要 Python 3.12+，无额外 runtime 依赖：
+需要 Python 3.12+；安装时会一并安装本地 HTML 与 PDF 提取依赖：
 
 ```bash
 python -m venv .venv

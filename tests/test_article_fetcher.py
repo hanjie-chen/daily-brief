@@ -1,7 +1,11 @@
 from email.message import Message
+from io import BytesIO
+import subprocess
 from urllib.error import HTTPError
 
 import pytest
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from daily_brief.article_fetcher import (
     ArticleFetchError,
@@ -58,6 +62,37 @@ def resolver_for(addresses):
     return resolve
 
 
+def make_pdf(*page_texts):
+    writer = PdfWriter()
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    font_reference = writer._add_object(font)
+    for page_text in page_texts:
+        page = writer.add_blank_page(width=612, height=792)
+        page[NameObject("/Resources")] = DictionaryObject(
+            {
+                NameObject("/Font"): DictionaryObject(
+                    {NameObject("/F1"): font_reference}
+                )
+            }
+        )
+        if page_text is not None:
+            escaped = page_text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            content = DecodedStreamObject()
+            content.set_data(
+                f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET".encode()
+            )
+            page[NameObject("/Contents")] = writer._add_object(content)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
 def test_extract_html_removes_non_content_and_collapses_whitespace():
     markup = """
     <html><head><style>hidden</style></head><body>
@@ -70,7 +105,14 @@ def test_extract_html_removes_non_content_and_collapses_whitespace():
 
 
 def test_fetch_article_text_extracts_html_from_public_url():
-    response = FakeResponse(b"<article>Useful <b>facts</b>.</article>")
+    response = FakeResponse(
+        b"""
+        <html><body><article><h1>Useful facts</h1>
+        <p>This grounded article explains the first important fact in detail.</p>
+        <p>It also supplies enough context for reliable local extraction.</p>
+        </article></body></html>
+        """
+    )
 
     text = fetch_article_text(
         "https://example.com/article",
@@ -78,7 +120,8 @@ def test_fetch_article_text_extracts_html_from_public_url():
         resolver=resolver_for({}),
     )
 
-    assert text == "Useful facts."
+    assert "Useful facts" in text
+    assert "reliable local extraction" in text
 
 
 def test_fetch_article_reports_direct_retrieval_method():
@@ -92,7 +135,121 @@ def test_fetch_article_reports_direct_retrieval_method():
 
     assert result.text == "Direct facts."
     assert result.method == "direct"
+    assert result.extractor == "plain_text"
     assert result.fallback_reason == ""
+
+
+def test_html_larger_than_old_limit_is_extracted_with_separate_raw_limit():
+    body = (
+        "The local extractor keeps this grounded article body and its useful facts. "
+        * 12
+    )
+    markup = (
+        "<html><head><style>"
+        + ("x" * (300 * 1024))
+        + "</style></head><body><article><h1>Local extraction</h1><p>"
+        + body
+        + "</p></article></body></html>"
+    ).encode()
+    response = FakeResponse(markup)
+
+    result = fetch_article(
+        "https://example.com/large-page",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+    )
+
+    assert len(markup) > 256 * 1024
+    assert result.method == "direct"
+    assert result.extractor == "trafilatura"
+    assert "Local extraction" in result.text
+    assert "grounded article body" in result.text
+    assert "x" * 100 not in result.text
+
+
+def test_html_over_separate_raw_limit_fails_before_extraction(monkeypatch):
+    response = FakeResponse(b"<html>" + (b"x" * 101) + b"</html>")
+    extracted = []
+    monkeypatch.setattr(
+        "daily_brief.article_fetcher.extract_html",
+        lambda markup: extracted.append(markup) or "unexpected",
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/too-large",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            html_max_bytes=100,
+        )
+
+    assert caught.value.error_code == "response_too_large"
+    assert extracted == []
+
+
+def test_html_extraction_excludes_page_chrome_scripts_and_comments():
+    body = (
+        "The article body contains grounded reporting about a useful technical "
+        "result, with enough detail for extraction. "
+        * 10
+    )
+    markup = f"""
+    <html><head><style>STYLE_SECRET</style></head><body>
+      <nav>LOGIN_NAVIGATION_SECRET</nav>
+      <main><article><h1>Grounded report</h1><p>{body}</p></article></main>
+      <div class="comments"><h2>Comments</h2>
+        <p>COMMENT_THREAD_SECRET repeated reader discussion.</p>
+      </div>
+      <script>SCRIPT_SECRET</script>
+    </body></html>
+    """
+
+    text = extract_html(markup)
+
+    assert "Grounded report" in text
+    assert "grounded reporting" in text
+    assert "LOGIN_NAVIGATION_SECRET" not in text
+    assert "COMMENT_THREAD_SECRET" not in text
+    assert "STYLE_SECRET" not in text
+    assert "SCRIPT_SECRET" not in text
+
+
+def test_empty_trafilatura_result_is_a_terminal_failure(monkeypatch):
+    monkeypatch.setattr(
+        "daily_brief.article_fetcher.trafilatura.extract", lambda *args, **kwargs: None
+    )
+    response = FakeResponse(
+        b"<html><body><nav>Navigation must not become article text.</nav></body></html>"
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/no-article",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+        )
+
+    assert caught.value.error_code == "empty_content"
+    assert caught.value.method == "direct"
+    assert caught.value.extractor == "trafilatura"
+
+
+def test_html_extracted_text_has_its_own_limit(monkeypatch):
+    monkeypatch.setattr(
+        "daily_brief.article_fetcher.extract_html", lambda markup: "grounded " * 20
+    )
+    response = FakeResponse(b"<html><article>small response</article></html>")
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/long-result",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            extracted_max_bytes=50,
+        )
+
+    assert caught.value.error_code == "extracted_content_too_large"
+    assert caught.value.extractor == "trafilatura"
 
 
 @pytest.mark.parametrize(
@@ -126,6 +283,7 @@ def test_fetch_article_uses_github_readme_api_for_repository_root(url):
 
     assert result.text == "# TurboFieldfare Grounded README facts."
     assert result.method == "github_readme"
+    assert result.extractor == "plain_text"
     assert result.fallback_reason == ""
     assert len(requests) == 1
     request, timeout = requests[0]
@@ -141,7 +299,6 @@ def test_fetch_article_uses_github_readme_api_for_repository_root(url):
     "url",
     [
         "https://github.com/drumih",
-        "https://github.com/drumih/turbo-fieldfare/blob/main/README.md",
         "https://github.com/drumih/turbo-fieldfare/issues/1",
         "https://gist.github.com/drumih/abc123",
         "https://github.com.evil.example/drumih/turbo-fieldfare",
@@ -208,6 +365,97 @@ def test_fetch_github_readme_reuses_response_size_limit():
     assert caught.value.method == "github_readme"
 
 
+def test_github_blob_pdf_uses_raw_file_and_pypdf():
+    blob_url = "https://github.com/example/project/blob/main/report.pdf"
+    raw_url = "https://raw.githubusercontent.com/example/project/main/report.pdf"
+    requests = []
+    response = FakeResponse(
+        make_pdf("Fixed branch PDF facts."),
+        content_type="application/octet-stream",
+        final_url=raw_url,
+    )
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        return response
+
+    result = fetch_article(
+        blob_url,
+        opener=open_response,
+        resolver=resolver_for({}),
+    )
+
+    assert requests == [raw_url]
+    assert result.method == "github_raw"
+    assert result.extractor == "pypdf"
+    assert result.text == "Fixed branch PDF facts."
+
+
+def test_github_blob_404_is_terminal_and_does_not_call_jina():
+    blob_url = "https://github.com/example/project/blob/master/removed.pdf"
+    requested_urls = []
+
+    def deny(request, timeout):
+        requested_urls.append(request.full_url)
+        raise http_error(request.full_url, 404, cf_mitigated="challenge")
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            blob_url,
+            opener=deny,
+            resolver=resolver_for({}),
+        )
+
+    assert requested_urls == [
+        "https://raw.githubusercontent.com/example/project/master/removed.pdf"
+    ]
+    assert caught.value.error_code == "github_file_not_found"
+    assert caught.value.method == "github_raw"
+    assert caught.value.fallback_attempted is False
+
+
+def test_github_fixed_commit_blob_fetches_exact_raw_pdf():
+    commit = "15c6504be51b884a0adc5d77e4dba41f94431454"
+    blob_url = f"https://github.com/example/project/blob/{commit}/report.pdf"
+    raw_url = (
+        f"https://raw.githubusercontent.com/example/project/{commit}/report.pdf"
+    )
+    response = FakeResponse(
+        make_pdf("Exact commit PDF facts."),
+        content_type="application/octet-stream",
+        final_url=raw_url,
+    )
+    requested_urls = []
+
+    result = fetch_article(
+        blob_url,
+        opener=lambda request, timeout: (
+            requested_urls.append(request.full_url) or response
+        ),
+        resolver=resolver_for({}),
+    )
+
+    assert requested_urls == [raw_url]
+    assert result.text == "Exact commit PDF facts."
+    assert result.method == "github_raw"
+    assert result.extractor == "pypdf"
+
+
+def test_github_blob_ref_with_encoded_slash_is_not_guessed():
+    opened = []
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://github.com/example/project/blob/feature%2Fdocs/report.pdf",
+            opener=lambda request, timeout: opened.append(request.full_url),
+            resolver=resolver_for({}),
+        )
+
+    assert caught.value.error_code == "unsupported_github_path"
+    assert caught.value.method == "github_raw"
+    assert opened == []
+
+
 def test_fetch_article_text_decodes_plain_text():
     response = FakeResponse("中文正文".encode(), content_type="text/plain")
 
@@ -218,6 +466,158 @@ def test_fetch_article_text_decodes_plain_text():
     )
 
     assert text == "中文正文"
+
+
+def test_direct_pdf_extracts_layout_text_in_subprocess():
+    response = FakeResponse(
+        make_pdf("Grounded PDF facts."),
+        content_type="application/pdf",
+        final_url="https://example.com/report.pdf",
+    )
+
+    result = fetch_article(
+        "https://example.com/report.pdf",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+    )
+
+    assert result.text == "Grounded PDF facts."
+    assert result.method == "direct"
+    assert result.extractor == "pypdf"
+
+
+def test_direct_pdf_rejects_non_pdf_mime_with_pdf_magic():
+    response = FakeResponse(
+        make_pdf("Grounded PDF facts."),
+        content_type="text/plain",
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/report.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+        )
+
+    assert caught.value.error_code == "pdf_content_type_mismatch"
+    assert caught.value.extractor == "pypdf"
+
+
+def test_direct_pdf_enforces_download_limit_before_parsing(monkeypatch):
+    response = FakeResponse(
+        make_pdf("Grounded PDF facts."),
+        content_type="application/pdf",
+    )
+    subprocess_calls = []
+    monkeypatch.setattr(
+        "daily_brief.article_fetcher.subprocess.run",
+        lambda *args, **kwargs: subprocess_calls.append((args, kwargs)),
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/report.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            pdf_max_bytes=100,
+        )
+
+    assert caught.value.error_code == "response_too_large"
+    assert subprocess_calls == []
+
+
+def test_direct_pdf_enforces_page_limit():
+    response = FakeResponse(
+        make_pdf("Page one.", "Page two."),
+        content_type="application/pdf",
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/report.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            pdf_max_pages=1,
+        )
+
+    assert caught.value.error_code == "pdf_too_many_pages"
+    assert caught.value.method == "direct"
+    assert caught.value.extractor == "pypdf"
+
+
+def test_direct_pdf_reports_no_extractable_text():
+    response = FakeResponse(
+        make_pdf(None),
+        content_type="application/pdf",
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/scanned.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+        )
+
+    assert caught.value.error_code == "pdf_no_extractable_text"
+    assert caught.value.extractor == "pypdf"
+
+
+def test_direct_pdf_reports_parse_failure():
+    response = FakeResponse(
+        b"%PDF-not-a-real-document",
+        content_type="application/pdf",
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/broken.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+        )
+
+    assert caught.value.error_code == "pdf_parse_failed"
+    assert caught.value.extractor == "pypdf"
+
+
+def test_direct_pdf_reports_subprocess_timeout(monkeypatch):
+    response = FakeResponse(
+        make_pdf("Grounded PDF facts."),
+        content_type="application/pdf",
+    )
+
+    def time_out(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr("daily_brief.article_fetcher.subprocess.run", time_out)
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/report.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            pdf_parse_timeout_seconds=1,
+        )
+
+    assert caught.value.error_code == "pdf_parse_timeout"
+    assert caught.value.extractor == "pypdf"
+
+
+def test_direct_pdf_enforces_extracted_text_limit():
+    response = FakeResponse(
+        make_pdf("Grounded PDF facts exceed this tiny output limit."),
+        content_type="application/pdf",
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/report.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            extracted_max_bytes=10,
+        )
+
+    assert caught.value.error_code == "extracted_content_too_large"
+    assert caught.value.extractor == "pypdf"
 
 
 @pytest.mark.parametrize(
@@ -252,15 +652,18 @@ def test_fetch_article_text_revalidates_final_redirect_url():
         )
 
 
-def test_fetch_article_text_rejects_non_text_content():
+def test_fetch_article_text_rejects_pdf_with_invalid_magic():
     response = FakeResponse(b"%PDF", content_type="application/pdf")
 
-    with pytest.raises(ArticleFetchError, match="content type"):
+    with pytest.raises(ArticleFetchError, match="file signature") as caught:
         fetch_article_text(
             "https://example.com/file.pdf",
             opener=lambda request, timeout: response,
             resolver=resolver_for({}),
         )
+
+    assert caught.value.error_code == "pdf_magic_mismatch"
+    assert caught.value.extractor == "pypdf"
 
 
 def test_fetch_article_text_rejects_oversized_content():
@@ -308,7 +711,7 @@ def test_fetch_article_text_uses_jina_for_cloudflare_challenge(caplog):
     assert requests[1][0].get_header("Accept") == "text/plain"
     assert requests[1][0].get_header("X-cache-tolerance") == "300"
     assert "method=direct status=cloudflare_challenge fallback=jina" in caplog.text
-    assert "method=jina status=success" in caplog.text
+    assert "method=jina extractor=jina status=success" in caplog.text
 
 
 def test_fetch_article_reports_jina_retrieval_method():
@@ -333,6 +736,7 @@ def test_fetch_article_reports_jina_retrieval_method():
 
     assert result.text == "Luna costs 80% less."
     assert result.method == "jina"
+    assert result.extractor == "jina"
     assert result.fallback_reason == "cloudflare_challenge"
 
 
@@ -386,7 +790,7 @@ def test_fetch_article_text_reports_direct_and_jina_failures():
 def test_fetch_article_text_rejects_empty_content_with_stable_error_code():
     response = FakeResponse(b"   ", content_type="text/plain")
 
-    with pytest.raises(ArticleFetchError, match="no visible text") as caught:
+    with pytest.raises(ArticleFetchError, match="no extractable text") as caught:
         fetch_article_text(
             "https://example.com/article",
             opener=lambda request, timeout: response,

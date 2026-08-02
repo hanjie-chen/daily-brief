@@ -43,6 +43,7 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 "article_retrieval": {
                     "status": candidate.article_retrieval.status,
                     "method": candidate.article_retrieval.method,
+                    "extractor": candidate.article_retrieval.extractor,
                     "fallback_attempted": (
                         candidate.article_retrieval.fallback_attempted
                     ),

@@ -747,6 +747,7 @@ def test_selected_external_article_text_reaches_summarizer(tmp_path, caplog):
     selected = next(item for item in candidate_payload if item["hn_item_id"] == "1")
     assert selected["article_retrieval"]["status"] == "success"
     assert selected["article_retrieval"]["method"] == "direct"
+    assert selected["article_retrieval"]["extractor"] == "plain_text"
     assert selected["summary_basis"] == "fetched_article"
     assert selected["summary_status"] == "success"
     assert "item_id=1 status=success method=direct" in caplog.text
@@ -794,6 +795,7 @@ def test_jina_retrieval_provenance_is_persisted(tmp_path):
             text="Grounded article facts.",
             method="jina",
             fallback_reason="cloudflare_challenge",
+            extractor="jina",
         ),
         summarizer=FakeSummarizer(),
     )
@@ -803,6 +805,7 @@ def test_jina_retrieval_provenance_is_persisted(tmp_path):
 
     assert retrieval["status"] == "success"
     assert retrieval["method"] == "jina"
+    assert retrieval["extractor"] == "jina"
     assert retrieval["fallback_attempted"] is True
     assert retrieval["fallback_reason"] == "cloudflare_challenge"
 
@@ -817,6 +820,7 @@ def test_github_readme_retrieval_provenance_is_persisted(tmp_path):
         article_fetcher=lambda url: ArticleFetchResult(
             text="Grounded repository README facts.",
             method="github_readme",
+            extractor="plain_text",
         ),
         summarizer=FakeSummarizer(),
     )
@@ -826,8 +830,39 @@ def test_github_readme_retrieval_provenance_is_persisted(tmp_path):
 
     assert retrieval["status"] == "success"
     assert retrieval["method"] == "github_readme"
+    assert retrieval["extractor"] == "plain_text"
     assert retrieval["fallback_attempted"] is False
     assert retrieval["fallback_reason"] == ""
+
+
+def test_github_pdf_retrieval_provenance_and_logging_are_persisted(
+    tmp_path, caplog
+):
+    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+        result = run_generate(
+            output_dir=tmp_path / "briefs",
+            data_dir=tmp_path / "data",
+            date_label="2026-07-20",
+            algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+            hot_stories=[],
+            article_fetcher=lambda url: ArticleFetchResult(
+                text="Grounded PDF facts.",
+                method="github_raw",
+                extractor="pypdf",
+            ),
+            summarizer=FakeSummarizer(),
+        )
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    retrieval = candidate_payload[0]["article_retrieval"]
+
+    assert retrieval["status"] == "success"
+    assert retrieval["method"] == "github_raw"
+    assert retrieval["extractor"] == "pypdf"
+    assert (
+        "item_id=1 status=success method=github_raw extractor=pypdf "
+        "fallback_reason=none"
+    ) in caplog.text
 
 
 def test_run_generate_can_capture_exact_model_inputs(tmp_path):
@@ -876,6 +911,7 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
             "HTTP Error 403: Forbidden",
             error_code="http_403",
             method="direct",
+            extractor="trafilatura",
         )
 
     summarizer = FakeSummarizer()
@@ -899,7 +935,7 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
     assert summarizer.titles == []
     assert (
         "component=article_fetch item_id=1 status=failed method=direct "
-        "error=ArticleFetchError code=http_403"
+        "extractor=trafilatura error=ArticleFetchError code=http_403"
     ) in caplog.text
 
     candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
@@ -907,6 +943,7 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
     assert failed["article_retrieval"] == {
         "status": "failed",
         "method": "direct",
+        "extractor": "trafilatura",
         "fallback_attempted": False,
         "fallback_reason": "",
         "error_type": "ArticleFetchError",
