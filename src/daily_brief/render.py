@@ -40,6 +40,19 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 "selected": candidate.selected,
                 "section": candidate.section,
                 "rejection_reason": candidate.rejection_reason,
+                "article_retrieval": {
+                    "status": candidate.article_retrieval.status,
+                    "method": candidate.article_retrieval.method,
+                    "fallback_attempted": (
+                        candidate.article_retrieval.fallback_attempted
+                    ),
+                    "fallback_reason": candidate.article_retrieval.fallback_reason,
+                    "error_type": candidate.article_retrieval.error_type,
+                    "error_code": candidate.article_retrieval.error_code,
+                    "error_message": candidate.article_retrieval.error_message,
+                },
+                "summary_basis": candidate.summary_basis,
+                "summary_status": candidate.summary_status,
             }
         )
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
@@ -87,6 +100,16 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
                 f"### {_single_line_display_text(story.title)}",
                 "",
                 f"- Summary: {_single_line_display_text(item.summary)}",
+            ]
+        )
+        if item.article_retrieval.status == "failed":
+            error_code = item.article_retrieval.error_code or "fetch_failed"
+            lines.append(
+                "- Content: Error — 原文抓取失败"
+                f"（{_single_line_display_text(error_code)}）。"
+            )
+        lines.extend(
+            [
                 f"- Why: {_single_line_display_text(item.why)}",
                 f"- Source: {story.source_url}",
                 f"- Discussion: {story.hn_discussion_url}",
@@ -107,9 +130,20 @@ def _public_item(candidate: Candidate) -> dict:
         "hn_item_id": story.hn_item_id,
         "title": _single_line_display_text(story.title),
         "summary": _single_line_display_text(candidate.summary),
+        "content_status": _public_content_status(candidate),
         "why": _single_line_display_text(candidate.why),
         "source_url": story.source_url,
         "discussion_url": story.hn_discussion_url,
         "points": story.points,
         "comments": story.comments,
     }
+
+
+def _public_content_status(candidate: Candidate) -> str:
+    if candidate.article_retrieval.status == "failed":
+        return "fetch_failed"
+    if candidate.summary_status == "failed":
+        return "summary_failed"
+    if candidate.summary_basis == "title_only":
+        return "title_only"
+    return "ok"

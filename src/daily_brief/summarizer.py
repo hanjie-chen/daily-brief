@@ -57,6 +57,10 @@ def fallback_summary(candidate: Candidate) -> str:
     return "未能生成可靠摘要，请查看原文或讨论。"
 
 
+def article_fetch_failure_summary(candidate: Candidate) -> str:
+    return "原文抓取失败，未生成可靠摘要；请查看原文或讨论。"
+
+
 def normalize_summary_text(text: str) -> str:
     """Return canonical summary typography independent of the model provider."""
     normalized = text.strip()

@@ -13,13 +13,13 @@
 - 最多 5 条 AI 相关内容；
 - 最多 2 条 Hacker News 全站热门的非 AI 内容，提供少量核心兴趣之外的探索。
 
-每条内容包含：原标题、中文摘要、推荐理由、原文链接、HN 讨论链接、points 和评论数。实际条数可以少于上限。
+每条内容包含：原标题、中文摘要、推荐理由、原文链接、HN 讨论链接、points 和评论数。实际条数可以少于上限。若入选条目的原文抓取失败，简报会明确显示错误并跳过模型摘要，不再生成一个看似正常的标题改写。
 
 每次运行写出三类文件：
 
 - `briefs/YYYY-MM-DD.md` — 用于阅读的 Markdown；
-- `briefs/YYYY-MM-DD.json` — 用于网站发布的结构化数据；
-- `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因，用于复盘。
+- `briefs/YYYY-MM-DD.json` — 用于网站发布的结构化数据；每条内容的 `content_status` 标明正文和摘要是否正常；
+- `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文抓取方式与错误、摘要依据，用于复盘。
 
 ## How It Works
 
@@ -30,7 +30,7 @@
 
 然后合并去重，并排除最近 7 天已推荐的内容。
 
-候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会抓取原文；若直接获取明确遇到 Cloudflare Challenge，则通过 Jina Reader 做一次 retrieval fallback。取得的正文再由模型生成接地的中文摘要，渲染为 Markdown 与 JSON 后发布到网站。
+候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会抓取原文；若直接获取明确遇到 Cloudflare Challenge，则通过 Jina Reader 做一次 retrieval fallback。系统记录正文来自 HN story text、直接抓取还是 Jina，以及摘要实际依据的材料。取得正文后再由模型生成接地的中文摘要；抓取失败时直接显示错误并跳过摘要模型，最后渲染为 Markdown 与 JSON 后发布到网站。
 
 打分权重、入选门槛等参数集中在 `src/daily_brief/config.py`。模块职责、生成链路与关键不变量见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
 

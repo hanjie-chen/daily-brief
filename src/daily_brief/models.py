@@ -28,6 +28,17 @@ class KeywordMatch:
 
 
 @dataclass
+class ArticleRetrieval:
+    status: str = "not_attempted"
+    method: str = ""
+    fallback_attempted: bool = False
+    fallback_reason: str = ""
+    error_type: str = ""
+    error_code: str = ""
+    error_message: str = ""
+
+
+@dataclass
 class Candidate:
     story: Story
     matched_keywords: list[KeywordMatch] = field(default_factory=list)
@@ -38,3 +49,6 @@ class Candidate:
     summary: str = ""
     why: str = ""
     topic_route: str = "not_evaluated"
+    article_retrieval: ArticleRetrieval = field(default_factory=ArticleRetrieval)
+    summary_basis: str = "not_generated"
+    summary_status: str = "not_generated"

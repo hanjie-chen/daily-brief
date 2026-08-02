@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from daily_brief import cli
+from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
 from daily_brief.cli import build_parser, main, run_generate
 from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
 from daily_brief.model_evaluation import capture_model_evaluation_input
@@ -15,7 +16,7 @@ from daily_brief.models import Candidate, Story
 def prevent_live_classifier_and_article_calls(monkeypatch):
     monkeypatch.setattr(cli, "CodexBackend", lambda: FakeModelBackend())
     monkeypatch.setattr(cli, "GeminiBackend", FakeGeminiBackendFactory)
-    monkeypatch.setattr(cli, "fetch_article_text", lambda url: "")
+    monkeypatch.setattr(cli, "fetch_article", lambda url: "Test article facts.")
 
 
 def test_parser_defaults_to_generate_command():
@@ -31,6 +32,14 @@ def test_parser_defaults_to_generate_command():
     assert args.dry_run is False
     assert args.capture_model_inputs is False
     assert args.backend == "gemini"
+
+
+def test_bounded_error_message_is_single_line_and_limited():
+    message = cli._bounded_error_message(RuntimeError("first\n" + "x" * 600))
+
+    assert message.startswith("first ")
+    assert "\n" not in message
+    assert len(message) == 500
 
 
 def test_run_generate_writes_markdown_and_json(tmp_path):
@@ -698,7 +707,7 @@ def test_same_date_history_does_not_change_rerun_selection(tmp_path):
     assert "Claude release" in result.brief_path.read_text(encoding="utf-8")
 
 
-def test_selected_external_article_text_reaches_summarizer(tmp_path):
+def test_selected_external_article_text_reaches_summarizer(tmp_path, caplog):
     summarizer = CapturingSummarizer()
     fetched_urls = []
 
@@ -706,33 +715,65 @@ def test_selected_external_article_text_reaches_summarizer(tmp_path):
         fetched_urls.append(url)
         return "Grounded article facts."
 
-    run_generate(
-        output_dir=tmp_path / "briefs",
-        data_dir=tmp_path / "data",
-        date_label="2026-07-20",
-        algolia_stories=[
-            story(
-                "1",
-                "Claude release",
-                points=40,
-                comments=8,
-                url="https://example.com/selected",
-            ),
-            story(
-                "2",
-                "OpenAI tiny",
-                points=1,
-                comments=0,
-                url="https://example.com/rejected",
-            ),
-        ],
-        hot_stories=[],
-        article_fetcher=fetch_article,
-        summarizer=summarizer,
-    )
+    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+        result = run_generate(
+            output_dir=tmp_path / "briefs",
+            data_dir=tmp_path / "data",
+            date_label="2026-07-20",
+            algolia_stories=[
+                story(
+                    "1",
+                    "Claude release",
+                    points=40,
+                    comments=8,
+                    url="https://example.com/selected",
+                ),
+                story(
+                    "2",
+                    "OpenAI tiny",
+                    points=1,
+                    comments=0,
+                    url="https://example.com/rejected",
+                ),
+            ],
+            hot_stories=[],
+            article_fetcher=fetch_article,
+            summarizer=summarizer,
+        )
 
     assert fetched_urls == ["https://example.com/selected"]
     assert summarizer.fetched_texts == ["Grounded article facts."]
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    selected = next(item for item in candidate_payload if item["hn_item_id"] == "1")
+    assert selected["article_retrieval"]["status"] == "success"
+    assert selected["article_retrieval"]["method"] == "direct"
+    assert selected["summary_basis"] == "fetched_article"
+    assert selected["summary_status"] == "success"
+    assert "item_id=1 status=success method=direct" in caplog.text
+
+
+def test_jina_retrieval_provenance_is_persisted(tmp_path):
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        article_fetcher=lambda url: ArticleFetchResult(
+            text="Grounded article facts.",
+            method="jina",
+            fallback_reason="cloudflare_challenge",
+        ),
+        summarizer=FakeSummarizer(),
+    )
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    retrieval = candidate_payload[0]["article_retrieval"]
+
+    assert retrieval["status"] == "success"
+    assert retrieval["method"] == "jina"
+    assert retrieval["fallback_attempted"] is True
+    assert retrieval["fallback_reason"] == "cloudflare_challenge"
 
 
 def test_run_generate_can_capture_exact_model_inputs(tmp_path):
@@ -777,7 +818,13 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
 
 def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
     def raise_fetch_error(url):
-        raise RuntimeError("article unavailable")
+        raise ArticleFetchError(
+            "HTTP Error 403: Forbidden",
+            error_code="http_403",
+            method="direct",
+        )
+
+    summarizer = FakeSummarizer()
 
     with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
         result = run_generate(
@@ -787,11 +834,41 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
             algolia_stories=[story("1", "Claude release", points=40, comments=8)],
             hot_stories=[],
             article_fetcher=raise_fetch_error,
-            summarizer=FakeSummarizer(),
+            summarizer=summarizer,
+            capture_model_inputs=True,
         )
 
     assert result.brief_path.exists()
-    assert "component=article_fetch item_id=1 status=failed" in caplog.text
+    markdown = result.brief_path.read_text(encoding="utf-8")
+    assert "原文抓取失败，未生成可靠摘要" in markdown
+    assert "- Content: Error — 原文抓取失败（http_403）。" in markdown
+    assert summarizer.titles == []
+    assert (
+        "component=article_fetch item_id=1 status=failed method=direct "
+        "error=ArticleFetchError code=http_403"
+    ) in caplog.text
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    failed = next(item for item in candidate_payload if item["hn_item_id"] == "1")
+    assert failed["article_retrieval"] == {
+        "status": "failed",
+        "method": "direct",
+        "fallback_attempted": False,
+        "fallback_reason": "",
+        "error_type": "ArticleFetchError",
+        "error_code": "http_403",
+        "error_message": "HTTP Error 403: Forbidden",
+    }
+    assert failed["summary_basis"] == "none"
+    assert failed["summary_status"] == "skipped"
+
+    public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    public_item = public_payload["sections"]["ai"]["items"][0]
+    assert public_item["content_status"] == "fetch_failed"
+    assert "HTTP Error 403" not in result.public_json_path.read_text(encoding="utf-8")
+
+    model_input = json.loads(result.model_input_path.read_text(encoding="utf-8"))
+    assert model_input["summary_candidates"] == []
 
 
 class FakeSummarizer:

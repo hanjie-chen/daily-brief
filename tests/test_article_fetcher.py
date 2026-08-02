@@ -6,6 +6,7 @@ import pytest
 from daily_brief.article_fetcher import (
     ArticleFetchError,
     extract_html,
+    fetch_article,
     fetch_article_text,
     fetch_jina_reader_text,
 )
@@ -77,6 +78,20 @@ def test_fetch_article_text_extracts_html_from_public_url():
     )
 
     assert text == "Useful facts."
+
+
+def test_fetch_article_reports_direct_retrieval_method():
+    response = FakeResponse(b"Direct facts.", content_type="text/plain")
+
+    result = fetch_article(
+        "https://example.com/article",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+    )
+
+    assert result.text == "Direct facts."
+    assert result.method == "direct"
+    assert result.fallback_reason == ""
 
 
 def test_fetch_article_text_decodes_plain_text():
@@ -182,6 +197,31 @@ def test_fetch_article_text_uses_jina_for_cloudflare_challenge(caplog):
     assert "method=jina status=success" in caplog.text
 
 
+def test_fetch_article_reports_jina_retrieval_method():
+    requests = []
+    jina_response = FakeResponse(
+        b"Luna costs 80% less.",
+        content_type="text/plain",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        if len(requests) == 1:
+            raise http_error(request.full_url, 403, cf_mitigated="challenge")
+        return jina_response
+
+    result = fetch_article(
+        "https://example.com/article",
+        opener=open_response,
+        resolver=resolver_for({}),
+    )
+
+    assert result.text == "Luna costs 80% less."
+    assert result.method == "jina"
+    assert result.fallback_reason == "cloudflare_challenge"
+
+
 @pytest.mark.parametrize("status_code", [403, 404])
 def test_fetch_article_text_does_not_use_jina_for_other_http_errors(status_code):
     requested_urls = []
@@ -190,7 +230,9 @@ def test_fetch_article_text_does_not_use_jina_for_other_http_errors(status_code)
         requested_urls.append(request.full_url)
         raise http_error(request.full_url, status_code, server="cloudflare")
 
-    with pytest.raises(ArticleFetchError, match="direct article request failed"):
+    with pytest.raises(
+        ArticleFetchError, match="direct article request failed"
+    ) as caught:
         fetch_article_text(
             "https://example.com/article",
             opener=deny,
@@ -198,6 +240,8 @@ def test_fetch_article_text_does_not_use_jina_for_other_http_errors(status_code)
         )
 
     assert requested_urls == ["https://example.com/article"]
+    assert caught.value.error_code == f"http_{status_code}"
+    assert caught.value.method == "direct"
 
 
 def test_fetch_article_text_reports_direct_and_jina_failures():
@@ -212,12 +256,31 @@ def test_fetch_article_text_reports_direct_and_jina_failures():
             "article retrieval failed: direct=cloudflare challenge; "
             "jina=Jina Reader request failed"
         ),
-    ):
+    ) as caught:
         fetch_article_text(
             "https://example.com/article",
             opener=fail,
             resolver=resolver_for({}),
         )
+
+    assert caught.value.error_code == "http_502"
+    assert caught.value.method == "jina"
+    assert caught.value.fallback_attempted is True
+    assert caught.value.fallback_reason == "cloudflare_challenge"
+
+
+def test_fetch_article_text_rejects_empty_content_with_stable_error_code():
+    response = FakeResponse(b"   ", content_type="text/plain")
+
+    with pytest.raises(ArticleFetchError, match="no visible text") as caught:
+        fetch_article_text(
+            "https://example.com/article",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+        )
+
+    assert caught.value.error_code == "empty_content"
+    assert caught.value.method == "direct"
 
 
 def test_fetch_jina_reader_text_reuses_response_size_limit():

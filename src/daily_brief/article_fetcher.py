@@ -4,6 +4,7 @@ import ipaddress
 import logging
 import re
 import socket
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.error import HTTPError
 from urllib.parse import urlparse
@@ -18,7 +19,27 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ArticleFetchError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "fetch_failed",
+        method: str = "",
+        fallback_attempted: bool = False,
+        fallback_reason: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.method = method
+        self.fallback_attempted = fallback_attempted
+        self.fallback_reason = fallback_reason
+
+
+@dataclass(frozen=True)
+class ArticleFetchResult:
+    text: str
+    method: str
+    fallback_reason: str = ""
 
 
 class _VisibleTextParser(HTMLParser):
@@ -66,6 +87,25 @@ def fetch_article_text(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> str:
+    """Fetch article text while preserving the original string-returning API."""
+    return fetch_article(
+        url,
+        opener=opener,
+        resolver=resolver,
+        timeout_seconds=timeout_seconds,
+        max_bytes=max_bytes,
+    ).text
+
+
+def fetch_article(
+    url: str,
+    *,
+    opener=None,
+    resolver=socket.getaddrinfo,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+) -> ArticleFetchResult:
+    """Fetch an article and report the successful retrieval method."""
     _validate_public_http_url(url, resolver)
     direct_request = Request(
         url,
@@ -87,7 +127,11 @@ def fetch_article_text(
         )
     except HTTPError as exc:
         if not _is_cloudflare_challenge(exc):
-            raise ArticleFetchError(f"direct article request failed: {exc}") from exc
+            raise ArticleFetchError(
+                f"direct article request failed: {exc}",
+                error_code=f"http_{exc.code}",
+                method="direct",
+            ) from exc
         LOGGER.warning(
             "component=article_fetch method=direct status=cloudflare_challenge "
             "fallback=jina"
@@ -103,17 +147,33 @@ def fetch_article_text(
         except ArticleFetchError as jina_exc:
             raise ArticleFetchError(
                 "article retrieval failed: direct=cloudflare challenge; "
-                f"jina={jina_exc}"
+                f"jina={jina_exc}",
+                error_code=jina_exc.error_code,
+                method="jina",
+                fallback_attempted=True,
+                fallback_reason="cloudflare_challenge",
             ) from jina_exc
         LOGGER.info("component=article_fetch method=jina status=success")
-        return text
+        return ArticleFetchResult(
+            text=text,
+            method="jina",
+            fallback_reason="cloudflare_challenge",
+        )
     except ArticleFetchError as exc:
-        raise ArticleFetchError(f"direct article retrieval failed: {exc}") from exc
+        raise ArticleFetchError(
+            f"direct article retrieval failed: {exc}",
+            error_code=exc.error_code,
+            method="direct",
+        ) from exc
     except Exception as exc:
-        raise ArticleFetchError(f"direct article request failed: {exc}") from exc
+        raise ArticleFetchError(
+            f"direct article request failed: {exc}",
+            error_code="request_failed",
+            method="direct",
+        ) from exc
 
     LOGGER.info("component=article_fetch method=direct status=success")
-    return text
+    return ArticleFetchResult(text=text, method="direct")
 
 
 def fetch_jina_reader_text(
@@ -147,10 +207,24 @@ def fetch_jina_reader_text(
             timeout_seconds=timeout_seconds,
             max_bytes=max_bytes,
         )
-    except ArticleFetchError:
-        raise
+    except HTTPError as exc:
+        raise ArticleFetchError(
+            f"Jina Reader request failed: {exc}",
+            error_code=f"http_{exc.code}",
+            method="jina",
+        ) from exc
+    except ArticleFetchError as exc:
+        raise ArticleFetchError(
+            str(exc),
+            error_code=exc.error_code,
+            method="jina",
+        ) from exc
     except Exception as exc:
-        raise ArticleFetchError(f"Jina Reader request failed: {exc}") from exc
+        raise ArticleFetchError(
+            f"Jina Reader request failed: {exc}",
+            error_code="request_failed",
+            method="jina",
+        ) from exc
 
 
 def _fetch_text_response(
@@ -166,17 +240,28 @@ def _fetch_text_response(
         content_type = response.headers.get_content_type().lower()
         if content_type not in {"text/html", "text/plain"}:
             raise ArticleFetchError(
-                f"unsupported article content type: {content_type}"
+                f"unsupported article content type: {content_type}",
+                error_code="unsupported_content_type",
             )
         payload = response.read(max_bytes + 1)
         if len(payload) > max_bytes:
-            raise ArticleFetchError("article response is too large")
+            raise ArticleFetchError(
+                "article response is too large",
+                error_code="response_too_large",
+            )
         charset = response.headers.get_content_charset() or "utf-8"
 
     decoded = payload.decode(charset, errors="replace")
     if content_type == "text/html":
-        return extract_html(decoded)
-    return " ".join(decoded.split())
+        text = extract_html(decoded)
+    else:
+        text = " ".join(decoded.split())
+    if not text:
+        raise ArticleFetchError(
+            "article response contained no visible text",
+            error_code="empty_content",
+        )
+    return text
 
 
 def _is_cloudflare_challenge(error: HTTPError) -> bool:
@@ -201,4 +286,7 @@ def _validate_public_http_url(url: str, resolver) -> None:
             if not ipaddress.ip_address(address).is_global:
                 raise ValueError("destination is not public")
     except (OSError, ValueError) as exc:
-        raise ArticleFetchError("article URL is not a safe public HTTP destination") from exc
+        raise ArticleFetchError(
+            "article URL is not a safe public HTTP destination",
+            error_code="unsafe_url",
+        ) from exc

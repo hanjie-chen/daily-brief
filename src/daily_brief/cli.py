@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from .article_fetcher import fetch_article_text
+from .article_fetcher import ArticleFetchError, ArticleFetchResult, fetch_article
 from .config import TIMEZONE, TOPIC_CLASSIFIER_MAX_CANDIDATES
 from .gemini_backend import GeminiBackend
 from .history import load_history, recent_ids, save_history
@@ -21,12 +21,16 @@ from .model_evaluation import (
     capture_model_evaluation_input,
     run_model_evaluation,
 )
-from .models import Candidate, Story
+from .models import ArticleRetrieval, Candidate, Story
 from .publisher import PublishError, publish_brief
 from .render import render_candidates_json, render_markdown, render_public_brief_json
 from .scoring import score_candidate
 from .selection import dedupe_candidates, select_sections
-from .summarizer import fallback_summary, normalize_summary_text
+from .summarizer import (
+    article_fetch_failure_summary,
+    fallback_summary,
+    normalize_summary_text,
+)
 from .time_window import daily_window
 
 LOGGER = logging.getLogger(__name__)
@@ -277,35 +281,105 @@ def run_generate(
     ]
 
     ai_items, selected_hot_items = select_sections(ai_pool, hot_pool)
-    article_client = article_fetcher or fetch_article_text
+    article_client = article_fetcher or fetch_article
     summary_client = summarizer or backend
     summary_candidates = [*ai_items, *selected_hot_items]
+    summarization_inputs = []
     for candidate in summary_candidates:
-        if (
+        if candidate.story.story_text.strip():
+            candidate.article_retrieval = ArticleRetrieval(
+                status="not_needed",
+                method="story_text",
+            )
+            candidate.summary_basis = "story_text"
+        elif (
             not candidate.story.story_text.strip()
             and candidate.story.source_url
             and candidate.story.source_url != candidate.story.hn_discussion_url
         ):
             try:
-                fetched_text = article_client(candidate.story.source_url).strip()
-                if fetched_text:
-                    candidate.story = replace(
-                        candidate.story, fetched_text=fetched_text
+                fetch_result = article_client(candidate.story.source_url)
+                if isinstance(fetch_result, ArticleFetchResult):
+                    fetched_text = fetch_result.text.strip()
+                    method = fetch_result.method
+                    fallback_reason = fetch_result.fallback_reason
+                elif isinstance(fetch_result, str):
+                    fetched_text = fetch_result.strip()
+                    method = "direct"
+                    fallback_reason = ""
+                else:
+                    raise ArticleFetchError(
+                        "article fetcher returned an invalid result",
+                        error_code="invalid_fetch_result",
+                        method="direct",
                     )
-            except Exception as exc:
-                LOGGER.error(
-                    "component=article_fetch item_id=%s status=failed error=%s message=%s",
-                    candidate.story.hn_item_id,
-                    type(exc).__name__,
-                    exc,
+                if not fetched_text:
+                    raise ArticleFetchError(
+                        "article response contained no visible text",
+                        error_code="empty_content",
+                        method=method,
+                    )
+                candidate.story = replace(
+                    candidate.story, fetched_text=fetched_text
                 )
+                candidate.article_retrieval = ArticleRetrieval(
+                    status="success",
+                    method=method,
+                    fallback_attempted=bool(fallback_reason),
+                    fallback_reason=fallback_reason,
+                )
+                candidate.summary_basis = "fetched_article"
+                LOGGER.info(
+                    "component=article_fetch item_id=%s status=success method=%s "
+                    "fallback_reason=%s",
+                    candidate.story.hn_item_id,
+                    method,
+                    fallback_reason or "none",
+                )
+            except Exception as exc:
+                error_message = _bounded_error_message(exc)
+                error_code = getattr(exc, "error_code", "fetch_failed")
+                method = getattr(exc, "method", "") or "direct"
+                fallback_attempted = getattr(exc, "fallback_attempted", False)
+                fallback_reason = getattr(exc, "fallback_reason", "")
+                candidate.article_retrieval = ArticleRetrieval(
+                    status="failed",
+                    method=method,
+                    fallback_attempted=fallback_attempted,
+                    fallback_reason=fallback_reason,
+                    error_type=type(exc).__name__,
+                    error_code=error_code,
+                    error_message=error_message,
+                )
+                candidate.summary = article_fetch_failure_summary(candidate)
+                candidate.summary_basis = "none"
+                candidate.summary_status = "skipped"
+                LOGGER.error(
+                    "component=article_fetch item_id=%s status=failed method=%s "
+                    "error=%s code=%s message=%s",
+                    candidate.story.hn_item_id,
+                    method,
+                    type(exc).__name__,
+                    error_code,
+                    error_message,
+                )
+                continue
+        else:
+            candidate.article_retrieval = ArticleRetrieval(
+                status="not_needed",
+                method="title",
+            )
+            candidate.summary_basis = "title_only"
+        summarization_inputs.append(candidate)
         try:
             candidate.summary = normalize_summary_text(
                 summary_client.summarize(candidate)
             )
+            candidate.summary_status = "success"
         except Exception as exc:
             print(f"Summary failed for {candidate.story.title}: {exc}", file=sys.stderr)
             candidate.summary = fallback_summary(candidate)
+            candidate.summary_status = "failed"
 
     output_path = Path(output_dir) / f"{label}.md"
     public_json_path = Path(output_dir) / f"{label}.json"
@@ -339,7 +413,7 @@ def run_generate(
             model_input_path,
             label,
             classification_batch,
-            summary_candidates,
+            summarization_inputs,
         )
     try:
         save_history(
@@ -388,6 +462,10 @@ def _candidate(story: Story) -> Candidate:
 
 def _has_non_weak_keyword_match(candidate: Candidate) -> bool:
     return any(match.weight != "weak" for match in candidate.matched_keywords)
+
+
+def _bounded_error_message(exc: Exception, max_chars: int = 500) -> str:
+    return " ".join(str(exc).split())[:max_chars]
 
 
 def _keyword_matches(story: Story):

@@ -20,7 +20,7 @@ This guide documents stable module boundaries, data flow, and maintenance entry 
 5. `selection.py` first deduplicates candidates, and `history.py` excludes stories recommended recently.
 6. Candidates with explicit non-weak keyword matches enter the AI pool directly. `topic_classifier.py` evaluates the highest-ranked remaining candidates for AI relevance using titles, source hosts, and bounded excerpts of already-available Hacker News story text.
 7. `selection.py` applies eligibility thresholds, ranking, and section limits to select AI stories and a small number of non-AI hot stories.
-8. `article_fetcher.py` retrieves article text when needed. Direct requests that explicitly return a Cloudflare Challenge use Jina Reader as a bounded fallback; other HTTP failures do not. `summarizer.py` supplies the shared grounded-summary prompt and canonicalizes model output before it enters rendering or evaluation artifacts.
+8. `article_fetcher.py` retrieves article text when needed and returns retrieval provenance. Direct requests that explicitly return a Cloudflare Challenge use Jina Reader as a bounded fallback; other HTTP failures do not. Successful methods and structured failures are recorded on the candidate. A failed article retrieval skips model summarization and produces an explicit reader-facing error instead of a title-only paraphrase. `summarizer.py` supplies the shared grounded-summary prompt and canonicalizes successful model output before it enters rendering or evaluation artifacts.
 9. `render.py` produces the Markdown brief, schema-versioned public JSON, and candidate JSON, and `history.py` records the selected story IDs.
 10. `publisher.py` sends only the targeted daily public JSON to the website and records its successful content hash for idempotent retry. Normal scheduled publishing targets the current Daily Brief date; historical publishing is explicit.
 
@@ -59,7 +59,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 | `__main__.py` | `python -m daily_brief` entry point | Module execution behavior |
 | `cli.py` | CLI definition and end-to-end orchestration | Pipeline order, cross-module behavior, logging, or output writes |
 | `config.py` | Timezone, keywords, thresholds, limits, and scoring caps | Selection policy or tuning |
-| `models.py` | Shared `Story`, `KeywordMatch`, and `Candidate` data structures | Data passed between stages |
+| `models.py` | Shared story, candidate, keyword, retrieval, and summary-provenance data structures | Data passed between stages |
 | `time_window.py` | Daily collection window | Timezone or daily boundary behavior |
 | `hn_client.py` | Algolia and official Hacker News API clients | Sources, retries, parsing, or Hacker News URLs |
 | `keywords.py` | Keyword and URL-token matching | AI keyword recognition |
@@ -70,9 +70,9 @@ Data sources, the topic classifier, article fetching, summarization, and history
 | `scoring.py` | Heat, keyword, and topic scoring | Ranking formulas or recommendation reasons |
 | `selection.py` | Duplicate handling and final section selection | Eligibility, quotas, deduplication, or rejection reasons |
 | `history.py` | Recent recommendation history | Repeat suppression or history retention |
-| `article_fetcher.py` | Bounded public HTTP(S) article fetching and visible-text extraction | Article retrieval, parsing, or network safety |
+| `article_fetcher.py` | Bounded public HTTP(S) article fetching, visible-text extraction, and retrieval outcomes | Article retrieval, parsing, provenance, or network safety |
 | `summarizer.py` | Shared summary prompt, Codex execution, provider-neutral typography normalization, and fallback text | Summary prompts, execution, output normalization, or fallback behavior |
-| `render.py` | Markdown brief and candidate JSON serialization | Output format |
+| `render.py` | Markdown brief, public content status, and candidate audit serialization | Output format |
 | `publisher.py` | Authenticated website publishing, retry, and local success state | Delivery behavior or publish configuration |
 
 ## Important Invariants
@@ -90,6 +90,8 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - Topic classification may include only an 800-character, whitespace-normalized excerpt of already-available `story_text` per candidate. It must not add article fetches before selection, and all excerpts remain untrusted prompt content.
 - Production and evaluation summaries use the same deterministic boundary normalization: adjacent Han characters and ASCII letters or digits are separated by one space before summaries enter output artifacts.
 - A failure in one external source must not discard successful results from another source. Classifier, article-fetch, and summarizer failures must retain their documented fallback behavior.
+- Every selected candidate records article-retrieval and summary provenance. Non-selected candidates remain `not_attempted`; HN story text is `not_needed`; successful external retrieval identifies `direct` or `jina`; failures keep a bounded single-line diagnostic in candidate audit JSON. Public brief JSON exposes only the stable `content_status`, never the raw retrieval error.
+- External article retrieval failure must skip the summarizer for that item, set the fixed reader-facing failure summary, and exclude that item from captured summary-model inputs. This prevents a title-only paraphrase from appearing as a normally grounded summary.
 - `data/recommendation-history.json` suppresses recently selected story IDs. `data/YYYY-MM-DD-hn-candidates.json` is a per-run audit artifact for selection review; the two files are not interchangeable.
 - Mutations to `Candidate` fields—including `selected`, `section`, `rejection_reason`, `summary`, `why`, and `topic_route`—are observable in rendered output or candidate audit data. Update tests when their meaning changes.
 - Public brief JSON is schema version 1. Every published item carries its stable `hn_item_id`, and the website requires that ID to match the Hacker News discussion URL.
