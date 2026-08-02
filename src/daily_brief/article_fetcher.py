@@ -7,13 +7,17 @@ import socket
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.error import HTTPError
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 DEFAULT_TIMEOUT_SECONDS = 15
 DEFAULT_MAX_BYTES = 256 * 1024
 JINA_READER_BASE_URL = "https://r.jina.ai/"
 JINA_CACHE_TOLERANCE_SECONDS = 5 * 60
+GITHUB_API_BASE_URL = "https://api.github.com"
+GITHUB_API_VERSION = "2022-11-28"
+GITHUB_RAW_CONTENT_TYPE = "application/vnd.github.raw+json"
+GITHUB_REPOSITORY_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 IGNORED_ELEMENTS = {"script", "style", "noscript", "svg", "template"}
 LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +111,20 @@ def fetch_article(
 ) -> ArticleFetchResult:
     """Fetch an article and report the successful retrieval method."""
     _validate_public_http_url(url, resolver)
+    github_repository = _github_repository(url)
+    if github_repository is not None:
+        owner, repository = github_repository
+        text = fetch_github_readme_text(
+            owner,
+            repository,
+            opener=opener,
+            resolver=resolver,
+            timeout_seconds=timeout_seconds,
+            max_bytes=max_bytes,
+        )
+        LOGGER.info("component=article_fetch method=github_readme status=success")
+        return ArticleFetchResult(text=text, method="github_readme")
+
     direct_request = Request(
         url,
         headers={
@@ -176,6 +194,58 @@ def fetch_article(
     return ArticleFetchResult(text=text, method="direct")
 
 
+def fetch_github_readme_text(
+    owner: str,
+    repository: str,
+    *,
+    opener=None,
+    resolver=socket.getaddrinfo,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+) -> str:
+    """Fetch the preferred README for one public GitHub repository."""
+    api_url = f"{GITHUB_API_BASE_URL}/repos/{owner}/{repository}/readme"
+    _validate_public_http_url(api_url, resolver)
+    request = Request(
+        api_url,
+        headers={
+            "User-Agent": "daily-brief/0.1",
+            "Accept": GITHUB_RAW_CONTENT_TYPE,
+            "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        },
+    )
+    if opener is None:
+        opener = build_opener(_SafeRedirectHandler(resolver)).open
+
+    try:
+        return _fetch_text_response(
+            request,
+            opener=opener,
+            resolver=resolver,
+            timeout_seconds=timeout_seconds,
+            max_bytes=max_bytes,
+            accepted_content_types={GITHUB_RAW_CONTENT_TYPE, "text/plain"},
+        )
+    except HTTPError as exc:
+        raise ArticleFetchError(
+            f"GitHub README API request failed: {exc}",
+            error_code=f"http_{exc.code}",
+            method="github_readme",
+        ) from exc
+    except ArticleFetchError as exc:
+        raise ArticleFetchError(
+            f"GitHub README retrieval failed: {exc}",
+            error_code=exc.error_code,
+            method="github_readme",
+        ) from exc
+    except Exception as exc:
+        raise ArticleFetchError(
+            f"GitHub README API request failed: {exc}",
+            error_code="request_failed",
+            method="github_readme",
+        ) from exc
+
+
 def fetch_jina_reader_text(
     url: str,
     *,
@@ -234,11 +304,13 @@ def _fetch_text_response(
     resolver,
     timeout_seconds: int,
     max_bytes: int,
+    accepted_content_types: set[str] | None = None,
 ) -> str:
+    allowed_content_types = accepted_content_types or {"text/html", "text/plain"}
     with opener(request, timeout=timeout_seconds) as response:
         _validate_public_http_url(response.geturl(), resolver)
         content_type = response.headers.get_content_type().lower()
-        if content_type not in {"text/html", "text/plain"}:
+        if content_type not in allowed_content_types:
             raise ArticleFetchError(
                 f"unsupported article content type: {content_type}",
                 error_code="unsupported_content_type",
@@ -262,6 +334,32 @@ def _fetch_text_response(
             error_code="empty_content",
         )
     return text
+
+
+def _github_repository(url: str) -> tuple[str, str] | None:
+    parsed = urlparse(url)
+    if (
+        parsed.hostname is None
+        or parsed.hostname.lower() != "github.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+    ):
+        return None
+    path_parts = parsed.path.strip("/").split("/")
+    if len(path_parts) != 2:
+        return None
+    owner, repository = (unquote(part) for part in path_parts)
+    if repository.endswith(".git"):
+        repository = repository[:-4]
+    if not owner or not repository:
+        return None
+    if not all(
+        GITHUB_REPOSITORY_PART_PATTERN.fullmatch(part)
+        for part in (owner, repository)
+    ):
+        return None
+    return owner, repository
 
 
 def _is_cloudflare_challenge(error: HTTPError) -> bool:

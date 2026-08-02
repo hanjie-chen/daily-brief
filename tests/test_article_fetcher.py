@@ -8,6 +8,7 @@ from daily_brief.article_fetcher import (
     extract_html,
     fetch_article,
     fetch_article_text,
+    fetch_github_readme_text,
     fetch_jina_reader_text,
 )
 
@@ -92,6 +93,119 @@ def test_fetch_article_reports_direct_retrieval_method():
     assert result.text == "Direct facts."
     assert result.method == "direct"
     assert result.fallback_reason == ""
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/drumih/turbo-fieldfare",
+        "https://github.com/drumih/turbo-fieldfare/",
+        "https://github.com/drumih/turbo-fieldfare.git?tab=readme#usage",
+    ],
+)
+def test_fetch_article_uses_github_readme_api_for_repository_root(url):
+    requests = []
+    response = FakeResponse(
+        b"# TurboFieldfare\n\nGrounded README facts.",
+        content_type="application/vnd.github.raw+json",
+        final_url=(
+            "https://api.github.com/repos/drumih/turbo-fieldfare/readme"
+        ),
+    )
+
+    def open_response(request, timeout):
+        requests.append((request, timeout))
+        return response
+
+    result = fetch_article(
+        url,
+        opener=open_response,
+        resolver=resolver_for({}),
+        timeout_seconds=7,
+    )
+
+    assert result.text == "# TurboFieldfare Grounded README facts."
+    assert result.method == "github_readme"
+    assert result.fallback_reason == ""
+    assert len(requests) == 1
+    request, timeout = requests[0]
+    assert request.full_url == (
+        "https://api.github.com/repos/drumih/turbo-fieldfare/readme"
+    )
+    assert request.get_header("Accept") == "application/vnd.github.raw+json"
+    assert request.get_header("X-github-api-version") == "2022-11-28"
+    assert timeout == 7
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/drumih",
+        "https://github.com/drumih/turbo-fieldfare/blob/main/README.md",
+        "https://github.com/drumih/turbo-fieldfare/issues/1",
+        "https://gist.github.com/drumih/abc123",
+        "https://github.com.evil.example/drumih/turbo-fieldfare",
+        "https://github.com/drumih%2Fother/turbo-fieldfare",
+    ],
+)
+def test_fetch_article_does_not_route_other_urls_to_github_readme_api(url):
+    requests = []
+    response = FakeResponse(b"Generic page facts.", content_type="text/plain")
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        return response
+
+    result = fetch_article(
+        url,
+        opener=open_response,
+        resolver=resolver_for({}),
+    )
+
+    assert result.method == "direct"
+    assert requests == [url]
+
+
+def test_fetch_github_readme_reports_api_failure_without_jina_fallback():
+    requested_urls = []
+
+    def deny(request, timeout):
+        requested_urls.append(request.full_url)
+        raise http_error(request.full_url, 403, cf_mitigated="challenge")
+
+    with pytest.raises(ArticleFetchError, match="GitHub README API") as caught:
+        fetch_article_text(
+            "https://github.com/drumih/turbo-fieldfare",
+            opener=deny,
+            resolver=resolver_for({}),
+        )
+
+    assert requested_urls == [
+        "https://api.github.com/repos/drumih/turbo-fieldfare/readme"
+    ]
+    assert caught.value.error_code == "http_403"
+    assert caught.value.method == "github_readme"
+    assert caught.value.fallback_attempted is False
+
+
+def test_fetch_github_readme_reuses_response_size_limit():
+    response = FakeResponse(
+        b"x" * 11,
+        content_type="application/vnd.github.raw+json",
+        final_url="https://api.github.com/repos/example/project/readme",
+    )
+
+    with pytest.raises(ArticleFetchError, match="too large") as caught:
+        fetch_github_readme_text(
+            "example",
+            "project",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            max_bytes=10,
+        )
+
+    assert caught.value.error_code == "response_too_large"
+    assert caught.value.method == "github_readme"
 
 
 def test_fetch_article_text_decodes_plain_text():

@@ -752,6 +752,37 @@ def test_selected_external_article_text_reaches_summarizer(tmp_path, caplog):
     assert "item_id=1 status=success method=direct" in caplog.text
 
 
+def test_story_text_skips_external_github_retrieval(tmp_path):
+    def fail_if_fetched(url):
+        raise AssertionError("story text must take precedence over the external URL")
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[
+            story(
+                "1",
+                "Claude release",
+                points=40,
+                comments=8,
+                story_text="Author-provided HN story facts.",
+                url="https://github.com/example/project",
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=fail_if_fetched,
+        summarizer=FakeSummarizer(),
+    )
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    retrieval = candidate_payload[0]["article_retrieval"]
+
+    assert retrieval["status"] == "not_needed"
+    assert retrieval["method"] == "story_text"
+    assert candidate_payload[0]["summary_basis"] == "story_text"
+
+
 def test_jina_retrieval_provenance_is_persisted(tmp_path):
     result = run_generate(
         output_dir=tmp_path / "briefs",
@@ -774,6 +805,29 @@ def test_jina_retrieval_provenance_is_persisted(tmp_path):
     assert retrieval["method"] == "jina"
     assert retrieval["fallback_attempted"] is True
     assert retrieval["fallback_reason"] == "cloudflare_challenge"
+
+
+def test_github_readme_retrieval_provenance_is_persisted(tmp_path):
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        article_fetcher=lambda url: ArticleFetchResult(
+            text="Grounded repository README facts.",
+            method="github_readme",
+        ),
+        summarizer=FakeSummarizer(),
+    )
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    retrieval = candidate_payload[0]["article_retrieval"]
+
+    assert retrieval["status"] == "success"
+    assert retrieval["method"] == "github_readme"
+    assert retrieval["fallback_attempted"] is False
+    assert retrieval["fallback_reason"] == ""
 
 
 def test_run_generate_can_capture_exact_model_inputs(tmp_path):
