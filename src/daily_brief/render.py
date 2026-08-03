@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from .models import Candidate
+from .public_schema import PUBLIC_BRIEF_SCHEMA_VERSION
 
 
 def render_markdown(
@@ -68,7 +69,7 @@ def render_public_brief_json(
     hot_note: str = "",
 ) -> str:
     payload = {
-        "schema_version": 1,
+        "schema_version": PUBLIC_BRIEF_SCHEMA_VERSION,
         "date": date_label,
         "generated_at": generated_at,
         "timezone": "Asia/Singapore",

@@ -18,7 +18,7 @@
 每次运行写出三类文件：
 
 - `briefs/YYYY-MM-DD.md` — 用于阅读的 Markdown；
-- `briefs/YYYY-MM-DD.json` — 用于网站发布的结构化数据；每条内容的 `content_status` 标明正文和摘要是否正常；
+- `briefs/YYYY-MM-DD.json` — 用于网站发布的严格 schema v2 结构化数据；每条内容的 `content_status` 标明正文和摘要是否正常；
 - `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文 transport、正文 extractor 与错误、摘要依据，用于复盘。
 
 ## How It Works
@@ -76,7 +76,7 @@ export DAILY_BRIEF_PUBLISH_TOKEN="<shared-secret>"
 daily-brief publish
 ```
 
-`publish` 发送所有尚未成功发布或内容已变化的 JSON，成功内容的 SHA-256 记录在 `data/publish-state.json`；失败内容不会被标记成功，后续运行自动补发。修正某天的简报后可强制重发：
+`publish` 发送当天（或 `--date` 明确指定日期）尚未成功发布或内容已变化的 JSON，成功内容的 SHA-256 记录在 `data/publish-state.json`；失败内容不会被标记成功。修正某天的简报后可强制重发：
 
 ```bash
 daily-brief publish --date YYYY-MM-DD --force

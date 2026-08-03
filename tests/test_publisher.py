@@ -10,12 +10,27 @@ from daily_brief.publisher import PublishError, publish_brief
 
 def _payload(date_label="2026-07-25"):
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "date": date_label,
         "generated_at": f"{date_label}T08:04:00+08:00",
         "timezone": "Asia/Singapore",
         "sections": {
-            "ai": {"note": "", "items": [{"hn_item_id": "1"}]},
+            "ai": {
+                "note": "",
+                "items": [
+                    {
+                        "hn_item_id": "1",
+                        "title": "Example",
+                        "summary": "Example summary",
+                        "content_status": "ok",
+                        "why": "Example reason",
+                        "source_url": "https://example.com/story",
+                        "discussion_url": "https://news.ycombinator.com/item?id=1",
+                        "points": 10,
+                        "comments": 2,
+                    }
+                ],
+            },
             "non_ai_hot": {"note": "", "items": []},
         },
     }
@@ -182,7 +197,7 @@ def test_publish_rejects_empty_brief(tmp_path):
     payload["sections"]["ai"]["items"] = []
     (brief_dir / "2026-07-25.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(PublishError, match="empty brief"):
+    with pytest.raises(PublishError, match="at least one item"):
         publish_brief(
             brief_dir,
             tmp_path / "data",
@@ -190,6 +205,69 @@ def test_publish_rejects_empty_brief(tmp_path):
             endpoint="https://example.com",
             token="x",
             opener=lambda *_args, **_kwargs: FakeResponse(),
+        )
+
+
+def test_publish_rejects_schema_v1_before_network(tmp_path):
+    brief_dir = tmp_path / "briefs"
+    path = _write_brief(brief_dir)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PublishError, match="unsupported schema_version"):
+        publish_brief(
+            brief_dir,
+            tmp_path / "data",
+            date_label="2026-07-25",
+            endpoint="https://example.com",
+            token="x",
+            opener=lambda *_args, **_kwargs: pytest.fail(
+                "invalid payload must not reach the network"
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda item: item.pop("content_status"), "exact schema v2 fields"),
+        (lambda item: item.update({"unexpected": True}), "exact schema v2 fields"),
+        (
+            lambda item: item.update({"content_status": "unknown"}),
+            "unsupported content_status",
+        ),
+        (
+            lambda item: item.update(
+                {
+                    "discussion_url": (
+                        "https://news.ycombinator.com/item?id=999"
+                    )
+                }
+            ),
+            "discussion_url must match hn_item_id",
+        ),
+    ],
+)
+def test_publish_rejects_invalid_item_contract_before_network(
+    tmp_path, mutation, message
+):
+    brief_dir = tmp_path / "briefs"
+    path = _write_brief(brief_dir)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutation(payload["sections"]["ai"]["items"][0])
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PublishError, match=message):
+        publish_brief(
+            brief_dir,
+            tmp_path / "data",
+            date_label="2026-07-25",
+            endpoint="https://example.com",
+            token="x",
+            opener=lambda *_args, **_kwargs: pytest.fail(
+                "invalid payload must not reach the network"
+            ),
         )
 
 

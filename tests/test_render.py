@@ -139,7 +139,7 @@ def test_render_public_brief_json_contains_stable_schema_and_selected_items():
     payload = json.loads(rendered)
 
     assert payload == {
-        "schema_version": 1,
+        "schema_version": 2,
         "date": "2026-07-08",
         "generated_at": "2026-07-08T08:04:00+08:00",
         "timezone": "Asia/Singapore",

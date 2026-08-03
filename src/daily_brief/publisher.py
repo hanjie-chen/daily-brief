@@ -11,6 +11,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .public_schema import PublicBriefValidationError, validate_public_brief
+
 LOGGER = logging.getLogger(__name__)
 PUBLISH_URL_ENV = "DAILY_BRIEF_PUBLISH_URL"
 PUBLISH_TOKEN_ENV = "DAILY_BRIEF_PUBLISH_TOKEN"
@@ -85,23 +87,12 @@ def _validate_local_payload(path: Path, payload_bytes: bytes) -> None:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PublishError(f"invalid brief JSON: {path}") from exc
 
-    if not isinstance(payload, dict):
-        raise PublishError(f"brief JSON must be an object: {path}")
-    if payload.get("schema_version") != 1:
-        raise PublishError(f"unsupported schema version: {path}")
+    try:
+        validate_public_brief(payload)
+    except PublicBriefValidationError as exc:
+        raise PublishError(f"invalid public brief schema: {path}: {exc}") from exc
     if payload.get("date") != path.stem:
         raise PublishError(f"brief date does not match filename: {path}")
-
-    sections = payload.get("sections")
-    if not isinstance(sections, dict):
-        raise PublishError(f"brief sections are missing: {path}")
-    item_count = sum(
-        len(section.get("items", []))
-        for section in sections.values()
-        if isinstance(section, dict) and isinstance(section.get("items", []), list)
-    )
-    if item_count == 0:
-        raise PublishError(f"refusing to publish an empty brief: {path}")
 
 
 def _post_with_retry(url, token, payload_bytes, opener, sleeper) -> None:

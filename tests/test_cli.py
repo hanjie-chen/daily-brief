@@ -113,7 +113,7 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
     ]
 
     public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
-    assert public_payload["schema_version"] == 1
+    assert public_payload["schema_version"] == 2
     assert public_payload["date"] == "2026-07-08"
     assert public_payload["generated_at"] == "2026-07-08T08:04:00+08:00"
     assert [

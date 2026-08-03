@@ -74,6 +74,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 | `pdf_extractor.py` | Resource-bounded subprocess worker for `pypdf` layout-text extraction | PDF parsing, page/output limits, or worker resource controls |
 | `summarizer.py` | Shared summary prompt, Codex execution, provider-neutral typography normalization, and fallback text | Summary prompts, execution, output normalization, or fallback behavior |
 | `render.py` | Markdown brief, public content status, and candidate audit serialization | Output format |
+| `public_schema.py` | Strict public schema v2 contract shared by rendering and publishing | Website payload compatibility or validation |
 | `publisher.py` | Authenticated website publishing, retry, and local success state | Delivery behavior or publish configuration |
 
 ## Important Invariants
@@ -98,7 +99,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - External article retrieval failure must skip the summarizer for that item, set the fixed reader-facing failure summary, and exclude that item from captured summary-model inputs. This prevents a title-only paraphrase from appearing as a normally grounded summary.
 - `data/recommendation-history.json` suppresses recently selected story IDs. `data/YYYY-MM-DD-hn-candidates.json` is a per-run audit artifact for selection review; the two files are not interchangeable.
 - Mutations to `Candidate` fields—including `selected`, `section`, `rejection_reason`, `summary`, `why`, and `topic_route`—are observable in rendered output or candidate audit data. Update tests when their meaning changes.
-- Public brief JSON is schema version 1. Every published item carries its stable `hn_item_id`, and the website requires that ID to match the Hacker News discussion URL.
+- Public brief JSON uses strict schema version 2 with required `content_status`; schema v1 is intentionally unsupported. Every published item carries its stable `hn_item_id`, and the website requires that ID to match the Hacker News discussion URL. The publisher validates the complete contract before sending.
 - Publisher credentials come only from `DAILY_BRIEF_PUBLISH_URL` and `DAILY_BRIEF_PUBLISH_TOKEN`. Never write the token into generated artifacts, logs, Git, or tests.
 - Publisher requests use the stable `daily-brief-publisher/1.0` user agent so the authenticated machine-to-machine endpoint is not mistaken for a malformed browser client by the public edge.
 - `data/publish-state.json` records only successful content hashes. Scheduled publishing targets one date and must never scan or automatically catch up historical files; operators can retry or repair a historical date explicitly with `publish --date`.
