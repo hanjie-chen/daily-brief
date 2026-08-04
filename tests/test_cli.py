@@ -437,8 +437,9 @@ def test_main_publish_targets_current_daily_brief_date(monkeypatch):
     monkeypatch.setattr(
         cli,
         "publish_brief",
-        lambda **kwargs: calls.append(kwargs)
-        or SimpleNamespace(published=1, skipped=0),
+        lambda **kwargs: (
+            calls.append(kwargs) or SimpleNamespace(published=1, skipped=0)
+        ),
     )
 
     assert main(["publish"]) == 0
@@ -458,8 +459,9 @@ def test_main_publish_explicit_date_overrides_current_date(monkeypatch):
     monkeypatch.setattr(
         cli,
         "publish_brief",
-        lambda **kwargs: calls.append(kwargs)
-        or SimpleNamespace(published=1, skipped=0),
+        lambda **kwargs: (
+            calls.append(kwargs) or SimpleNamespace(published=1, skipped=0)
+        ),
     )
 
     assert main(["publish", "--date", "2026-07-25"]) == 0
@@ -477,9 +479,7 @@ def test_main_uses_gemini_backend_for_production_generate(monkeypatch):
     assert calls[0]["model_backend"].name == "fake"
 
 
-def test_main_reports_missing_gemini_key_for_production_generate(
-    monkeypatch, caplog
-):
+def test_main_reports_missing_gemini_key_for_production_generate(monkeypatch, caplog):
     monkeypatch.setattr(cli, "GeminiBackend", RealGeminiBackend)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
@@ -490,9 +490,7 @@ def test_main_reports_missing_gemini_key_for_production_generate(
     assert "GEMINI_API_KEY is not configured" in caplog.text
 
 
-def test_main_reports_missing_gemini_key_for_evaluation(
-    tmp_path, monkeypatch, caplog
-):
+def test_main_reports_missing_gemini_key_for_evaluation(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(cli, "GeminiBackend", RealGeminiBackend)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
@@ -784,7 +782,8 @@ def test_story_text_skips_external_github_retrieval(tmp_path):
     assert candidate_payload[0]["summary_basis"] == "story_text"
 
 
-def test_jina_retrieval_provenance_is_persisted(tmp_path):
+def test_empty_content_jina_success_is_summarized_and_persisted(tmp_path):
+    summarizer = FakeSummarizer()
     result = run_generate(
         output_dir=tmp_path / "briefs",
         data_dir=tmp_path / "data",
@@ -794,10 +793,10 @@ def test_jina_retrieval_provenance_is_persisted(tmp_path):
         article_fetcher=lambda url: ArticleFetchResult(
             text="Grounded article facts.",
             method="jina",
-            fallback_reason="cloudflare_challenge",
+            fallback_reason="empty_content",
             extractor="jina",
         ),
-        summarizer=FakeSummarizer(),
+        summarizer=summarizer,
     )
 
     candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
@@ -807,7 +806,10 @@ def test_jina_retrieval_provenance_is_persisted(tmp_path):
     assert retrieval["method"] == "jina"
     assert retrieval["extractor"] == "jina"
     assert retrieval["fallback_attempted"] is True
-    assert retrieval["fallback_reason"] == "cloudflare_challenge"
+    assert retrieval["fallback_reason"] == "empty_content"
+    assert candidate_payload[0]["summary_basis"] == "fetched_article"
+    assert candidate_payload[0]["summary_status"] == "success"
+    assert summarizer.titles == ["Claude release"]
 
 
 def test_github_readme_retrieval_provenance_is_persisted(tmp_path):
@@ -835,9 +837,7 @@ def test_github_readme_retrieval_provenance_is_persisted(tmp_path):
     assert retrieval["fallback_reason"] == ""
 
 
-def test_github_pdf_retrieval_provenance_and_logging_are_persisted(
-    tmp_path, caplog
-):
+def test_github_pdf_retrieval_provenance_and_logging_are_persisted(tmp_path, caplog):
     with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
         result = run_generate(
             output_dir=tmp_path / "briefs",
@@ -892,17 +892,12 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
     assert result.model_input_path == data_dir / "model-eval-inputs/2026-07-20.json"
     payload = json.loads(result.model_input_path.read_text(encoding="utf-8"))
     assert payload["schema_version"] == 1
-    assert [item["hn_item_id"] for item in payload["classifier_candidates"]] == [
-        "2"
-    ]
+    assert [item["hn_item_id"] for item in payload["classifier_candidates"]] == ["2"]
     assert [item["hn_item_id"] for item in payload["summary_candidates"]] == [
         "1",
         "2",
     ]
-    assert (
-        payload["summary_candidates"][0]["fetched_text"]
-        == "Grounded article facts."
-    )
+    assert payload["summary_candidates"][0]["fetched_text"] == "Grounded article facts."
 
 
 def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
@@ -960,6 +955,50 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
 
     model_input = json.loads(result.model_input_path.read_text(encoding="utf-8"))
     assert model_input["summary_candidates"] == []
+
+
+def test_empty_content_jina_failure_skips_summary_and_persists_provenance(
+    tmp_path,
+):
+    def raise_fetch_error(url):
+        raise ArticleFetchError(
+            "article retrieval failed: direct=trafilatura empty_content; "
+            "jina=Jina Reader returned malformed JSON",
+            error_code="jina_malformed_json",
+            method="jina",
+            extractor="jina",
+            fallback_attempted=True,
+            fallback_reason="empty_content",
+        )
+
+    summarizer = FakeSummarizer()
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        article_fetcher=raise_fetch_error,
+        summarizer=summarizer,
+    )
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    failed = candidate_payload[0]
+    retrieval = failed["article_retrieval"]
+    assert retrieval["status"] == "failed"
+    assert retrieval["method"] == "jina"
+    assert retrieval["extractor"] == "jina"
+    assert retrieval["fallback_attempted"] is True
+    assert retrieval["fallback_reason"] == "empty_content"
+    assert retrieval["error_code"] == "jina_malformed_json"
+    assert "direct=trafilatura empty_content" in retrieval["error_message"]
+    assert "jina=Jina Reader returned malformed JSON" in retrieval["error_message"]
+    assert failed["summary_basis"] == "none"
+    assert failed["summary_status"] == "skipped"
+    assert summarizer.titles == []
+    assert "原文抓取失败，未生成可靠摘要" in result.brief_path.read_text(
+        encoding="utf-8"
+    )
 
 
 class FakeSummarizer:

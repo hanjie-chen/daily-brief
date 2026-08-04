@@ -34,6 +34,7 @@ DEFAULT_PDF_ADDRESS_SPACE_BYTES = 512 * 1024 * 1024
 DEFAULT_MAX_BYTES = DEFAULT_MAX_EXTRACTED_BYTES
 JINA_READER_BASE_URL = "https://r.jina.ai/"
 JINA_CACHE_TOLERANCE_SECONDS = 5 * 60
+JINA_JSON_CONTENT_TYPES = {"application/json", "text/json"}
 GITHUB_API_BASE_URL = "https://api.github.com"
 GITHUB_RAW_BASE_URL = "https://raw.githubusercontent.com"
 GITHUB_API_VERSION = "2022-11-28"
@@ -257,34 +258,30 @@ def fetch_article(
             "component=article_fetch method=direct status=cloudflare_challenge "
             "fallback=jina"
         )
-        try:
-            text = fetch_jina_reader_text(
+        return _fetch_jina_fallback(
+            url,
+            direct_failure="cloudflare challenge",
+            fallback_reason="cloudflare_challenge",
+            opener=open_request,
+            resolver=resolver,
+            timeout_seconds=timeout_seconds,
+            max_bytes=extracted_max_bytes,
+        )
+    except ArticleFetchError as exc:
+        if exc.error_code == "empty_content" and exc.extractor == "trafilatura":
+            LOGGER.warning(
+                "component=article_fetch method=direct extractor=trafilatura "
+                "status=empty_content fallback=jina"
+            )
+            return _fetch_jina_fallback(
                 url,
+                direct_failure="trafilatura empty_content",
+                fallback_reason="empty_content",
                 opener=open_request,
                 resolver=resolver,
                 timeout_seconds=timeout_seconds,
                 max_bytes=extracted_max_bytes,
             )
-        except ArticleFetchError as jina_exc:
-            raise ArticleFetchError(
-                "article retrieval failed: direct=cloudflare challenge; "
-                f"jina={jina_exc}",
-                error_code=jina_exc.error_code,
-                method="jina",
-                extractor="jina",
-                fallback_attempted=True,
-                fallback_reason="cloudflare_challenge",
-            ) from jina_exc
-        LOGGER.info(
-            "component=article_fetch method=jina extractor=jina status=success"
-        )
-        return ArticleFetchResult(
-            text=text,
-            method="jina",
-            extractor="jina",
-            fallback_reason="cloudflare_challenge",
-        )
-    except ArticleFetchError as exc:
         raise ArticleFetchError(
             f"direct article retrieval failed: {exc}",
             error_code=exc.error_code,
@@ -303,6 +300,46 @@ def fetch_article(
         result.extractor,
     )
     return result
+
+
+def _fetch_jina_fallback(
+    url: str,
+    *,
+    direct_failure: str,
+    fallback_reason: str,
+    opener,
+    resolver,
+    timeout_seconds: int,
+    max_bytes: int,
+) -> ArticleFetchResult:
+    try:
+        text = fetch_jina_reader_text(
+            url,
+            opener=opener,
+            resolver=resolver,
+            timeout_seconds=timeout_seconds,
+            max_bytes=max_bytes,
+        )
+    except ArticleFetchError as jina_exc:
+        raise ArticleFetchError(
+            f"article retrieval failed: direct={direct_failure}; jina={jina_exc}",
+            error_code=jina_exc.error_code,
+            method="jina",
+            extractor="jina",
+            fallback_attempted=True,
+            fallback_reason=fallback_reason,
+        ) from jina_exc
+    LOGGER.info(
+        "component=article_fetch method=jina extractor=jina status=success "
+        "fallback_reason=%s",
+        fallback_reason,
+    )
+    return ArticleFetchResult(
+        text=text,
+        method="jina",
+        extractor="jina",
+        fallback_reason=fallback_reason,
+    )
 
 
 def fetch_github_readme_text(
@@ -396,9 +433,7 @@ def fetch_github_blob(
             payload = _read_bounded(response, raw_limit)
             charset = response.headers.get_content_charset() or "utf-8"
     except HTTPError as exc:
-        error_code = (
-            "github_file_not_found" if exc.code == 404 else f"http_{exc.code}"
-        )
+        error_code = "github_file_not_found" if exc.code == 404 else f"http_{exc.code}"
         raise ArticleFetchError(
             f"GitHub raw file request failed: {exc}",
             error_code=error_code,
@@ -454,7 +489,7 @@ def fetch_jina_reader_text(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
 ) -> str:
-    """Fetch one public article through Jina Reader as bounded plain text."""
+    """Fetch and validate one bounded Jina Reader JSON response."""
     _validate_public_http_url(url, resolver)
     reader_url = f"{JINA_READER_BASE_URL}{url}"
     _validate_public_http_url(reader_url, resolver)
@@ -462,21 +497,94 @@ def fetch_jina_reader_text(
         reader_url,
         headers={
             "User-Agent": "daily-brief/0.1",
-            "Accept": "text/plain",
+            "Accept": "application/json",
             "X-Cache-Tolerance": str(JINA_CACHE_TOLERANCE_SECONDS),
         },
     )
     open_request = opener or _build_safe_opener(resolver).open
 
     try:
-        return _fetch_bounded_text_response(
-            request,
-            opener=open_request,
-            resolver=resolver,
-            timeout_seconds=timeout_seconds,
-            max_bytes=max_bytes,
-            accepted_content_types={"text/plain"},
-        )
+        with open_request(request, timeout=timeout_seconds) as response:
+            _validate_public_http_url(response.geturl(), resolver)
+            content_type = response.headers.get_content_type().lower()
+            if content_type not in JINA_JSON_CONTENT_TYPES:
+                raise ArticleFetchError(
+                    f"Jina Reader returned an unsupported content type: {content_type}",
+                    error_code="jina_unsupported_content_type",
+                )
+            payload = _read_bounded(response, max_bytes)
+            charset = response.headers.get_content_charset() or "utf-8"
+
+        try:
+            envelope = json.loads(payload.decode(charset))
+        except (LookupError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ArticleFetchError(
+                "Jina Reader returned malformed JSON",
+                error_code="jina_malformed_json",
+            ) from exc
+        if not isinstance(envelope, dict):
+            raise ArticleFetchError(
+                "Jina Reader JSON envelope is not an object",
+                error_code="jina_invalid_envelope",
+            )
+
+        code = envelope.get("code")
+        status = envelope.get("status")
+        if not (_is_json_integer(code) and 200 <= code < 300):
+            raise ArticleFetchError(
+                "Jina Reader envelope code does not indicate success",
+                error_code="jina_provider_status",
+            )
+        if not (
+            _is_json_integer(status)
+            and (200 <= status < 300 or 20000 <= status < 20100)
+        ):
+            raise ArticleFetchError(
+                "Jina Reader envelope status does not indicate success",
+                error_code="jina_provider_status",
+            )
+
+        data = envelope.get("data")
+        if not isinstance(data, dict):
+            raise ArticleFetchError(
+                "Jina Reader envelope data is not an object",
+                error_code="jina_invalid_envelope",
+            )
+        http_status = data.get("httpStatus")
+        if not (_is_json_integer(http_status) and 200 <= http_status < 300):
+            raise ArticleFetchError(
+                "Jina Reader origin status does not indicate success",
+                error_code="jina_origin_status",
+            )
+
+        origin_url = data.get("url")
+        if not isinstance(origin_url, str):
+            raise ArticleFetchError(
+                "Jina Reader origin URL is invalid",
+                error_code="jina_invalid_url",
+            )
+        try:
+            _validate_public_http_url(origin_url, resolver)
+        except ArticleFetchError as exc:
+            raise ArticleFetchError(
+                "Jina Reader origin URL is not a safe public HTTP destination",
+                error_code="jina_invalid_url",
+            ) from exc
+
+        content = data.get("content")
+        if not isinstance(content, str):
+            raise ArticleFetchError(
+                "Jina Reader content is not a string",
+                error_code="jina_invalid_content",
+            )
+        text = _normalize_text(content)
+        if not text:
+            raise ArticleFetchError(
+                "Jina Reader content is empty",
+                error_code="jina_invalid_content",
+            )
+        _enforce_extracted_limit(text, max_bytes, extractor="jina")
+        return text
     except HTTPError as exc:
         raise ArticleFetchError(
             f"Jina Reader request failed: {exc}",
@@ -498,6 +606,10 @@ def fetch_jina_reader_text(
             method="jina",
             extractor="jina",
         ) from exc
+
+
+def _is_json_integer(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _fetch_direct_response(
@@ -759,8 +871,7 @@ def _github_repository(url: str) -> tuple[str, str] | None:
     if not owner or not repository:
         return None
     if not all(
-        GITHUB_REPOSITORY_PART_PATTERN.fullmatch(part)
-        for part in (owner, repository)
+        GITHUB_REPOSITORY_PART_PATTERN.fullmatch(part) for part in (owner, repository)
     ):
         return None
     return owner, repository
@@ -780,12 +891,9 @@ def _github_blob(url: str) -> tuple[str, str, str, str] | None:
             method="github_raw",
         )
 
-    owner, repository, _, ref, *path_parts = (
-        unquote(part) for part in encoded_parts
-    )
+    owner, repository, _, ref, *path_parts = (unquote(part) for part in encoded_parts)
     if not all(
-        GITHUB_REPOSITORY_PART_PATTERN.fullmatch(part)
-        for part in (owner, repository)
+        GITHUB_REPOSITORY_PART_PATTERN.fullmatch(part) for part in (owner, repository)
     ):
         raise ArticleFetchError(
             "unsupported GitHub blob repository path",
@@ -833,8 +941,7 @@ def _is_standard_github_url(parsed) -> bool:
 def _is_cloudflare_challenge(error: HTTPError) -> bool:
     headers = error.headers
     return bool(
-        headers
-        and headers.get("cf-mitigated", "").strip().lower() == "challenge"
+        headers and headers.get("cf-mitigated", "").strip().lower() == "challenge"
     )
 
 

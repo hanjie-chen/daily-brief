@@ -1,5 +1,6 @@
 from email.message import Message
 from io import BytesIO
+import json
 import subprocess
 from urllib.error import HTTPError
 
@@ -64,6 +65,28 @@ def resolver_for(addresses):
     return resolve
 
 
+def make_jina_payload(
+    content="Luna costs 80% less.",
+    *,
+    code=200,
+    status=200,
+    http_status=200,
+    url="https://example.com/article",
+):
+    return json.dumps(
+        {
+            "code": code,
+            "status": status,
+            "data": {
+                "httpStatus": http_status,
+                "url": url,
+                "content": content,
+            },
+        },
+        ensure_ascii=False,
+    ).encode()
+
+
 def make_pdf(*page_texts):
     writer = PdfWriter()
     font = DictionaryObject(
@@ -77,18 +100,14 @@ def make_pdf(*page_texts):
     for page_text in page_texts:
         page = writer.add_blank_page(width=612, height=792)
         page[NameObject("/Resources")] = DictionaryObject(
-            {
-                NameObject("/Font"): DictionaryObject(
-                    {NameObject("/F1"): font_reference}
-                )
-            }
+            {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font_reference})}
         )
         if page_text is not None:
-            escaped = page_text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-            content = DecodedStreamObject()
-            content.set_data(
-                f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET".encode()
+            escaped = (
+                page_text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
             )
+            content = DecodedStreamObject()
+            content.set_data(f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET".encode())
             page[NameObject("/Contents")] = writer._add_object(content)
     output = BytesIO()
     writer.write(output)
@@ -192,8 +211,7 @@ def test_html_over_separate_raw_limit_fails_before_extraction(monkeypatch):
 def test_html_extraction_excludes_page_chrome_scripts_and_comments():
     body = (
         "The article body contains grounded reporting about a useful technical "
-        "result, with enough detail for extraction. "
-        * 10
+        "result, with enough detail for extraction. " * 10
     )
     markup = f"""
     <html><head><style>STYLE_SECRET</style></head><body>
@@ -216,24 +234,48 @@ def test_html_extraction_excludes_page_chrome_scripts_and_comments():
     assert "SCRIPT_SECRET" not in text
 
 
-def test_empty_trafilatura_result_is_a_terminal_failure(monkeypatch):
+@pytest.mark.parametrize("provider_status", [200, 20000])
+def test_empty_trafilatura_result_uses_jina_once(monkeypatch, provider_status, caplog):
     monkeypatch.setattr(
         "daily_brief.article_fetcher.trafilatura.extract", lambda *args, **kwargs: None
     )
-    response = FakeResponse(
+    direct_response = FakeResponse(
         b"<html><body><nav>Navigation must not become article text.</nav></body></html>"
     )
+    jina_response = FakeResponse(
+        make_jina_payload("Grounded Jina article facts.", status=provider_status),
+        content_type="application/json",
+        final_url="https://r.jina.ai/https://example.com/no-article",
+    )
+    requests = []
 
-    with pytest.raises(ArticleFetchError) as caught:
-        fetch_article_text(
+    def open_response(request, timeout):
+        requests.append(request)
+        return direct_response if len(requests) == 1 else jina_response
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
             "https://example.com/no-article",
-            opener=lambda request, timeout: response,
+            opener=open_response,
             resolver=resolver_for({}),
         )
 
-    assert caught.value.error_code == "empty_content"
-    assert caught.value.method == "direct"
-    assert caught.value.extractor == "trafilatura"
+    assert [request.full_url for request in requests] == [
+        "https://example.com/no-article",
+        "https://r.jina.ai/https://example.com/no-article",
+    ]
+    assert result.text == "Grounded Jina article facts."
+    assert result.method == "jina"
+    assert result.extractor == "jina"
+    assert result.fallback_reason == "empty_content"
+    assert (
+        "method=direct extractor=trafilatura status=empty_content fallback=jina"
+        in caplog.text
+    )
+    assert (
+        "method=jina extractor=jina status=success fallback_reason=empty_content"
+        in caplog.text
+    )
 
 
 def test_html_extracted_text_has_its_own_limit(monkeypatch):
@@ -254,6 +296,32 @@ def test_html_extracted_text_has_its_own_limit(monkeypatch):
     assert caught.value.extractor == "trafilatura"
 
 
+def test_html_extraction_exception_does_not_use_jina(monkeypatch):
+    def fail_extraction(*args, **kwargs):
+        raise ValueError("broken parser")
+
+    monkeypatch.setattr(
+        "daily_brief.article_fetcher.trafilatura.extract", fail_extraction
+    )
+    response = FakeResponse(b"<html><article>Facts</article></html>")
+    requested_urls = []
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article_text(
+            "https://example.com/article",
+            opener=lambda request, timeout: (
+                requested_urls.append(request.full_url) or response
+            ),
+            resolver=resolver_for({}),
+        )
+
+    assert requested_urls == ["https://example.com/article"]
+    assert caught.value.error_code == "html_extraction_failed"
+    assert caught.value.method == "direct"
+    assert caught.value.extractor == "trafilatura"
+    assert caught.value.fallback_attempted is False
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -267,9 +335,7 @@ def test_fetch_article_uses_github_readme_api_for_repository_root(url):
     response = FakeResponse(
         b"# TurboFieldfare\n\nGrounded README facts.",
         content_type="application/vnd.github.raw+json",
-        final_url=(
-            "https://api.github.com/repos/drumih/turbo-fieldfare/readme"
-        ),
+        final_url=("https://api.github.com/repos/drumih/turbo-fieldfare/readme"),
     )
 
     def open_response(request, timeout):
@@ -419,9 +485,7 @@ def test_github_blob_404_is_terminal_and_does_not_call_jina():
 def test_github_fixed_commit_blob_fetches_exact_raw_pdf():
     commit = "15c6504be51b884a0adc5d77e4dba41f94431454"
     blob_url = f"https://github.com/example/project/blob/{commit}/report.pdf"
-    raw_url = (
-        f"https://raw.githubusercontent.com/example/project/{commit}/report.pdf"
-    )
+    raw_url = f"https://raw.githubusercontent.com/example/project/{commit}/report.pdf"
     response = FakeResponse(
         make_pdf("Exact commit PDF facts."),
         content_type="application/octet-stream",
@@ -673,7 +737,13 @@ def test_fetch_article_text_rejects_unsafe_destinations(url, address):
         fetch_article_text(
             url,
             opener=fail_if_opened,
-            resolver=resolver_for({"127.0.0.1": address, "router.local": address, "metadata.internal": address}),
+            resolver=resolver_for(
+                {
+                    "127.0.0.1": address,
+                    "router.local": address,
+                    "metadata.internal": address,
+                }
+            ),
         )
 
 
@@ -745,16 +815,21 @@ def test_connection_uses_the_exact_validated_socket_address(monkeypatch):
 
 def test_fetch_article_text_rejects_pdf_with_invalid_magic():
     response = FakeResponse(b"%PDF", content_type="application/pdf")
+    requested_urls = []
 
     with pytest.raises(ArticleFetchError, match="file signature") as caught:
         fetch_article_text(
             "https://example.com/file.pdf",
-            opener=lambda request, timeout: response,
+            opener=lambda request, timeout: (
+                requested_urls.append(request.full_url) or response
+            ),
             resolver=resolver_for({}),
         )
 
+    assert requested_urls == ["https://example.com/file.pdf"]
     assert caught.value.error_code == "pdf_magic_mismatch"
     assert caught.value.extractor == "pypdf"
+    assert caught.value.fallback_attempted is False
 
 
 def test_fetch_article_text_rejects_oversized_content():
@@ -772,8 +847,8 @@ def test_fetch_article_text_rejects_oversized_content():
 def test_fetch_article_text_uses_jina_for_cloudflare_challenge(caplog):
     requests = []
     jina_response = FakeResponse(
-        b"Luna costs 80% less.",
-        content_type="text/plain",
+        make_jina_payload(),
+        content_type="application/json",
         final_url="https://r.jina.ai/https://example.com/article",
     )
 
@@ -799,7 +874,7 @@ def test_fetch_article_text_uses_jina_for_cloudflare_challenge(caplog):
         "https://r.jina.ai/https://example.com/article",
     ]
     assert [timeout for _, timeout in requests] == [7, 7]
-    assert requests[1][0].get_header("Accept") == "text/plain"
+    assert requests[1][0].get_header("Accept") == "application/json"
     assert requests[1][0].get_header("X-cache-tolerance") == "300"
     assert "method=direct status=cloudflare_challenge fallback=jina" in caplog.text
     assert "method=jina extractor=jina status=success" in caplog.text
@@ -808,8 +883,8 @@ def test_fetch_article_text_uses_jina_for_cloudflare_challenge(caplog):
 def test_fetch_article_reports_jina_retrieval_method():
     requests = []
     jina_response = FakeResponse(
-        b"Luna costs 80% less.",
-        content_type="text/plain",
+        make_jina_payload(status=20000),
+        content_type="application/json",
         final_url="https://r.jina.ai/https://example.com/article",
     )
 
@@ -878,24 +953,72 @@ def test_fetch_article_text_reports_direct_and_jina_failures():
     assert caught.value.fallback_reason == "cloudflare_challenge"
 
 
+def test_empty_trafilatura_and_jina_failure_preserve_combined_provenance(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "daily_brief.article_fetcher.trafilatura.extract", lambda *args, **kwargs: None
+    )
+    direct_response = FakeResponse(b"<html><body>Client shell</body></html>")
+    jina_response = FakeResponse(
+        b"not-json",
+        content_type="application/json",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+    requests = []
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        return direct_response if len(requests) == 1 else jina_response
+
+    with pytest.raises(
+        ArticleFetchError,
+        match=(
+            "article retrieval failed: direct=trafilatura empty_content; "
+            "jina=Jina Reader returned malformed JSON"
+        ),
+    ) as caught:
+        fetch_article_text(
+            "https://example.com/article",
+            opener=open_response,
+            resolver=resolver_for({}),
+        )
+
+    assert requests == [
+        "https://example.com/article",
+        "https://r.jina.ai/https://example.com/article",
+    ]
+    assert caught.value.error_code == "jina_malformed_json"
+    assert caught.value.method == "jina"
+    assert caught.value.extractor == "jina"
+    assert caught.value.fallback_attempted is True
+    assert caught.value.fallback_reason == "empty_content"
+
+
 def test_fetch_article_text_rejects_empty_content_with_stable_error_code():
     response = FakeResponse(b"   ", content_type="text/plain")
+    requested_urls = []
 
     with pytest.raises(ArticleFetchError, match="no extractable text") as caught:
         fetch_article_text(
             "https://example.com/article",
-            opener=lambda request, timeout: response,
+            opener=lambda request, timeout: (
+                requested_urls.append(request.full_url) or response
+            ),
             resolver=resolver_for({}),
         )
 
+    assert requested_urls == ["https://example.com/article"]
     assert caught.value.error_code == "empty_content"
     assert caught.value.method == "direct"
+    assert caught.value.extractor == "plain_text"
+    assert caught.value.fallback_attempted is False
 
 
 def test_fetch_jina_reader_text_reuses_response_size_limit():
     response = FakeResponse(
         b"x" * 11,
-        content_type="text/plain",
+        content_type="application/json",
         final_url="https://r.jina.ai/https://example.com/article",
     )
 
@@ -906,3 +1029,97 @@ def test_fetch_jina_reader_text_reuses_response_size_limit():
             resolver=resolver_for({}),
             max_bytes=10,
         )
+
+
+@pytest.mark.parametrize(
+    ("payload", "content_type", "error_code"),
+    [
+        (b"not-json", "application/json", "jina_malformed_json"),
+        (b"[]", "application/json", "jina_invalid_envelope"),
+        (
+            json.dumps({"code": 200, "status": 200, "data": None}).encode(),
+            "application/json",
+            "jina_invalid_envelope",
+        ),
+        (make_jina_payload(code=500), "application/json", "jina_provider_status"),
+        (
+            make_jina_payload(status=50000),
+            "application/json",
+            "jina_provider_status",
+        ),
+        (
+            make_jina_payload(http_status=404),
+            "application/json",
+            "jina_origin_status",
+        ),
+        (
+            make_jina_payload(url="http://127.0.0.1/private"),
+            "application/json",
+            "jina_invalid_url",
+        ),
+        (
+            make_jina_payload(content=None),
+            "application/json",
+            "jina_invalid_content",
+        ),
+        (
+            make_jina_payload(content="  \n  "),
+            "application/json",
+            "jina_invalid_content",
+        ),
+        (make_jina_payload(), "text/plain", "jina_unsupported_content_type"),
+    ],
+)
+def test_fetch_jina_reader_text_validates_json_envelope(
+    payload, content_type, error_code
+):
+    response = FakeResponse(
+        payload,
+        content_type=content_type,
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_jina_reader_text(
+            "https://example.com/article",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({"127.0.0.1": "127.0.0.1"}),
+        )
+
+    assert caught.value.error_code == error_code
+    assert caught.value.method == "jina"
+    assert caught.value.extractor == "jina"
+
+
+def test_fetch_jina_reader_text_enforces_content_limit_after_json_decode():
+    content = "界" * 300
+    payload = json.dumps(
+        {
+            "code": 200,
+            "status": 200,
+            "data": {
+                "httpStatus": 200,
+                "url": "https://example.com/article",
+                "content": content,
+            },
+        },
+        ensure_ascii=False,
+    ).encode("utf-16")
+    assert len(payload) < len(content.encode("utf-8"))
+    response = FakeResponse(
+        payload,
+        content_type="application/json",
+        charset="utf-16",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_jina_reader_text(
+            "https://example.com/article",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            max_bytes=len(payload),
+        )
+
+    assert caught.value.error_code == "extracted_content_too_large"
+    assert caught.value.extractor == "jina"
