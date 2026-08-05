@@ -1,8 +1,9 @@
 from email.message import Message
 from io import BytesIO
 import json
+import ssl
 import subprocess
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 from pypdf import PdfWriter
@@ -55,6 +56,13 @@ def http_error(url, code, **headers):
     for name, value in headers.items():
         response_headers[name.replace("_", "-")] = value
     return HTTPError(url, code, "request failed", response_headers, None)
+
+
+def tls_verification_error(code, message):
+    reason = ssl.SSLCertVerificationError(1, message)
+    reason.verify_code = code
+    reason.verify_message = message
+    return URLError(reason)
 
 
 def resolver_for(addresses):
@@ -926,6 +934,74 @@ def test_fetch_article_text_does_not_use_jina_for_other_http_errors(status_code)
     assert requested_urls == ["https://example.com/article"]
     assert caught.value.error_code == f"http_{status_code}"
     assert caught.value.method == "direct"
+
+
+def test_fetch_article_uses_jina_when_tls_issuer_is_unavailable(caplog):
+    requests = []
+    jina_response = FakeResponse(
+        make_jina_payload("Recovered article facts."),
+        content_type="application/json",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        if len(requests) == 1:
+            raise tls_verification_error(20, "unable to get local issuer certificate")
+        return jina_response
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
+            "https://example.com/article",
+            opener=open_response,
+            resolver=resolver_for({}),
+        )
+
+    assert requests == [
+        "https://example.com/article",
+        "https://r.jina.ai/https://example.com/article",
+    ]
+    assert result.text == "Recovered article facts."
+    assert result.method == "jina"
+    assert result.extractor == "jina"
+    assert result.fallback_reason == "tls_issuer_unavailable"
+    assert "status=tls_issuer_unavailable fallback=jina" in caplog.text
+    assert (
+        "method=jina extractor=jina status=success "
+        "fallback_reason=tls_issuer_unavailable"
+    ) in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("verify_code", "verify_message"),
+    [
+        (10, "certificate has expired"),
+        (18, "self-signed certificate"),
+        (62, "hostname mismatch"),
+    ],
+)
+def test_fetch_article_does_not_use_jina_for_other_tls_verification_errors(
+    verify_code, verify_message
+):
+    requested_urls = []
+
+    def deny(request, timeout):
+        requested_urls.append(request.full_url)
+        raise tls_verification_error(verify_code, verify_message)
+
+    with pytest.raises(
+        ArticleFetchError, match="direct article request failed"
+    ) as caught:
+        fetch_article(
+            "https://example.com/article",
+            opener=deny,
+            resolver=resolver_for({}),
+        )
+
+    assert requested_urls == ["https://example.com/article"]
+    assert caught.value.error_code == "request_failed"
+    assert caught.value.method == "direct"
+    assert caught.value.fallback_attempted is False
 
 
 def test_fetch_article_text_reports_direct_and_jina_failures():

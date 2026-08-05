@@ -5,12 +5,13 @@ import json
 import logging
 import re
 import socket
+import ssl
 import subprocess
 import sys
 from dataclasses import dataclass
 from functools import partial
 from http.client import HTTPConnection, HTTPSConnection
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import (
     HTTPHandler,
@@ -287,6 +288,26 @@ def fetch_article(
             error_code=exc.error_code,
             method="direct",
             extractor=exc.extractor,
+        ) from exc
+    except URLError as exc:
+        if _is_tls_issuer_unavailable(exc):
+            LOGGER.warning(
+                "component=article_fetch method=direct "
+                "status=tls_issuer_unavailable fallback=jina"
+            )
+            return _fetch_jina_fallback(
+                url,
+                direct_failure="TLS issuer unavailable",
+                fallback_reason="tls_issuer_unavailable",
+                opener=open_request,
+                resolver=resolver,
+                timeout_seconds=timeout_seconds,
+                max_bytes=extracted_max_bytes,
+            )
+        raise ArticleFetchError(
+            f"direct article request failed: {exc}",
+            error_code="request_failed",
+            method="direct",
         ) from exc
     except Exception as exc:
         raise ArticleFetchError(
@@ -942,6 +963,14 @@ def _is_cloudflare_challenge(error: HTTPError) -> bool:
     headers = error.headers
     return bool(
         headers and headers.get("cf-mitigated", "").strip().lower() == "challenge"
+    )
+
+
+def _is_tls_issuer_unavailable(error: URLError) -> bool:
+    reason = error.reason
+    return (
+        isinstance(reason, ssl.SSLCertVerificationError)
+        and reason.verify_code == 20
     )
 
 
