@@ -286,6 +286,171 @@ def test_empty_trafilatura_result_uses_jina_once(monkeypatch, provider_status, c
     )
 
 
+@pytest.mark.parametrize(
+    ("source_url", "direct_final_url"),
+    [
+        (
+            "https://openreview.net/challenge?redirect=%2Fforum%3Fid%3Dpaper-id",
+            "https://openreview.net/challenge?redirect=%2Fforum%3Fid%3Dpaper-id",
+        ),
+        (
+            "https://openreview.net/forum?id=paper-id",
+            "https://openreview.net/challenge?redirect=%2Fforum%3Fid%3Dpaper-id",
+        ),
+    ],
+)
+def test_challenge_url_uses_jina_once(source_url, direct_final_url, caplog):
+    direct_response = FakeResponse(
+        b"<html><body>Challenge shell</body></html>",
+        final_url=direct_final_url,
+    )
+    jina_response = FakeResponse(
+        make_jina_payload(
+            "Grounded OpenReview paper facts.",
+            url="https://openreview.net/forum?id=paper-id",
+        ),
+        content_type="application/json",
+        final_url=f"https://r.jina.ai/{source_url}",
+    )
+    requests = []
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        return direct_response if len(requests) == 1 else jina_response
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
+            source_url,
+            opener=open_response,
+            resolver=resolver_for({}),
+        )
+
+    assert requests == [source_url, f"https://r.jina.ai/{source_url}"]
+    assert result.text == "Grounded OpenReview paper facts."
+    assert result.method == "jina"
+    assert result.extractor == "jina"
+    assert result.fallback_reason == "challenge_page"
+    assert "method=direct status=challenge_page fallback=jina" in caplog.text
+
+
+def test_http_200_cloudflare_challenge_header_uses_jina_once():
+    direct_response = FakeResponse(b"<html><body>Challenge shell</body></html>")
+    direct_response.headers["cf-mitigated"] = "challenge"
+    jina_response = FakeResponse(
+        make_jina_payload("Grounded article facts."),
+        content_type="application/json",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+    responses = iter((direct_response, jina_response))
+
+    result = fetch_article(
+        "https://example.com/article",
+        opener=lambda request, timeout: next(responses),
+        resolver=resolver_for({}),
+    )
+
+    assert result.text == "Grounded article facts."
+    assert result.method == "jina"
+    assert result.fallback_reason == "challenge_page"
+
+
+def test_turnstile_html_uses_jina_once():
+    direct_response = FakeResponse(
+        b"""
+        <html><body>
+          <div class="cf-turnstile"></div>
+          <script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>
+        </body></html>
+        """
+    )
+    jina_response = FakeResponse(
+        make_jina_payload("Grounded article facts."),
+        content_type="application/json",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+    responses = iter((direct_response, jina_response))
+
+    result = fetch_article(
+        "https://example.com/article",
+        opener=lambda request, timeout: next(responses),
+        resolver=resolver_for({}),
+    )
+
+    assert result.text == "Grounded article facts."
+    assert result.method == "jina"
+    assert result.fallback_reason == "challenge_page"
+
+
+def test_nonempty_challenge_content_from_direct_and_jina_is_a_fetch_failure():
+    direct_response = FakeResponse(
+        b"""
+        <html><body><main>
+          <h1>Verifying your browser</h1>
+          <p>Complete the check below to continue to OpenReview.</p>
+          <p>Please complete the verification above.</p>
+        </main></body></html>
+        """,
+    )
+    jina_response = FakeResponse(
+        make_jina_payload(
+            "Complete the check below to continue to OpenReview. "
+            "Please complete the verification above.",
+            url="https://openreview.net/forum?id=paper-id",
+        ),
+        content_type="application/json",
+        final_url="https://r.jina.ai/https://openreview.net/forum?id=paper-id",
+    )
+    requests = []
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        return direct_response if len(requests) == 1 else jina_response
+
+    with pytest.raises(
+        ArticleFetchError,
+        match=(
+            "direct=browser verification challenge page; "
+            "jina=Jina Reader returned a browser verification challenge page"
+        ),
+    ) as caught:
+        fetch_article(
+            "https://openreview.net/forum?id=paper-id",
+            opener=open_response,
+            resolver=resolver_for({}),
+        )
+
+    assert requests == [
+        "https://openreview.net/forum?id=paper-id",
+        "https://r.jina.ai/https://openreview.net/forum?id=paper-id",
+    ]
+    assert caught.value.error_code == "challenge_page"
+    assert caught.value.method == "jina"
+    assert caught.value.extractor == "jina"
+    assert caught.value.fallback_attempted is True
+    assert caught.value.fallback_reason == "challenge_page"
+
+
+def test_article_discussing_browser_verification_is_not_a_challenge_page():
+    response = FakeResponse(
+        b"""
+        <html><body><article>
+          <h1>Designing browser verification</h1>
+          <p>This article compares several verification mechanisms.</p>
+          <p>It explains their implementation and usability tradeoffs.</p>
+        </article></body></html>
+        """
+    )
+
+    result = fetch_article(
+        "https://example.com/browser-verification",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+    )
+
+    assert result.method == "direct"
+    assert "verification mechanisms" in result.text
+
+
 def test_html_extracted_text_has_its_own_limit(monkeypatch):
     monkeypatch.setattr(
         "daily_brief.article_fetcher.extract_html", lambda markup: "grounded " * 20

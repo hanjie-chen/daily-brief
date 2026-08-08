@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from functools import partial
 from http.client import HTTPConnection, HTTPSConnection
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 from urllib.request import (
     HTTPHandler,
     HTTPRedirectHandler,
@@ -41,6 +41,15 @@ GITHUB_RAW_BASE_URL = "https://raw.githubusercontent.com"
 GITHUB_API_VERSION = "2022-11-28"
 GITHUB_RAW_CONTENT_TYPE = "application/vnd.github.raw+json"
 GITHUB_REPOSITORY_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+CHALLENGE_TEXT_MARKER_GROUPS = (
+    ("verifying your browser", "complete the check below"),
+    ("complete the check below to continue", "complete the verification above"),
+    ("checking your browser", "enable javascript and cookies to continue"),
+)
+CHALLENGE_HTML_MARKER_GROUPS = (
+    ("challenges.cloudflare.com", "cf-turnstile"),
+    ("challenges.cloudflare.com/turnstile", "complete the check below"),
+)
 PDF_CONTENT_TYPES = {
     "application/pdf",
     "application/octet-stream",
@@ -269,6 +278,20 @@ def fetch_article(
             max_bytes=extracted_max_bytes,
         )
     except ArticleFetchError as exc:
+        if exc.error_code == "challenge_page":
+            LOGGER.warning(
+                "component=article_fetch method=direct status=challenge_page "
+                "fallback=jina"
+            )
+            return _fetch_jina_fallback(
+                url,
+                direct_failure="browser verification challenge page",
+                fallback_reason="challenge_page",
+                opener=open_request,
+                resolver=resolver,
+                timeout_seconds=timeout_seconds,
+                max_bytes=extracted_max_bytes,
+            )
         if exc.error_code == "empty_content" and exc.extractor == "trafilatura":
             LOGGER.warning(
                 "component=article_fetch method=direct extractor=trafilatura "
@@ -604,6 +627,11 @@ def fetch_jina_reader_text(
                 "Jina Reader content is empty",
                 error_code="jina_invalid_content",
             )
+        if _is_challenge_page(origin_url, text=text):
+            raise ArticleFetchError(
+                "Jina Reader returned a browser verification challenge page",
+                error_code="challenge_page",
+            )
         _enforce_extracted_limit(text, max_bytes, extractor="jina")
         return text
     except HTTPError as exc:
@@ -648,7 +676,13 @@ def _fetch_direct_response(
 ) -> ArticleFetchResult:
     expects_pdf = urlparse(request.full_url).path.lower().endswith(".pdf")
     with opener(request, timeout=timeout_seconds) as response:
-        _validate_public_http_url(response.geturl(), resolver)
+        final_url = response.geturl()
+        _validate_public_http_url(final_url, resolver)
+        if _headers_indicate_challenge(response.headers):
+            raise ArticleFetchError(
+                "article response was a browser verification challenge page",
+                error_code="challenge_page",
+            )
         content_type = response.headers.get_content_type().lower()
         if content_type == "text/html":
             raw_limit = html_max_bytes
@@ -666,7 +700,16 @@ def _fetch_direct_response(
         payload = _read_bounded(response, raw_limit)
         charset = response.headers.get_content_charset() or "utf-8"
 
-    return _extract_response_payload(
+    if content_type == "text/html":
+        markup = payload.decode(charset, errors="replace")
+        if _is_challenge_page(final_url, raw_html=markup):
+            raise ArticleFetchError(
+                "article response was a browser verification challenge page",
+                error_code="challenge_page",
+                extractor="trafilatura",
+            )
+
+    result = _extract_response_payload(
         payload,
         content_type=content_type,
         charset=charset,
@@ -678,6 +721,13 @@ def _fetch_direct_response(
         expects_pdf=expects_pdf,
         allow_octet_stream_pdf=True,
     )
+    if _is_challenge_page(final_url, text=result.text):
+        raise ArticleFetchError(
+            "extracted article text was a browser verification challenge page",
+            error_code="challenge_page",
+            extractor=result.extractor,
+        )
+    return result
 
 
 def _extract_response_payload(
@@ -960,9 +1010,40 @@ def _is_standard_github_url(parsed) -> bool:
 
 
 def _is_cloudflare_challenge(error: HTTPError) -> bool:
-    headers = error.headers
+    return _headers_indicate_challenge(error.headers)
+
+
+def _headers_indicate_challenge(headers) -> bool:
     return bool(
         headers and headers.get("cf-mitigated", "").strip().lower() == "challenge"
+    )
+
+
+def _is_challenge_page(
+    url: str,
+    *,
+    raw_html: str = "",
+    text: str = "",
+) -> bool:
+    parsed = urlparse(url)
+    path = parsed.path.rstrip("/").lower()
+    query = parse_qs(parsed.query)
+    if path == "/challenge" and "redirect" in query:
+        return True
+    if path.startswith("/cdn-cgi/challenge-platform"):
+        return True
+
+    normalized_text = " ".join(text.lower().split())
+    if any(
+        all(marker in normalized_text for marker in markers)
+        for markers in CHALLENGE_TEXT_MARKER_GROUPS
+    ):
+        return True
+
+    normalized_html = raw_html.lower()
+    return any(
+        all(marker in normalized_html for marker in markers)
+        for markers in CHALLENGE_HTML_MARKER_GROUPS
     )
 
 
