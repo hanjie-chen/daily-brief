@@ -30,6 +30,7 @@ from .summarizer import (
     article_fetch_failure_summary,
     fallback_summary,
     normalize_summary_text,
+    route_summary_mode,
 )
 from .time_window import daily_window
 
@@ -379,6 +380,7 @@ def run_generate(
                 method="title",
             )
             candidate.summary_basis = "title_only"
+        candidate.summary_mode = route_summary_mode(candidate)
         summarization_inputs.append(candidate)
         try:
             candidate.summary = normalize_summary_text(

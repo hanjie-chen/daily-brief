@@ -10,6 +10,7 @@ from daily_brief.cli import build_parser, main, run_generate
 from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
 from daily_brief.model_evaluation import capture_model_evaluation_input
 from daily_brief.models import Candidate, Story
+from daily_brief.summarizer import SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY
 
 
 @pytest.fixture(autouse=True)
@@ -748,7 +749,39 @@ def test_selected_external_article_text_reaches_summarizer(tmp_path, caplog):
     assert selected["article_retrieval"]["extractor"] == "plain_text"
     assert selected["summary_basis"] == "fetched_article"
     assert selected["summary_status"] == "success"
+    assert selected["summary_mode"] == "generic"
     assert "item_id=1 status=success method=direct" in caplog.text
+
+
+def test_memorial_summary_mode_is_selected_after_article_fetch(tmp_path):
+    summarizer = CapturingSummarizer()
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[],
+        hot_stories=[
+            story(
+                "1",
+                "In Memory of Ada Rowan",
+                source="hn_official",
+                points=500,
+                comments=80,
+                url="https://example.com/memorial",
+            )
+        ],
+        classifier=FakeClassifier(),
+        article_fetcher=lambda url: (
+            "The author rarely discussed family in public. Ada Rowan was a "
+            "mathematician and teacher. They shared 40 years before she died."
+        ),
+        summarizer=summarizer,
+    )
+
+    payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    selected = next(item for item in payload if item["hn_item_id"] == "1")
+    assert summarizer.summary_modes == [SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY]
+    assert selected["summary_mode"] == SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY
 
 
 def test_story_text_skips_external_github_retrieval(tmp_path):
@@ -1023,9 +1056,11 @@ class MixedScriptSummarizer:
 class CapturingSummarizer:
     def __init__(self):
         self.fetched_texts = []
+        self.summary_modes = []
 
     def summarize(self, candidate):
         self.fetched_texts.append(candidate.story.fetched_text)
+        self.summary_modes.append(candidate.summary_mode)
         return "Captured summary"
 
 

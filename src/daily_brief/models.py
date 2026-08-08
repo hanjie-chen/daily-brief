@@ -50,6 +50,7 @@ class Candidate:
     summary: str = ""
     why: str = ""
     topic_route: str = "not_evaluated"
+    summary_mode: str = "not_routed"
     article_retrieval: ArticleRetrieval = field(default_factory=ArticleRetrieval)
     summary_basis: str = "not_generated"
     summary_status: str = "not_generated"

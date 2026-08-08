@@ -30,7 +30,7 @@
 
 然后合并去重，并排除最近 7 天已推荐的内容。
 
-候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会补全原文：已有 HN story text 时直接使用；标准 GitHub 仓库链接通过 GitHub 官方 API 获取 README；GitHub blob 链接转换为精确的 raw 文件 URL；普通 HTML 使用本地 `trafilatura` 提取正文，PDF 使用受限 subprocess 中的本地 `pypdf` 提取 text layer。直接请求明确遇到 Cloudflare Challenge、识别到返回 HTTP 200 的浏览器验证页、普通 HTML 下载成功但 `trafilatura` 提取为空，或 TLS 校验仅因本地无法取得 issuer（OpenSSL verify code 20）而失败时，会通过 Jina Reader 做至多一次有界 retrieval fallback，并校验其 JSON envelope 与正文；Jina 返回的浏览器验证页同样不会被视为原文。过期、hostname 不匹配、自签名等其他证书错误不会触发 fallback。系统分别记录正文 transport（如 direct、GitHub raw、Jina）和 extractor（如 `trafilatura`、`pypdf`），以及摘要实际依据的材料。取得正文后再由模型生成接地的中文摘要；下载、类型验证或提取失败时直接显示错误并跳过摘要模型，最后渲染为 Markdown 与 JSON 后发布到网站。
+候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会补全原文：已有 HN story text 时直接使用；标准 GitHub 仓库链接通过 GitHub 官方 API 获取 README；GitHub blob 链接转换为精确的 raw 文件 URL；普通 HTML 使用本地 `trafilatura` 提取正文，PDF 使用受限 subprocess 中的本地 `pypdf` 提取 text layer。直接请求明确遇到 Cloudflare Challenge、识别到返回 HTTP 200 的浏览器验证页、普通 HTML 下载成功但 `trafilatura` 提取为空，或 TLS 校验仅因本地无法取得 issuer（OpenSSL verify code 20）而失败时，会通过 Jina Reader 做至多一次有界 retrieval fallback，并校验其 JSON envelope 与正文；Jina 返回的浏览器验证页同样不会被视为原文。过期、hostname 不匹配、自签名等其他证书错误不会触发 fallback。系统分别记录正文 transport（如 direct、GitHub raw、Jina）和 extractor（如 `trafilatura`、`pypdf`），以及摘要实际依据的材料。取得正文后，纯代码路由会识别标题完整匹配的高置信度悼念/讣告模式，并为摘要追加相应的事实提炼要求；`in-memory database` 等技术标题和所有不确定情况继续使用通用模式。随后模型生成接地的中文摘要；下载、类型验证或提取失败时直接显示错误并跳过摘要模型，最后渲染为 Markdown 与 JSON 后发布到网站。
 
 打分权重、入选门槛等参数集中在 `src/daily_brief/config.py`。模块职责、生成链路与关键不变量见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
 
@@ -39,6 +39,7 @@
 - 确定性优先：抓取、匹配、打分、去重、排序、渲染、发布都是确定性逻辑；模型只负责主题分类和摘要两处。
 - 局部降级：数据源、分类、原文抓取、摘要中的单项失败都不会让整份简报生成失败。
 - 摘要必须接地：摘要只陈述材料中明确存在的事实；无法生成可靠摘要时显示固定文案，而不是编造。
+- 重要语境不能被压平：当材料明确提供悼念文章的公开反差、被追忆者的独立身份或双方关系时，摘要应保留这些事实；材料没有提供时不得由模式或常识补出。
 - 反馈校准：通过真实阅读记录（`opened` / `useful` / `noisy` / `note`）定期复盘筛选规则，而不是预先假定什么值得注意力。
 - 克制的范围：现阶段只使用 Hacker News 一个信息源，这是有意的选择，不是尚未完成的功能。
 
