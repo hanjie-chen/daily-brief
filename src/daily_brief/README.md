@@ -25,9 +25,9 @@ This guide documents stable module boundaries, data flow, and maintenance entry 
 10. `publisher.py` sends only the targeted daily public JSON to the website and records its successful content hash for idempotent retry. Normal scheduled publishing targets the current Daily Brief date; historical publishing is explicit.
 
 `model_backend.py` is the provider-neutral boundary for classification and
-summarization. Production constructs `GeminiBackend` by default. `CodexBackend`
-remains available as an explicit local fallback and delegates to the existing
-Codex classifier and summarizer.
+summarization. Production constructs `GeminiBackend`; orchestration and model
+evaluation depend only on the shared contract so another provider can be added
+without changing the generation pipeline.
 
 `gemini_backend.py` implements the production and evaluation provider boundary. It
 uses the Interactions REST API directly through the Python standard library,
@@ -45,9 +45,10 @@ structured schema and a local character cap.
 Model comparisons use an explicit two-step flow. `generate
 --capture-model-inputs` writes the exact classifier batch and post-fetch summary
 inputs to `data/model-eval-inputs/YYYY-MM-DD.json`. `evaluate-model --date
-YYYY-MM-DD --backend codex` replays that immutable input and writes an isolated
-result under `data/model-evaluations/`. Evaluation never fetches sources, renders
-or publishes a brief, or reads and writes recommendation and publishing state.
+YYYY-MM-DD` replays that immutable input with the configured Gemini models and
+writes an isolated result under `data/model-evaluations/`. Evaluation never fetches
+sources, renders or publishes a brief, or reads and writes recommendation and
+publishing state.
 
 Data sources, the topic classifier, article fetching, summarization, and history writes each have their own failure handling. Preserve the pipeline's ability to produce partial results when changing these stages.
 
@@ -63,16 +64,16 @@ Data sources, the topic classifier, article fetching, summarization, and history
 | `time_window.py` | Daily collection window | Timezone or daily boundary behavior |
 | `hn_client.py` | Algolia and official Hacker News API clients | Sources, retries, parsing, or Hacker News URLs |
 | `keywords.py` | Keyword and URL-token matching | AI keyword recognition |
-| `model_backend.py` | Provider-neutral model contracts and the local Codex fallback adapter | Adding a model provider or changing provider selection |
+| `model_backend.py` | Provider-neutral model contracts and shared output constraints | Adding a model provider or changing provider selection |
 | `gemini_backend.py` | Gemini Interactions API adapter, structured-output validation, and bounded retry | Gemini models, request/response handling, provider errors, or usage logging |
 | `model_evaluation.py` | Versioned model-input capture and side-effect-free replay | Comparing classifier or summarizer backends on identical inputs |
-| `topic_classifier.py` | Shared classification prompt and local Codex classifier for candidates without strong keyword evidence | Topic routing, bounded story-text context, or classifier prompts |
+| `topic_classifier.py` | Shared classification prompt for candidates without strong keyword evidence | Topic routing, bounded story-text context, or classifier prompts |
 | `scoring.py` | Heat, keyword, and topic scoring | Ranking formulas or recommendation reasons |
 | `selection.py` | Duplicate handling and final section selection | Eligibility, quotas, deduplication, or rejection reasons |
 | `history.py` | Recent recommendation history | Repeat suppression or history retention |
 | `article_fetcher.py` | Bounded public HTTP(S) article fetching, visible-text extraction, and retrieval outcomes | Article retrieval, parsing, provenance, or network safety |
 | `pdf_extractor.py` | Resource-bounded subprocess worker for `pypdf` layout-text extraction | PDF parsing, page/output limits, or worker resource controls |
-| `summarizer.py` | Shared summary prompt, Codex execution, provider-neutral typography normalization, and fallback text | Summary prompts, execution, output normalization, or fallback behavior |
+| `summarizer.py` | Shared summary prompt, provider-neutral typography normalization, routing, and fallback text | Summary prompts, output normalization, routing, or fallback behavior |
 | `render.py` | Markdown brief, public content status, and candidate audit serialization | Output format |
 | `public_schema.py` | Strict public schema v2 contract shared by rendering and publishing | Website payload compatibility or validation |
 | `publisher.py` | Authenticated website publishing, retry, and local success state | Delivery behavior or publish configuration |
@@ -85,10 +86,10 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - GitHub repository-root URLs use the public GitHub README API without authentication and report `github_readme` transport provenance. Standard `github.com/{owner}/{repo}/blob/{ref}/{path}` URLs report `github_raw` transport provenance and retrieve the exact raw file; a 404 is terminal and must not trigger ref/history discovery or Jina. Other GitHub paths must not be silently replaced with repository README content. The initial blob router supports commit SHAs and one-segment refs; it must not intentionally guess slash-containing ref boundaries.
 - Every successfully downloaded HTML response is processed by `trafilatura` with comments disabled and precision favored after recognized verification interstitials are rejected. The HTML download bound is 4 MiB and the extracted UTF-8 text bound is 256 KiB. An extraction exception is terminal and full-page visible text is never used; a normal empty `trafilatura` result on the direct transport can trigger Jina, while other extraction failures cannot.
 - PDF responses require both an accepted MIME type and `%PDF-` magic. A direct `application/octet-stream` response is accepted only when the request URL path ends in `.pdf`; this does not broaden generic binary downloads into PDF candidates. Downloads are bounded to 20 MiB, documents to 100 pages, and extracted UTF-8 text to 256 KiB. `pypdf` layout extraction runs with a 60-second subprocess timeout and, where supported, an approximately 512 MiB address-space limit. The timeout was raised from the initial 30-second estimate after the historical 18-page DeepSeek PDF reproducibly required about 45 seconds of layout extraction. PDFs without an extractable text layer and parsing/resource failures are terminal; OCR and Jina are intentionally not used.
-- Tests must be deterministic and must not call live Hacker News APIs, Gemini, or the real `codex` command.
+- Tests must be deterministic and must not call live Hacker News APIs or Gemini.
 - Model evaluation input is schema-versioned, bounded to the production classifier and section limits, and contains only the exact candidate fields used by model prompts. Keep generated evaluation inputs and results under the Git-ignored `data/` directory because they can include public article text.
 - `evaluate-model` is read-only with respect to its input, `recommendation-history.json`, and `publish-state.json`. It may write only its backend-specific result file under `data/model-evaluations/`.
-- Production `generate` defaults to Gemini; Codex remains an explicit operator-selected fallback. Backend construction must happen before source fetching so missing production credentials fail without partially running the pipeline.
+- Production `generate` uses Gemini. Backend construction must happen before source fetching so missing production credentials fail without partially running the pipeline.
 - Gemini credentials come only from `GEMINI_API_KEY`; model overrides come from `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`. Do not add an environment-configurable API endpoint, put the key in URLs or logs, or persist it in evaluation artifacts.
 - Gemini defaults and evaluation overrides must use explicit model IDs. Never use moving aliases such as `latest`; they make production behavior and evaluation results change without a code or configuration change.
 - Gemini requests set `store` to false, but that does not override provider-level Free Tier data-use terms. Only public content approved for provider processing belongs in production requests and model evaluations.

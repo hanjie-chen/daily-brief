@@ -60,12 +60,6 @@ set -a && source .env && set +a   # .env 权限应为 0600
 daily-brief generate              # 不带子命令时默认即 generate
 ```
 
-临时使用本地 Codex backend：
-
-```bash
-daily-brief generate --backend codex
-```
-
 ## Publish
 
 发布到网站需要提供发布地址和 shared secret：
@@ -87,12 +81,11 @@ daily-brief publish --date YYYY-MM-DD --force
 
 ## Model Evaluation
 
-在一次正常生成时捕获模型实际收到的输入，之后可离线重放，用于对比不同模型：
+在一次正常生成时捕获模型实际收到的输入，之后可离线重放，用于对比不同 Gemini 模型：
 
 ```bash
 daily-brief generate --capture-model-inputs
-daily-brief evaluate-model --date YYYY-MM-DD --backend gemini
-daily-brief evaluate-model --date YYYY-MM-DD --backend codex
+daily-brief evaluate-model --date YYYY-MM-DD
 ```
 
 捕获输入保存在 `data/model-eval-inputs/`，评测结果保存在 `data/model-evaluations/`。评测不访问网络、不生成或发布简报、不修改推荐历史和发布状态。评测其他 Gemini 模型可通过 `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` / `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL` 覆盖。

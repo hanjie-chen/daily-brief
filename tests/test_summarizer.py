@@ -3,10 +3,8 @@ import pytest
 from daily_brief.models import Candidate, KeywordMatch, Story
 from daily_brief.summarizer import (
     MEMORIAL_OR_PERSONAL_ESSAY_MODULE,
-    SUMMARY_SYSTEM_INSTRUCTION,
     SUMMARY_MODE_GENERIC,
     SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY,
-    CodexSummarizer,
     build_summary_prompt,
     fallback_summary,
     normalize_summary_text,
@@ -65,123 +63,38 @@ def test_normalize_summary_text_adds_han_ascii_boundary_spaces(raw, expected):
     assert normalize_summary_text(raw) == expected
 
 
-def test_codex_summarizer_builds_prompt_and_returns_stdout(monkeypatch):
-    calls = {}
+def test_summary_prompt_contains_grounding_and_untrusted_content_boundaries():
+    prompt = build_summary_prompt(candidate())
 
-    def fake_run(args, input, text, capture_output, timeout, check):
-        calls["args"] = args
-        calls["input"] = input
-        calls["text"] = text
-        calls["capture_output"] = capture_output
-        calls["timeout"] = timeout
-        calls["check"] = check
-
-        class Result:
-            stdout = " 中文摘要\n"
-            stderr = ""
-
-        return Result()
-
-    monkeypatch.setattr("subprocess.run", fake_run)
-
-    summary = CodexSummarizer(timeout_seconds=5).summarize(candidate())
-
-    assert summary == "中文摘要"
-    assert calls["args"][:3] == ["codex", "exec", "--ephemeral"]
-    assert "--skip-git-repo-check" in calls["args"]
-    assert "--sandbox" in calls["args"]
-    assert "read-only" in calls["args"]
-    assert "--cd" in calls["args"]
-    assert calls["args"][-1] == SUMMARY_SYSTEM_INSTRUCTION
-    neutral_cwd = calls["args"][calls["args"].index("--cd") + 1]
-    assert neutral_cwd
-    assert neutral_cwd != "."
-    assert calls["text"] is True
-    assert calls["capture_output"] is True
-    assert calls["timeout"] == 5
-    assert calls["check"] is True
-    assert "AI coding agent" in calls["input"]
-    assert "https://example.com" in calls["input"]
-    assert "https://news.ycombinator.com/item?id=1" in calls["input"]
-    assert "A demo of an AI coding agent." in calls["input"]
-    assert "中文" in calls["input"]
-    assert "untrusted" in calls["input"]
-    assert "不要推断" in calls["input"]
-    assert "简单内容优先用一句话" in calls["input"]
-    assert "重要的英文技术术语" in calls["input"]
-    assert "Source URL 和 HN Discussion 仅是元数据" in calls["input"]
-    assert "不得根据 URL、域名或" in calls["input"]
-    assert "Points:" not in calls["input"]
-    assert "Comments:" not in calls["input"]
-    assert "Matched keywords:" not in calls["input"]
+    assert "AI coding agent" in prompt
+    assert "https://example.com" in prompt
+    assert "https://news.ycombinator.com/item?id=1" in prompt
+    assert "A demo of an AI coding agent." in prompt
+    assert "中文" in prompt
+    assert "untrusted" in prompt
+    assert "不要推断" in prompt
+    assert "简单内容优先用一句话" in prompt
+    assert "重要的英文技术术语" in prompt
+    assert "Source URL 和 HN Discussion 仅是元数据" in prompt
+    assert "不得根据 URL、域名或" in prompt
+    assert "Points:" not in prompt
+    assert "Comments:" not in prompt
+    assert "Matched keywords:" not in prompt
 
 
-def test_codex_summarizer_prompt_uses_fetched_text_when_story_text_is_empty(monkeypatch):
-    calls = {}
+def test_summary_prompt_uses_fetched_text_when_story_text_is_whitespace():
+    prompt = build_summary_prompt(
+        candidate(story_text=" \n\t", fetched_text=" Fetched article text. ")
+    )
 
-    def fake_run(args, input, text, capture_output, timeout, check):
-        calls["input"] = input
-
-        class Result:
-            stdout = "摘要"
-
-        return Result()
-
-    monkeypatch.setattr("subprocess.run", fake_run)
-
-    CodexSummarizer().summarize(candidate(story_text="", fetched_text="Fetched article text."))
-
-    assert "Fetched article text." in calls["input"]
+    assert "Fetched article text." in prompt
+    assert " \n\t" not in prompt
 
 
-def test_codex_summarizer_raises_when_stdout_is_empty(monkeypatch):
-    def fake_run(args, input, text, capture_output, timeout, check):
-        class Result:
-            stdout = " \n\t"
+def test_summary_prompt_uses_placeholder_when_no_content():
+    prompt = build_summary_prompt(candidate(story_text=" \n\t", fetched_text="   "))
 
-        return Result()
-
-    monkeypatch.setattr("subprocess.run", fake_run)
-
-    with pytest.raises(RuntimeError, match="empty summary"):
-        CodexSummarizer().summarize(candidate())
-
-
-def test_codex_summarizer_prompt_uses_fetched_text_when_story_text_is_whitespace(monkeypatch):
-    calls = {}
-
-    def fake_run(args, input, text, capture_output, timeout, check):
-        calls["input"] = input
-
-        class Result:
-            stdout = "摘要"
-
-        return Result()
-
-    monkeypatch.setattr("subprocess.run", fake_run)
-
-    CodexSummarizer().summarize(candidate(story_text=" \n\t", fetched_text=" Fetched article text. "))
-
-    assert "Fetched article text." in calls["input"]
-    assert " \n\t" not in calls["input"]
-
-
-def test_codex_summarizer_prompt_uses_placeholder_when_no_content(monkeypatch):
-    calls = {}
-
-    def fake_run(args, input, text, capture_output, timeout, check):
-        calls["input"] = input
-
-        class Result:
-            stdout = "摘要"
-
-        return Result()
-
-    monkeypatch.setattr("subprocess.run", fake_run)
-
-    CodexSummarizer().summarize(candidate(story_text=" \n\t", fetched_text="   "))
-
-    assert "(not available)" in calls["input"]
+    assert "(not available)" in prompt
 
 
 @pytest.mark.parametrize(

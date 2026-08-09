@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
-import tempfile
 import unicodedata
 
 from .models import Candidate
@@ -69,36 +67,6 @@ _HAN_TO_ASCII_BOUNDARY = re.compile(
 _ASCII_TO_HAN_BOUNDARY = re.compile(
     rf"(?<=[A-Za-z0-9])(?=[{_HAN_CHARACTERS}])"
 )
-
-
-class CodexSummarizer:
-    def __init__(self, timeout_seconds: int = 90) -> None:
-        self.timeout_seconds = timeout_seconds
-
-    def summarize(self, candidate: Candidate) -> str:
-        with tempfile.TemporaryDirectory(prefix="daily-brief-codex-") as neutral_cwd:
-            result = subprocess.run(
-                [
-                    "codex",
-                    "exec",
-                    "--ephemeral",
-                    "--skip-git-repo-check",
-                    "--sandbox",
-                    "read-only",
-                    "--cd",
-                    neutral_cwd,
-                    SUMMARY_SYSTEM_INSTRUCTION,
-                ],
-                input=build_summary_prompt(candidate),
-                text=True,
-                capture_output=True,
-                timeout=self.timeout_seconds,
-                check=True,
-            )
-        summary = result.stdout.strip()
-        if not summary:
-            raise RuntimeError("codex exec returned an empty summary")
-        return summary
 
 
 def fallback_summary(candidate: Candidate) -> str:

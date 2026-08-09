@@ -15,7 +15,7 @@ from .gemini_backend import GeminiBackend
 from .history import load_history, recent_ids, save_history
 from .hn_client import fetch_algolia_stories, fetch_hot_stories
 from .keywords import match_keywords
-from .model_backend import CodexBackend, ModelBackend
+from .model_backend import ModelBackend
 from .model_evaluation import (
     ModelEvaluationInputError,
     capture_model_evaluation_input,
@@ -90,7 +90,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--capture-model-inputs", action="store_true")
-    parser.add_argument("--backend", choices=["codex", "gemini"], default="gemini")
     return parser
 
 
@@ -105,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "generate":
         try:
-            backend = _model_backend(args.backend)
+            backend = _model_backend()
         except ValueError as exc:
             LOGGER.error("component=model_backend status=failed message=%s", exc)
             return 1
@@ -137,17 +136,18 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("evaluate-model requires --date YYYY-MM-DD")
         input_path = Path(args.data_dir) / "model-eval-inputs" / f"{args.date}.json"
         try:
+            backend = _model_backend()
             result = run_model_evaluation(
                 input_path,
                 Path(args.data_dir) / "model-evaluations",
-                _model_backend(args.backend),
+                backend,
             )
         except (ModelEvaluationInputError, OSError, ValueError) as exc:
             LOGGER.error("component=model_evaluation status=failed message=%s", exc)
             return 1
         LOGGER.info(
             "component=model_evaluation status=completed backend=%s failures=%d output=%s",
-            args.backend,
+            backend.name,
             result.failures,
             result.output_path,
         )
@@ -457,12 +457,8 @@ def run_generate(
     )
 
 
-def _model_backend(name: str) -> ModelBackend:
-    if name == "codex":
-        return CodexBackend()
-    if name == "gemini":
-        return GeminiBackend.from_environment()
-    raise ValueError(f"unsupported model backend: {name}")
+def _model_backend() -> ModelBackend:
+    return GeminiBackend.from_environment()
 
 
 def _candidate(story: Story) -> Candidate:

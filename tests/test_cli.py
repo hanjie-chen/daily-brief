@@ -15,7 +15,6 @@ from daily_brief.summarizer import SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY
 
 @pytest.fixture(autouse=True)
 def prevent_live_classifier_and_article_calls(monkeypatch):
-    monkeypatch.setattr(cli, "CodexBackend", lambda: FakeModelBackend())
     monkeypatch.setattr(cli, "GeminiBackend", FakeGeminiBackendFactory)
     monkeypatch.setattr(cli, "fetch_article", lambda url: "Test article facts.")
 
@@ -32,7 +31,6 @@ def test_parser_defaults_to_generate_command():
     assert args.force is False
     assert args.dry_run is False
     assert args.capture_model_inputs is False
-    assert args.backend == "gemini"
 
 
 def test_bounded_error_message_is_single_line_and_limited():
@@ -503,8 +501,6 @@ def test_main_reports_missing_gemini_key_for_evaluation(tmp_path, monkeypatch, c
                 "2026-07-20",
                 "--data-dir",
                 str(tmp_path / "data"),
-                "--backend",
-                "gemini",
             ]
         )
 
