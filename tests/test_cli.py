@@ -841,6 +841,45 @@ def test_empty_content_jina_success_is_summarized_and_persisted(tmp_path):
     assert summarizer.titles == ["Claude release"]
 
 
+def test_youtube_caption_is_used_as_the_summary_basis(tmp_path):
+    summarizer = CapturingSummarizer()
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-14",
+        algolia_stories=[
+            story(
+                "1",
+                "The AI boom isn't real",
+                points=40,
+                comments=8,
+                url="https://www.youtube.com/watch?v=68X8yEatepQ",
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=lambda url: ArticleFetchResult(
+            text=(
+                "The interview argues that AI infrastructure revenue is concentrated "
+                "among a small number of customers."
+            ),
+            method="youtube_caption",
+            extractor="yt_dlp",
+        ),
+        summarizer=summarizer,
+    )
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    selected = candidate_payload[0]
+    assert summarizer.fetched_texts == [
+        "The interview argues that AI infrastructure revenue is concentrated "
+        "among a small number of customers."
+    ]
+    assert selected["article_retrieval"]["method"] == "youtube_caption"
+    assert selected["article_retrieval"]["extractor"] == "yt_dlp"
+    assert selected["summary_basis"] == "youtube_caption"
+    assert selected["summary_status"] == "success"
+
+
 def test_github_readme_retrieval_provenance_is_persisted(tmp_path):
     result = run_generate(
         output_dir=tmp_path / "briefs",

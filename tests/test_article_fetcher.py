@@ -9,6 +9,7 @@ import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
+from daily_brief import article_fetcher
 from daily_brief.article_fetcher import (
     ArticleFetchError,
     _create_public_connection,
@@ -19,6 +20,7 @@ from daily_brief.article_fetcher import (
     fetch_github_readme_text,
     fetch_jina_reader_text,
 )
+from daily_brief.youtube_captions import YoutubeCaptionResult
 
 
 PUBLIC_ADDRESS = "93.184.216.34"
@@ -166,6 +168,35 @@ def test_fetch_article_reports_direct_retrieval_method():
     assert result.method == "direct"
     assert result.extractor == "plain_text"
     assert result.fallback_reason == ""
+
+
+def test_fetch_article_routes_target_youtube_video_to_caption_extractor(monkeypatch):
+    fetched_urls = []
+
+    def fetch_caption(url, **kwargs):
+        fetched_urls.append((url, kwargs))
+        return YoutubeCaptionResult(
+            text="The interview argues that AI infrastructure demand is concentrated.",
+            language="en-orig",
+            generated=True,
+        )
+
+    monkeypatch.setattr(article_fetcher, "fetch_youtube_caption", fetch_caption)
+
+    result = fetch_article(
+        "https://www.youtube.com/watch?v=68X8yEatepQ",
+        resolver=resolver_for({"www.youtube.com": PUBLIC_ADDRESS}),
+    )
+
+    assert result.text.startswith("The interview argues")
+    assert result.method == "youtube_caption"
+    assert result.extractor == "yt_dlp"
+    assert fetched_urls == [
+        (
+            "https://www.youtube.com/watch?v=68X8yEatepQ",
+            {"max_text_bytes": 256 * 1024},
+        )
+    ]
 
 
 def test_html_larger_than_old_limit_is_extracted_with_separate_raw_limit():

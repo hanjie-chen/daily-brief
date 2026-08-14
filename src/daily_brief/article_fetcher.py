@@ -24,6 +24,12 @@ from urllib.request import (
 
 import trafilatura
 
+from .youtube_captions import (
+    YoutubeCaptionError,
+    fetch_youtube_caption,
+    youtube_video_id,
+)
+
 DEFAULT_TIMEOUT_SECONDS = 15
 DEFAULT_MAX_EXTRACTED_BYTES = 256 * 1024
 DEFAULT_MAX_HTML_BYTES = 4 * 1024 * 1024
@@ -195,6 +201,31 @@ def fetch_article(
         extracted_max_bytes = max_bytes
 
     _validate_public_http_url(url, resolver)
+    if youtube_video_id(url) is not None:
+        try:
+            caption = fetch_youtube_caption(
+                url,
+                max_text_bytes=extracted_max_bytes,
+            )
+        except YoutubeCaptionError as exc:
+            raise ArticleFetchError(
+                str(exc),
+                error_code=exc.error_code,
+                method="youtube_caption",
+                extractor="yt_dlp",
+            ) from exc
+        LOGGER.info(
+            "component=article_fetch method=youtube_caption extractor=yt_dlp "
+            "status=success language=%s generated=%s",
+            caption.language,
+            str(caption.generated).lower(),
+        )
+        return ArticleFetchResult(
+            text=caption.text,
+            method="youtube_caption",
+            extractor="yt_dlp",
+        )
+
     github_repository = _github_repository(url)
     if github_repository is not None:
         owner, repository = github_repository

@@ -334,7 +334,11 @@ def run_generate(
                     fallback_attempted=bool(fallback_reason),
                     fallback_reason=fallback_reason,
                 )
-                candidate.summary_basis = "fetched_article"
+                candidate.summary_basis = (
+                    "youtube_caption"
+                    if method == "youtube_caption"
+                    else "fetched_article"
+                )
                 LOGGER.info(
                     "component=article_fetch item_id=%s status=success method=%s "
                     "extractor=%s fallback_reason=%s",
