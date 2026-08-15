@@ -38,6 +38,12 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 ],
                 "topic_route": candidate.topic_route,
                 "summary_mode": candidate.summary_mode,
+                "summary_context": {
+                    "strategy": candidate.summary_context_strategy,
+                    "source_chars": candidate.summary_context_source_chars,
+                    "selected_chars": candidate.summary_context_selected_chars,
+                    "sections": candidate.summary_context_sections,
+                },
                 "score": round(candidate.score, 4),
                 "selected": candidate.selected,
                 "section": candidate.section,

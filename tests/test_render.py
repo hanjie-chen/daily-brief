@@ -90,6 +90,7 @@ def test_render_candidates_json_uses_snake_case_fields():
         "matched_keywords",
         "topic_route",
         "summary_mode",
+        "summary_context",
         "score",
         "selected",
         "section",
@@ -109,6 +110,12 @@ def test_render_candidates_json_uses_snake_case_fields():
     assert data[0]["matched_keywords"] == ["AI coding"]
     assert data[0]["topic_route"] == "not_evaluated"
     assert data[0]["summary_mode"] == "not_routed"
+    assert data[0]["summary_context"] == {
+        "strategy": "not_prepared",
+        "source_chars": 0,
+        "selected_chars": 0,
+        "sections": [],
+    }
     assert data[0]["score"] == 9.2346
     assert data[0]["selected"] is False
     assert data[0]["section"] == "ai"
@@ -125,6 +132,25 @@ def test_render_candidates_json_uses_snake_case_fields():
     }
     assert data[0]["summary_basis"] == "not_generated"
     assert data[0]["summary_status"] == "not_generated"
+
+
+def test_render_candidates_json_records_research_context_without_exposing_text():
+    item = candidate()
+    item.summary_mode = "research_report"
+    item.summary_context_strategy = "research_sections"
+    item.summary_context_source_chars = 110_309
+    item.summary_context_selected_chars = 31_071
+    item.summary_context_sections = ["abstract", "results_through_conclusion"]
+
+    data = json.loads(render_candidates_json([item]))[0]
+
+    assert data["summary_context"] == {
+        "strategy": "research_sections",
+        "source_chars": 110_309,
+        "selected_chars": 31_071,
+        "sections": ["abstract", "results_through_conclusion"],
+    }
+    assert "text" not in data["summary_context"]
 
 
 def test_render_public_brief_json_contains_stable_schema_and_selected_items():

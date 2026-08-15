@@ -51,6 +51,10 @@ class Candidate:
     why: str = ""
     topic_route: str = "not_evaluated"
     summary_mode: str = "not_routed"
+    summary_context_strategy: str = "not_prepared"
+    summary_context_source_chars: int = 0
+    summary_context_selected_chars: int = 0
+    summary_context_sections: list[str] = field(default_factory=list)
     article_retrieval: ArticleRetrieval = field(default_factory=ArticleRetrieval)
     summary_basis: str = "not_generated"
     summary_status: str = "not_generated"

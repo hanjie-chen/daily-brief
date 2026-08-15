@@ -28,6 +28,7 @@ from .scoring import score_candidate
 from .selection import dedupe_candidates, select_sections
 from .summarizer import (
     article_fetch_failure_summary,
+    build_summary_context,
     fallback_summary,
     normalize_summary_text,
     route_summary_mode,
@@ -385,6 +386,11 @@ def run_generate(
             )
             candidate.summary_basis = "title_only"
         candidate.summary_mode = route_summary_mode(candidate)
+        summary_context = build_summary_context(candidate)
+        candidate.summary_context_strategy = summary_context.strategy
+        candidate.summary_context_source_chars = summary_context.source_chars
+        candidate.summary_context_selected_chars = summary_context.selected_chars
+        candidate.summary_context_sections = list(summary_context.sections)
         summarization_inputs.append(candidate)
         try:
             candidate.summary = normalize_summary_text(

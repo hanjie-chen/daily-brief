@@ -9,6 +9,7 @@ from daily_brief.model_evaluation import (
     run_model_evaluation,
 )
 from daily_brief.models import Candidate, Story
+from daily_brief.summarizer import build_summary_prompt
 
 
 def candidate(item_id: str, title: str, *, fetched_text: str = "") -> Candidate:
@@ -76,6 +77,42 @@ def test_capture_and_load_preserve_exact_unicode_model_inputs(tmp_path):
         loaded.summary_candidates[0].story.fetched_text
         == "抓取的中文与 English 正文"
     )
+
+
+def test_research_prompt_is_identical_after_capture_and_replay(tmp_path):
+    body = """Abstract
+This study links enterprise account records to worker roles and financial data across more than 1,500 organizations, while distinguishing descriptive associations from causal effects.
+1 Introduction
+Background and related literature.
+2 Methods
+Detailed sample construction.
+3 Results
+Output tokens increased sevenfold, while an existing cohort increased fourfold. Adoption was concentrated among larger and more R&D-intensive firms, and early-career workers used the product more intensively.
+4 Conclusion
+The analysis covers only Enterprise accounts and does not measure downstream productivity or establish that adoption caused stronger financial outcomes.
+References
+A bibliography.
+"""
+    original = Candidate(
+        story=Story(
+            source="test",
+            hn_item_id="1",
+            title="How organizations use AI [pdf]",
+            source_url="https://example.com/report.pdf",
+            hn_discussion_url="https://news.ycombinator.com/item?id=1",
+            created_at="2026-07-20T00:00:00Z",
+            points=10,
+            comments=2,
+            fetched_text=body,
+        )
+    )
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", [], [original])
+
+    replayed = load_model_evaluation_input(input_path).summary_candidates[0]
+
+    assert build_summary_prompt(replayed) == build_summary_prompt(original)
+    assert "[Summary mode: research_report]" in build_summary_prompt(replayed)
 
 
 def test_evaluation_replays_one_input_without_touching_state_files(tmp_path):
