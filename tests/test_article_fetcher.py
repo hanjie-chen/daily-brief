@@ -26,6 +26,12 @@ from daily_brief.youtube_captions import YoutubeCaptionResult
 PUBLIC_ADDRESS = "93.184.216.34"
 
 
+@pytest.fixture(autouse=True)
+def disable_adobe_pdf_api_by_default(monkeypatch):
+    monkeypatch.delenv("PDF_SERVICES_CLIENT_ID", raising=False)
+    monkeypatch.delenv("PDF_SERVICES_CLIENT_SECRET", raising=False)
+
+
 class FakeResponse:
     def __init__(
         self,
@@ -754,6 +760,191 @@ def test_direct_pdf_extracts_layout_text_in_subprocess():
     assert result.text == "Grounded PDF facts."
     assert result.method == "direct"
     assert result.extractor == "pypdf"
+
+
+def test_direct_pdf_uses_adobe_markdown_when_configured(monkeypatch):
+    response = FakeResponse(
+        make_pdf("Grounded PDF facts."),
+        content_type="application/pdf",
+        final_url="https://example.com/report.pdf",
+    )
+    monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("PDF_SERVICES_CLIENT_SECRET", "test-client-secret")
+    monkeypatch.setattr(
+        article_fetcher,
+        "_extract_pdf_with_adobe_in_subprocess",
+        lambda *args, **kwargs: "# Report\n\nClean Adobe paragraph.",
+    )
+    monkeypatch.setattr(
+        article_fetcher,
+        "_extract_pdf_in_subprocess",
+        lambda *args, **kwargs: pytest.fail("pypdf fallback should not run"),
+    )
+
+    result = fetch_article(
+        "https://example.com/report.pdf",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+    )
+
+    assert result.text == "# Report\n\nClean Adobe paragraph."
+    assert result.method == "direct"
+    assert result.extractor == "adobe_pdf_to_markdown"
+    assert result.fallback_reason == ""
+
+
+def test_direct_pdf_falls_back_to_pypdf_when_adobe_fails(monkeypatch, caplog):
+    response = FakeResponse(
+        make_pdf("Grounded PDF facts."),
+        content_type="application/pdf",
+    )
+    monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("PDF_SERVICES_CLIENT_SECRET", "test-client-secret")
+
+    def fail_adobe(*args, **kwargs):
+        raise ArticleFetchError(
+            "Adobe request failed",
+            error_code="adobe_pdf_request_failed",
+            extractor="adobe_pdf_to_markdown",
+        )
+
+    monkeypatch.setattr(
+        article_fetcher,
+        "_extract_pdf_with_adobe_in_subprocess",
+        fail_adobe,
+    )
+    monkeypatch.setattr(
+        article_fetcher,
+        "_extract_pdf_in_subprocess",
+        lambda *args, **kwargs: "Local pypdf facts.",
+    )
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
+            "https://example.com/report.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+        )
+
+    assert result.text == "Local pypdf facts."
+    assert result.extractor == "pypdf"
+    assert result.fallback_reason == "adobe_pdf_request_failed"
+    assert "status=failed code=adobe_pdf_request_failed fallback=pypdf" in caplog.text
+
+
+def test_direct_pdf_uses_pypdf_for_incomplete_adobe_credentials(monkeypatch):
+    response = FakeResponse(
+        make_pdf("Grounded PDF facts."),
+        content_type="application/pdf",
+    )
+    monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        article_fetcher,
+        "_extract_pdf_in_subprocess",
+        lambda *args, **kwargs: "Local pypdf facts.",
+    )
+
+    result = fetch_article(
+        "https://example.com/report.pdf",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+    )
+
+    assert result.extractor == "pypdf"
+    assert result.fallback_reason == "adobe_pdf_credentials_incomplete"
+
+
+def test_direct_pdf_preserves_adobe_fallback_when_pypdf_also_fails(monkeypatch):
+    response = FakeResponse(
+        make_pdf("Grounded PDF facts."),
+        content_type="application/pdf",
+    )
+    monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("PDF_SERVICES_CLIENT_SECRET", "test-client-secret")
+
+    def fail_adobe(*args, **kwargs):
+        raise ArticleFetchError(
+            "Adobe request failed",
+            error_code="adobe_pdf_request_failed",
+            extractor="adobe_pdf_to_markdown",
+        )
+
+    def fail_pypdf(*args, **kwargs):
+        raise ArticleFetchError(
+            "pypdf failed",
+            error_code="pdf_parse_failed",
+            extractor="pypdf",
+        )
+
+    monkeypatch.setattr(
+        article_fetcher,
+        "_extract_pdf_with_adobe_in_subprocess",
+        fail_adobe,
+    )
+    monkeypatch.setattr(article_fetcher, "_extract_pdf_in_subprocess", fail_pypdf)
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            "https://example.com/report.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+        )
+
+    assert caught.value.error_code == "pdf_parse_failed"
+    assert caught.value.extractor == "pypdf"
+    assert caught.value.fallback_attempted is True
+    assert caught.value.fallback_reason == "adobe_pdf_request_failed"
+
+
+def test_adobe_pdf_worker_uses_bounded_subprocess_and_parses_markdown(monkeypatch):
+    calls = []
+
+    def complete(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {"status": "success", "text": "# Report\n\nClean text."}
+            ).encode(),
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(article_fetcher.subprocess, "run", complete)
+
+    text = article_fetcher._extract_pdf_with_adobe_in_subprocess(
+        b"%PDF-test",
+        max_pages=100,
+        max_text_bytes=1024,
+        timeout_seconds=240,
+        address_space_bytes=512 * 1024 * 1024,
+    )
+
+    assert text == "# Report\n\nClean text."
+    command, kwargs = calls[0]
+    assert command[1:3] == ["-m", "daily_brief.adobe_pdf_extractor"]
+    assert command[-1] == str(512 * 1024 * 1024)
+    assert kwargs["input"] == b"%PDF-test"
+    assert kwargs["timeout"] == 240
+
+
+def test_adobe_pdf_worker_hard_timeout_has_stable_error(monkeypatch):
+    def time_out(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(article_fetcher.subprocess, "run", time_out)
+
+    with pytest.raises(ArticleFetchError) as caught:
+        article_fetcher._extract_pdf_with_adobe_in_subprocess(
+            b"%PDF-test",
+            max_pages=100,
+            max_text_bytes=1024,
+            timeout_seconds=1,
+            address_space_bytes=512 * 1024 * 1024,
+        )
+
+    assert caught.value.error_code == "adobe_pdf_timeout"
+    assert caught.value.extractor == "adobe_pdf_to_markdown"
 
 
 def test_direct_pdf_accepts_octet_stream_when_url_identifies_pdf():

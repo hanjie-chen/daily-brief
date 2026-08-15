@@ -183,6 +183,29 @@ def test_high_confidence_research_structure_routes_and_selects_evidence():
     assert "APPENDIX_PROMPT_SENTINEL" not in context.text
 
 
+def test_adobe_markdown_headings_preserve_research_routing_and_evidence():
+    body = research_body().replace("Abstract\n", "# Abstract\n", 1)
+    for plain, markdown in (
+        ("1 Introduction", "# 1 Introduction"),
+        ("2 Methods", "# 2 Methods"),
+        ("3 Results", "# 3 Results"),
+        ("4 Conclusion", "# 4 Conclusion"),
+        ("References", "# References"),
+        ("Appendix", "# Appendix"),
+    ):
+        body = body.replace(f"\n{plain}\n", f"\n{markdown}\n")
+    assert body.startswith("# Abstract\n")
+    item = candidate(story_text="", fetched_text=body, title="Enterprise AI study")
+
+    context = build_summary_context(item)
+
+    assert route_summary_mode(item) == SUMMARY_MODE_RESEARCH_REPORT
+    assert context.strategy == SUMMARY_CONTEXT_RESEARCH_SECTIONS
+    assert context.sections == ("abstract", "results_through_conclusion")
+    assert "sevenfold" in context.text
+    assert "REFERENCE_SENTINEL" not in context.text
+
+
 def test_numbered_facts_heading_is_treated_as_research_results():
     body = research_body().replace("3 Results", "3 Four Facts about Enterprise AI Usage")
     item = candidate(story_text="", fetched_text=body, title="Enterprise AI study")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import os
 import re
 import socket
 import ssl
@@ -24,6 +25,11 @@ from urllib.request import (
 
 import trafilatura
 
+from .adobe_pdf_extractor import (
+    DEFAULT_CONNECT_TIMEOUT_MS as ADOBE_CONNECT_TIMEOUT_MS,
+    DEFAULT_READ_TIMEOUT_MS as ADOBE_READ_TIMEOUT_MS,
+    credentials_status as adobe_credentials_status,
+)
 from .youtube_captions import (
     YoutubeCaptionError,
     fetch_youtube_caption,
@@ -37,6 +43,7 @@ DEFAULT_MAX_PDF_BYTES = 20 * 1024 * 1024
 DEFAULT_MAX_PDF_PAGES = 100
 DEFAULT_PDF_PARSE_TIMEOUT_SECONDS = 60
 DEFAULT_PDF_ADDRESS_SPACE_BYTES = 512 * 1024 * 1024
+DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS = 300
 # Kept as a compatibility name for direct helper callers and tests.
 DEFAULT_MAX_BYTES = DEFAULT_MAX_EXTRACTED_BYTES
 JINA_READER_BASE_URL = "https://r.jina.ai/"
@@ -342,6 +349,8 @@ def fetch_article(
             error_code=exc.error_code,
             method="direct",
             extractor=exc.extractor,
+            fallback_attempted=exc.fallback_attempted,
+            fallback_reason=exc.fallback_reason,
         ) from exc
     except URLError as exc:
         if _is_tls_issuer_unavailable(exc):
@@ -547,6 +556,8 @@ def fetch_github_blob(
             error_code=exc.error_code,
             method="github_raw",
             extractor=exc.extractor,
+            fallback_attempted=exc.fallback_attempted,
+            fallback_reason=exc.fallback_reason,
         ) from exc
 
     LOGGER.info(
@@ -792,14 +803,19 @@ def _extract_response_payload(
                 error_code="pdf_magic_mismatch",
                 extractor="pypdf",
             )
-        text = _extract_pdf_in_subprocess(
+        text, extractor, fallback_reason = _extract_pdf_payload(
             payload,
             max_pages=pdf_max_pages,
             max_text_bytes=extracted_max_bytes,
-            timeout_seconds=pdf_parse_timeout_seconds,
+            pypdf_timeout_seconds=pdf_parse_timeout_seconds,
             address_space_bytes=pdf_address_space_bytes,
         )
-        return ArticleFetchResult(text=text, method=method, extractor="pypdf")
+        return ArticleFetchResult(
+            text=text,
+            method=method,
+            extractor=extractor,
+            fallback_reason=fallback_reason,
+        )
 
     if has_pdf_magic:
         raise ArticleFetchError(
@@ -838,6 +854,139 @@ def _extract_response_payload(
         )
     _enforce_extracted_limit(text, extracted_max_bytes, extractor=extractor)
     return ArticleFetchResult(text=text, method=method, extractor=extractor)
+
+
+def _extract_pdf_payload(
+    payload: bytes,
+    *,
+    max_pages: int,
+    max_text_bytes: int,
+    pypdf_timeout_seconds: int,
+    address_space_bytes: int,
+) -> tuple[str, str, str]:
+    credential_state = adobe_credentials_status(os.environ)
+    fallback_reason = ""
+    if credential_state == "configured":
+        try:
+            text = _extract_pdf_with_adobe_in_subprocess(
+                payload,
+                max_pages=max_pages,
+                max_text_bytes=max_text_bytes,
+                timeout_seconds=DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
+                address_space_bytes=address_space_bytes,
+            )
+        except ArticleFetchError as exc:
+            fallback_reason = exc.error_code
+            LOGGER.warning(
+                "component=pdf_extract extractor=adobe_pdf_to_markdown "
+                "status=failed code=%s fallback=pypdf",
+                exc.error_code,
+            )
+        else:
+            LOGGER.info(
+                "component=pdf_extract extractor=adobe_pdf_to_markdown "
+                "status=success"
+            )
+            return text, "adobe_pdf_to_markdown", ""
+    elif credential_state == "incomplete":
+        fallback_reason = "adobe_pdf_credentials_incomplete"
+        LOGGER.warning(
+            "component=pdf_extract extractor=adobe_pdf_to_markdown "
+            "status=disabled code=%s fallback=pypdf",
+            fallback_reason,
+        )
+
+    try:
+        text = _extract_pdf_in_subprocess(
+            payload,
+            max_pages=max_pages,
+            max_text_bytes=max_text_bytes,
+            timeout_seconds=pypdf_timeout_seconds,
+            address_space_bytes=address_space_bytes,
+        )
+    except ArticleFetchError as exc:
+        if not fallback_reason:
+            raise
+        raise ArticleFetchError(
+            str(exc),
+            error_code=exc.error_code,
+            extractor=exc.extractor,
+            fallback_attempted=True,
+            fallback_reason=fallback_reason,
+        ) from exc
+    return text, "pypdf", fallback_reason
+
+
+def _extract_pdf_with_adobe_in_subprocess(
+    payload: bytes,
+    *,
+    max_pages: int,
+    max_text_bytes: int,
+    timeout_seconds: int,
+    address_space_bytes: int,
+) -> str:
+    command = [
+        sys.executable,
+        "-m",
+        "daily_brief.adobe_pdf_extractor",
+        str(max_pages),
+        str(max_text_bytes),
+        str(ADOBE_CONNECT_TIMEOUT_MS),
+        str(ADOBE_READ_TIMEOUT_MS),
+        str(address_space_bytes),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            input=payload,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ArticleFetchError(
+            "Adobe PDF to Markdown timed out",
+            error_code="adobe_pdf_timeout",
+            extractor="adobe_pdf_to_markdown",
+        ) from exc
+
+    if completed.returncode != 0:
+        raise ArticleFetchError(
+            "Adobe PDF worker subprocess failed",
+            error_code="adobe_pdf_worker_failed",
+            extractor="adobe_pdf_to_markdown",
+        )
+    try:
+        result = json.loads(completed.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ArticleFetchError(
+            "Adobe PDF worker subprocess returned an invalid result",
+            error_code="adobe_pdf_worker_failed",
+            extractor="adobe_pdf_to_markdown",
+        ) from exc
+
+    if result.get("status") != "success":
+        raise ArticleFetchError(
+            str(result.get("message") or "Adobe PDF extraction failed"),
+            error_code=str(
+                result.get("error_code") or "adobe_pdf_conversion_failed"
+            ),
+            extractor="adobe_pdf_to_markdown",
+        )
+    text = str(result.get("text") or "").strip()
+    if not text:
+        raise ArticleFetchError(
+            "Adobe PDF to Markdown returned empty content",
+            error_code="adobe_pdf_empty_content",
+            extractor="adobe_pdf_to_markdown",
+        )
+    _enforce_extracted_limit(
+        text,
+        max_text_bytes,
+        extractor="adobe_pdf_to_markdown",
+    )
+    return text
 
 
 def _extract_pdf_in_subprocess(

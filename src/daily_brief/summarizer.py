@@ -50,35 +50,36 @@ _MEMORIAL_BODY_SIGNAL = re.compile(
 )
 
 _ABSTRACT_HEADING = re.compile(
-    r"^[ \t]*(?:\d+(?:\.\d+)*[ \t]*)?abstract[ \t]*$",
+    r"^[ \t]*(?:#{1,6}[ \t]+)?(?:\d+(?:\.\d+)*[ \t]*)?abstract[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _INTRODUCTION_HEADING = re.compile(
-    r"^[ \t]*(?:\d+(?:\.\d+)*[ \t]*)?introduction[ \t]*$",
+    r"^[ \t]*(?:#{1,6}[ \t]+)?(?:\d+(?:\.\d+)*[ \t]*)?introduction[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _CONCLUSION_HEADING = re.compile(
-    r"^[ \t]*(?:\d+(?:\.\d+)*[ \t]*)?"
+    r"^[ \t]*(?:#{1,6}[ \t]+)?(?:\d+(?:\.\d+)*[ \t]*)?"
     r"(?:discussion[ \t]+and[ \t]+conclusions?|conclusions?)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _REFERENCES_HEADING = re.compile(
-    r"^[ \t]*(?:\d+(?:\.\d+)*[ \t]*)?"
+    r"^[ \t]*(?:#{1,6}[ \t]+)?(?:\d+(?:\.\d+)*[ \t]*)?"
     r"(?:references(?:[ \t]+and[ \t]+notes)?|bibliography)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _RESULTS_HEADING = re.compile(
-    r"^[ \t]*(?:\d+(?:\.\d+)*[ \t]*)?"
+    r"^[ \t]*(?:#{1,6}[ \t]+)?(?:\d+(?:\.\d+)*[ \t]*)?"
     r"(?:results?|findings?|key[ \t]+findings|main[ \t]+results|"
     r"empirical[ \t]+results)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _NUMBERED_FACTS_HEADING = re.compile(
-    r"^[ \t]*\d+(?:\.\d+)*[ \t]+[^\n]{0,120}\bfacts?\b[^\n]{0,120}$",
+    r"^[ \t]*(?:#{1,6}[ \t]+)?\d+(?:\.\d+)*[ \t]+"
+    r"[^\n]{0,120}\bfacts?\b[^\n]{0,120}$",
     re.IGNORECASE | re.MULTILINE,
 )
 _BACK_MATTER_HEADING = re.compile(
-    r"^[ \t]*(?:(?:\d+(?:\.\d+)*|[A-Z])[ \t]*)?"
+    r"^[ \t]*(?:#{1,6}[ \t]+)?(?:(?:\d+(?:\.\d+)*|[A-Z])[ \t]*)?"
     r"(?:figures?|tables?|references(?:[ \t]+and[ \t]+notes)?|bibliography|"
     r"appendix(?:es)?(?:[ \t]+[A-Z0-9]+)?|"
     r"additional[ \t]+(?:figures?|tables?)|supplementary(?:[ \t]+material)?)[ \t]*$",
