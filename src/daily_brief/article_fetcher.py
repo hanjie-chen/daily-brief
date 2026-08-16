@@ -1113,8 +1113,8 @@ def _normalize_single_line(value: str) -> str:
 
 def _normalize_extracted_blocks(value: str) -> str:
     """Normalize extractor text while retaining one line per content block."""
-    lines = [" ".join(line.split()) for line in value.splitlines()]
-    return "\n".join(line for line in lines if line).strip()
+    lines = [line.rstrip() for line in value.splitlines()]
+    return "\n".join(line for line in lines if line.strip()).strip("\n")
 
 
 def _normalize_document_text(value: str) -> str:

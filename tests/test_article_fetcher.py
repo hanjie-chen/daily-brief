@@ -160,6 +160,37 @@ def test_extract_html_preserves_content_block_boundaries():
     ]
 
 
+def test_extract_html_preserves_preformatted_code_indentation():
+    markup = """
+    <html><body><article>
+      <h1>Code example</h1>
+      <p>This article explains the following implementation in useful detail.</p>
+      <pre><code>def main():
+    if x:
+        return 1</code></pre>
+      <p>The function returns one when the condition is true.</p>
+    </article></body></html>
+    """
+
+    assert "def main():\n    if x:\n        return 1" in extract_html(markup)
+
+
+def test_extract_html_preserves_nested_list_indentation():
+    markup = """
+    <html><body><article>
+      <h1>Nested checklist</h1>
+      <p>This article explains a nested checklist in useful detail.</p>
+      <ul>
+        <li>Top item<ul><li>Nested item</li></ul></li>
+        <li>Second top</li>
+      </ul>
+      <p>The hierarchy is part of the article's meaning.</p>
+    </article></body></html>
+    """
+
+    assert "- Top item\n  - Nested item\n- Second top" in extract_html(markup)
+
+
 def test_fetch_article_text_extracts_html_from_public_url():
     response = FakeResponse(
         b"""
