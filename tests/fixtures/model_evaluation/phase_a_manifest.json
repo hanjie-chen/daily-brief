@@ -13,6 +13,7 @@
     },
     "information_density_prompt": {
       "model": "gemini-3.5-flash-lite",
+      "git_commit": "d18bf54",
       "change": "base_prompt_information_density",
       "artifact": "data/model-evaluations/phase-a-2000-01-01-after-base-prompt-gemini-3.5-flash-lite.json",
       "sha256": "011bca7ba1fbd502abbfd30af77e00b6017730682701e6ece4a6c54e4c3efd5e"

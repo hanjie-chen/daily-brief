@@ -16,7 +16,7 @@
 
 # 2026-08-16: 官方来源使用确定性 hostname allowlist
 
-决定:网站根据 schema v2 已有的 `source_url` 解析并规范化 hostname,只对 allowlist 中精确匹配的站点显示官方来源名;首个映射为 `claude.com` -> `Claude 官方博客`。未命中的站点继续显示普通 hostname,不新增 payload 字段或升级 schema。
+决定:网站根据 schema v2 已有的 `source_url` 解析并规范化 hostname,只对 allowlist 中精确匹配的站点显示官方来源名;首个映射为 `claude.com` -> `Claude 官方`。未命中的站点继续显示普通 hostname,不新增 payload 字段或升级 schema。域名级标签只声明来源官方身份,不把该域名下的非博客页面误称为官方博客。
 
 理由:官方身份是产品 metadata,不应由摘要模型根据 URL、页面 `sitename`、作者署名或常识推断。精确 allowlist 能让来源身份可审计,并避免 substring 匹配把相似域名或未审核的子域误标为官方来源。
 
