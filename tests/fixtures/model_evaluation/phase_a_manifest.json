@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "date_label": "2000-01-01",
+  "input_path": "data/model-eval-inputs/2000-01-01.json",
+  "input_sha256": "fc2bbec468bdafa46a1f7a00e7d3ad3b8a70943f8208dec08a21f29e7691e5a6",
+  "storage_note": "The exact replay input stays under Git-ignored data/ because it contains third-party article text.",
+  "runs": {
+    "baseline": {
+      "model": "gemini-3.5-flash-lite",
+      "git_commit": "3b5a6e2",
+      "artifact": "data/model-evaluations/phase-a-2000-01-01-baseline-gemini-3.5-flash-lite-3b5a6e2.json",
+      "sha256": "a8bd592d0f753a1cad82900c543b208981bd3cd993c13854371441204a2d1a69"
+    },
+    "information_density_prompt": {
+      "model": "gemini-3.5-flash-lite",
+      "change": "base_prompt_information_density",
+      "artifact": "data/model-evaluations/phase-a-2000-01-01-after-base-prompt-gemini-3.5-flash-lite.json",
+      "sha256": "011bca7ba1fbd502abbfd30af77e00b6017730682701e6ece4a6c54e4c3efd5e"
+    }
+  },
+  "samples": [
+    {
+      "hn_item_id": "49300800",
+      "category": "guide",
+      "title": "Maximizing the value of your Claude Code sessions",
+      "source_url": "https://claude.com/blog/maximizing-the-value-of-your-claude-code-sessions",
+      "must_retain": "不能只列出上下文、Prompt Caching 和任务拆分等主题；必须保留至少两个正文支持的具体成本机制或操作，例如任务间使用 /clear、用 /context 清理启动内容、在缓存仍有效时 /compact，或用独立 subagent 隔离高噪声工作。"
+    },
+    {
+      "hn_item_id": "49239021",
+      "category": "release_announcement",
+      "title": "Auto mode is now the default in Claude Code",
+      "source_url": "https://claude.com/blog/auto-mode-default-in-claude-code",
+      "must_retain": "必须说明默认启用所覆盖的 Pro、Max 和 Team 计划，并具体说明 classifier 会拦截不可逆、破坏性或越出环境的操作，以及这些计划不再承担 classifier token 开销。"
+    },
+    {
+      "hn_item_id": "49151933",
+      "category": "opinion",
+      "title": "Don't be a meat proxy",
+      "source_url": "https://gruhn.me/blog/2026-08-03/",
+      "must_retain": "直接搬运 AI 输出会把阅读和判断负担转给接收者；有价值的做法是先阅读、理解并验证，再用自己的话回复。"
+    },
+    {
+      "hn_item_id": "49307700",
+      "category": "project_introduction",
+      "title": "Show HN: ThoughtDAG – An editable context graph for LLM conversations",
+      "source_url": "https://chenxiachan.github.io/thoughtdag/",
+      "must_retain": "必须说明图中的连线决定哪些历史祖先进入下一次请求，并且用户可以预览或删除连线后用同一 prompt 重新生成，从而看见无关分支被移除。"
+    },
+    {
+      "hn_item_id": "49290768",
+      "category": "research_report",
+      "title": "How Organizations Use AI: Evidence from ChatGPT [pdf]",
+      "source_url": "https://cdn.openai.com/pdf/how-organizations-use-chatgpt.pdf",
+      "must_retain": "必须交代超过 1,500 个组织的 ChatGPT Enterprise 数据范围、至少两项主要发现，并明确 Enterprise-only、描述性而非因果性或未测量下游生产率等关键限制。"
+    },
+    {
+      "hn_item_id": "49173165",
+      "category": "memorial",
+      "title": "In Memory of My Wife, Elise Cawley, with Thanks for 36 Wonderful Years",
+      "source_url": "https://writings.stephenwolfram.com/2026/08/in-memory-of-my-wife-elise-cawley-1961-2026-with-thanks-for-36-wonderful-years/",
+      "must_retain": "必须保留作者打破平时因隐私少谈家庭的惯例、Elise 是纯数学家，以及两人相伴 36 年；不得把 36 年误写成婚龄。"
+    }
+  ]
+}

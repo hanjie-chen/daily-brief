@@ -123,7 +123,12 @@ def test_summary_prompt_contains_grounding_and_untrusted_content_boundaries():
     assert "中文" in prompt
     assert "untrusted" in prompt
     assert "不要推断" in prompt
-    assert "简单内容优先用一句话" in prompt
+    assert "默认使用一至两句话" in prompt
+    assert "使用两句话，不得为了压缩成一句而省略关键事实" in prompt
+    assert "直接陈述最有区分度的事实" in prompt
+    assert "不得只列出材料涉及的主题" in prompt
+    assert "“本文介绍了”“本文探讨了”" in prompt
+    assert "至少保留其中两个正文支持的具体事实" in prompt
     assert "重要的英文技术术语" in prompt
     assert "Source URL 和 HN Discussion 仅是元数据" in prompt
     assert "不得根据 URL、域名或" in prompt

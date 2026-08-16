@@ -41,6 +41,7 @@ HTML 正文会保留 `trafilatura` 识别出的内容块换行；GitHub README�
 - 确定性优先：抓取、匹配、打分、去重、排序、渲染、发布都是确定性逻辑；模型只负责主题分类和摘要两处。
 - 局部降级：数据源、分类、原文抓取、摘要中的单项失败都不会让整份简报生成失败。
 - 摘要必须接地：摘要只陈述材料中明确存在的事实；无法生成可靠摘要时显示固定文案，而不是编造。
+- 通用摘要必须有信息量：直接陈述最有区分度的事实，不能用“本文介绍了什么”代替结论；材料包含多个会改变理解的机制、结果、限制或行动建议时，应保留至少两个具体事实，并允许使用两句话。
 - 重要语境不能被压平：当材料明确提供悼念文章的公开反差、被追忆者的独立身份或双方关系时，摘要应保留这些事实；材料没有提供时不得由模式或常识补出。
 - 研究摘要必须交付结论：不能只说“研究了什么”；材料支持时应保留研究范围、至少两项主要发现，以及最会改变解读的一项限制或因果边界。
 - 反馈校准：通过真实阅读记录（`opened` / `useful` / `noisy` / `note`）定期复盘筛选规则，而不是预先假定什么值得注意力。
@@ -101,6 +102,8 @@ daily-brief evaluate-model --date YYYY-MM-DD
 ```
 
 捕获输入保存在 `data/model-eval-inputs/`，评测结果保存在 `data/model-evaluations/`。评测不访问网络、不生成或发布简报、不修改推荐历史和发布状态。评测其他 Gemini 模型可通过 `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` / `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL` 覆盖。
+
+用于摘要 prompt 回归的微型固定对照组记录在 `tests/fixtures/model_evaluation/phase_a_manifest.json`。其中只提交样本 metadata、输入哈希和每篇必须保留的事实；包含第三方文章正文的精确 replay input 与模型输出继续留在 Git 忽略的 `data/` 中。相同 date label 和 backend 会覆盖旧评测结果，比较前应先另存 baseline。
 
 ## Docs
 
