@@ -154,7 +154,7 @@ def extract_html(markup: str) -> str:
         favor_precision=True,
         include_tables=True,
     )
-    return _normalize_text(extracted or "")
+    return _normalize_extracted_blocks(extracted or "")
 
 
 def fetch_article_text(
@@ -663,7 +663,7 @@ def fetch_jina_reader_text(
                 "Jina Reader content is not a string",
                 error_code="jina_invalid_content",
             )
-        text = _normalize_text(content)
+        text = _normalize_document_text(content)
         if not text:
             raise ArticleFetchError(
                 "Jina Reader content is empty",
@@ -838,7 +838,9 @@ def _extract_response_payload(
         "application/json",
         GITHUB_RAW_CONTENT_TYPE,
     }:
-        text = _normalize_text(payload.decode(charset, errors="replace"))
+        text = _normalize_document_text(
+            payload.decode(charset, errors="replace")
+        )
         extractor = "plain_text"
     else:
         raise ArticleFetchError(
@@ -1022,7 +1024,7 @@ def _extract_pdf_in_subprocess(
         ) from exc
 
     if completed.returncode != 0:
-        diagnostic = _normalize_text(
+        diagnostic = _normalize_single_line(
             completed.stderr.decode("utf-8", errors="replace")
         )[:500]
         raise ArticleFetchError(
@@ -1076,7 +1078,7 @@ def _fetch_bounded_text_response(
         payload = _read_bounded(response, max_bytes)
         charset = response.headers.get_content_charset() or "utf-8"
 
-    text = _normalize_text(payload.decode(charset, errors="replace"))
+    text = _normalize_document_text(payload.decode(charset, errors="replace"))
     if not text:
         raise ArticleFetchError(
             "article response contained no extractable text",
@@ -1105,8 +1107,19 @@ def _enforce_extracted_limit(text: str, max_bytes: int, *, extractor: str) -> No
         )
 
 
-def _normalize_text(value: str) -> str:
+def _normalize_single_line(value: str) -> str:
     return " ".join(value.split())
+
+
+def _normalize_extracted_blocks(value: str) -> str:
+    """Normalize extractor text while retaining one line per content block."""
+    lines = [" ".join(line.split()) for line in value.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
+def _normalize_document_text(value: str) -> str:
+    """Normalize line endings without damaging Markdown or preformatted text."""
+    return value.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 def _github_repository(url: str) -> tuple[str, str] | None:

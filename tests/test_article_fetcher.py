@@ -141,6 +141,25 @@ def test_extract_html_removes_non_content_and_collapses_whitespace():
     assert extract_html(markup) == "Hello world"
 
 
+def test_extract_html_preserves_content_block_boundaries():
+    markup = """
+    <html><body><article>
+      <h1>Useful facts</h1>
+      <p>The first paragraph explains the mechanism in useful detail.</p>
+      <h2>What to do</h2>
+      <ul><li>Keep the context focused.</li><li>Clear stale output.</li></ul>
+    </article></body></html>
+    """
+
+    assert extract_html(markup).splitlines() == [
+        "Useful facts",
+        "The first paragraph explains the mechanism in useful detail.",
+        "What to do",
+        "- Keep the context focused.",
+        "- Clear stale output.",
+    ]
+
+
 def test_fetch_article_text_extracts_html_from_public_url():
     response = FakeResponse(
         b"""
@@ -559,7 +578,7 @@ def test_fetch_article_uses_github_readme_api_for_repository_root(url):
         timeout_seconds=7,
     )
 
-    assert result.text == "# TurboFieldfare Grounded README facts."
+    assert result.text == "# TurboFieldfare\n\nGrounded README facts."
     assert result.method == "github_readme"
     assert result.extractor == "plain_text"
     assert result.fallback_reason == ""
@@ -571,6 +590,25 @@ def test_fetch_article_uses_github_readme_api_for_repository_root(url):
     assert request.get_header("Accept") == "application/vnd.github.raw+json"
     assert request.get_header("X-github-api-version") == "2022-11-28"
     assert timeout == 7
+
+
+def test_github_readme_preserves_markdown_lists_and_code_blocks():
+    response = FakeResponse(
+        b"# Project\n\n- First item\n- Second item\n\n```python\nvalue  = 1\n```",
+        content_type="application/vnd.github.raw+json",
+        final_url="https://api.github.com/repos/example/project/readme",
+    )
+
+    result = fetch_article(
+        "https://github.com/example/project",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+    )
+
+    assert result.text == (
+        "# Project\n\n- First item\n- Second item\n\n"
+        "```python\nvalue  = 1\n```"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1299,6 +1337,23 @@ def test_fetch_article_reports_jina_retrieval_method():
     assert result.method == "jina"
     assert result.extractor == "jina"
     assert result.fallback_reason == "cloudflare_challenge"
+
+
+def test_fetch_jina_reader_text_preserves_markdown_structure():
+    content = "# Report\n\n## Findings\n\n- First result\n- Second result"
+    response = FakeResponse(
+        make_jina_payload(content),
+        content_type="application/json",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+
+    text = fetch_jina_reader_text(
+        "https://example.com/article",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+    )
+
+    assert text == content
 
 
 @pytest.mark.parametrize("status_code", [403, 404])

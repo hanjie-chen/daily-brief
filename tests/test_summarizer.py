@@ -1,5 +1,6 @@
 import pytest
 
+from daily_brief.article_fetcher import extract_html
 from daily_brief.models import Candidate, KeywordMatch, Story
 from daily_brief.summarizer import (
     MEMORIAL_OR_PERSONAL_ESSAY_MODULE,
@@ -181,6 +182,40 @@ def test_high_confidence_research_structure_routes_and_selects_evidence():
     assert "METHODS_SENTINEL" not in context.text
     assert "REFERENCE_SENTINEL" not in context.text
     assert "APPENDIX_PROMPT_SENTINEL" not in context.text
+
+
+def test_html_research_headings_survive_extraction_and_enable_research_route():
+    markup = """
+    <html><body><article>
+      <h1>Abstract</h1>
+      <p>This study links enterprise account records to worker roles and financial
+      data. It measures adoption and usage across more than 1,500 organizations
+      and distinguishes descriptive associations from causal effects.</p>
+      <h2>1 Introduction</h2>
+      <p>Background and related work explain the setting for the analysis.</p>
+      <h2>2 Data</h2>
+      <p>The sample contains bounded enterprise account and worker-role records.</p>
+      <h2>3 Results</h2>
+      <p>Output tokens increased sevenfold, while an existing cohort increased
+      fourfold. Adoption was concentrated among larger and more R&amp;D-intensive
+      firms, and early-career workers used the product more intensively. These
+      results remain descriptive and do not establish causal effects.</p>
+      <h2>4 Conclusion</h2>
+      <p>The analysis covers only Enterprise accounts and does not measure downstream
+      productivity or establish that adoption caused stronger financial outcomes.
+      The bounded sample therefore cannot represent every customer population.</p>
+      <h2>References</h2>
+      <p>A bibliography that should not be selected for summary evidence.</p>
+    </article></body></html>
+    """
+
+    body = extract_html(markup)
+    item = candidate(story_text="", fetched_text=body, title="Enterprise AI study")
+
+    assert "Abstract\n" in body
+    assert "\n3 Results\n" in body
+    assert route_summary_mode(item) == SUMMARY_MODE_RESEARCH_REPORT
+    assert build_summary_context(item).strategy == SUMMARY_CONTEXT_RESEARCH_SECTIONS
 
 
 def test_adobe_markdown_headings_preserve_research_routing_and_evidence():

@@ -32,6 +32,8 @@
 
 候选先经过确定性的关键词匹配与热度打分；命中明确 AI 关键词的直接进入 AI 候选池，无明确信号的高分候选交给模型做主题分类。最终入选的内容才会补全原文：已有 HN story text 时直接使用；YouTube 视频通过 `yt-dlp` 只取得优先的人工字幕或原语言自动字幕，不下载音视频；标准 GitHub 仓库链接通过 GitHub 官方 API 获取 README；GitHub blob 链接转换为精确的 raw 文件 URL；普通 HTML 使用本地 `trafilatura` 提取正文。配置 Adobe PDF Services 凭据后，PDF 会优先转换为保留标题、段落、列表与表格结构的 Markdown；Adobe 未配置或鉴权、网络、配额、超时、输出校验失败时，自动退回受限 subprocess 中的本地 `pypdf` text-layer 提取。YouTube 没有可用字幕或字幕抓取失败时会明确失败，不会自动改用视频简介中的相关文章、音频 ASR 或多模态视频理解。直接请求明确遇到 Cloudflare Challenge、识别到返回 HTTP 200 的浏览器验证页、普通 HTML 下载成功但 `trafilatura` 提取为空，或 TLS 校验仅因本地无法取得 issuer（OpenSSL verify code 20）而失败时，会通过 Jina Reader 做至多一次有界 retrieval fallback，并校验其 JSON envelope 与正文；Jina 返回的浏览器验证页同样不会被视为原文。过期、hostname 不匹配、自签名等其他证书错误不会触发 fallback。系统分别记录正文 transport（如 direct、YouTube caption、GitHub raw、Jina）和 extractor（如 `trafilatura`、`yt-dlp`、`adobe_pdf_to_markdown`、`pypdf`），以及摘要实际依据的材料。取得正文后，纯代码路由会识别高置信度的悼念/讣告或研究论文/报告；所有不确定情况继续使用通用模式。研究模式不是“所有 PDF 模式”，而是要求正文具有完整且有序的研究章节结构；它同时识别纯文本和 Markdown 标题，优先把 `Abstract` 与 `Results` / `Findings` / 编号 `Facts` 到 `Conclusion` 的正文交给摘要模型，排除参考文献和附录等噪声，无法可靠选取时退回完整正文。随后模型生成接地的中文摘要；下载、类型验证或提取失败时直接显示错误并跳过摘要模型，最后渲染为 Markdown 与 JSON 后发布到网站。
 
+HTML 正文会保留 `trafilatura` 识别出的内容块换行；GitHub README、raw text 和 Jina Markdown 也会保留原有换行及预格式化内容，不再被压成一行。因此，具有完整章节结构的 HTML 研究文章也能按内容进入研究摘要模式。
+
 打分权重、入选门槛等参数集中在 `src/daily_brief/config.py`。模块职责、生成链路与关键不变量见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
 
 ## Design Principles
