@@ -154,6 +154,8 @@ def fallback_summary(candidate: Candidate) -> str:
 
 
 def article_fetch_failure_summary(candidate: Candidate) -> str:
+    if candidate.article_retrieval.origin_blocked:
+        return "来源网站阻止自动抓取，未生成可靠摘要；请查看原文或讨论。"
     return "原文抓取失败，未生成可靠摘要；请查看原文或讨论。"
 
 

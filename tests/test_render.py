@@ -262,6 +262,27 @@ def test_render_marks_article_fetch_failure_without_exposing_raw_error():
     )
 
 
+def test_render_labels_origin_block_without_exposing_terminal_fallback_error():
+    item = candidate()
+    item.summary = "来源网站阻止自动抓取，未生成可靠摘要；请查看原文或讨论。"
+    item.article_retrieval = ArticleRetrieval(
+        status="failed",
+        method="jina",
+        extractor="jina",
+        fallback_attempted=True,
+        fallback_reason="datadome_challenge",
+        error_type="ArticleFetchError",
+        error_code="http_403",
+        error_message="secret Jina detail",
+    )
+
+    markdown = render_markdown("2026-07-08", [item], [])
+
+    assert "- Content: Error — 来源网站阻止自动抓取。" in markdown
+    assert "http_403" not in markdown
+    assert "secret Jina detail" not in markdown
+
+
 def test_public_content_status_distinguishes_title_only_and_summary_failure():
     title_only = candidate(title="Title only")
     title_only.summary_basis = "title_only"

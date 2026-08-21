@@ -1084,6 +1084,39 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
     assert model_input["summary_candidates"] == []
 
 
+def test_origin_block_failure_uses_specific_reader_message(tmp_path):
+    def raise_fetch_error(url):
+        raise ArticleFetchError(
+            "article retrieval failed: direct=datadome challenge; "
+            "jina=Jina Reader request failed",
+            error_code="http_403",
+            method="jina",
+            extractor="jina",
+            fallback_attempted=True,
+            fallback_reason="datadome_challenge",
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        article_fetcher=raise_fetch_error,
+        summarizer=FakeSummarizer(),
+    )
+
+    markdown = result.brief_path.read_text(encoding="utf-8")
+    assert "来源网站阻止自动抓取，未生成可靠摘要" in markdown
+    assert "- Content: Error — 来源网站阻止自动抓取。" in markdown
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    retrieval = candidate_payload[0]["article_retrieval"]
+    assert retrieval["fallback_attempted"] is True
+    assert retrieval["fallback_reason"] == "datadome_challenge"
+    assert retrieval["error_code"] == "http_403"
+
+
 def test_empty_content_jina_failure_skips_summary_and_persists_provenance(
     tmp_path,
 ):

@@ -38,6 +38,14 @@ class ArticleRetrieval:
     error_code: str = ""
     error_message: str = ""
 
+    @property
+    def origin_blocked(self) -> bool:
+        return self.fallback_reason in {
+            "challenge_page",
+            "cloudflare_challenge",
+            "datadome_challenge",
+        }
+
 
 @dataclass
 class Candidate:

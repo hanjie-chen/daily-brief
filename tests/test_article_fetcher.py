@@ -1370,6 +1370,95 @@ def test_fetch_article_reports_jina_retrieval_method():
     assert result.fallback_reason == "cloudflare_challenge"
 
 
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_fetch_article_uses_jina_for_datadome_challenge(caplog, status_code):
+    requests = []
+    jina_response = FakeResponse(
+        make_jina_payload("Recovered Reuters article facts."),
+        content_type="application/json",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        if len(requests) == 1:
+            raise http_error(
+                request.full_url,
+                status_code,
+                server="CloudFront",
+                x_datadome="protected",
+                x_dd_b="1",
+            )
+        return jina_response
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
+            "https://example.com/article",
+            opener=open_response,
+            resolver=resolver_for({}),
+        )
+
+    assert requests == [
+        "https://example.com/article",
+        "https://r.jina.ai/https://example.com/article",
+    ]
+    assert result.text == "Recovered Reuters article facts."
+    assert result.method == "jina"
+    assert result.extractor == "jina"
+    assert result.fallback_reason == "datadome_challenge"
+    assert "method=direct status=datadome_challenge fallback=jina" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("status_code", "headers"),
+    [
+        (429, {"x_datadome": "protected", "x_dd_b": "1"}),
+        (401, {"x_dd_b": "1"}),
+    ],
+)
+def test_datadome_detection_requires_supported_status_and_explicit_header(
+    status_code, headers
+):
+    requested_urls = []
+
+    def deny(request, timeout):
+        requested_urls.append(request.full_url)
+        raise http_error(request.full_url, status_code, **headers)
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            "https://example.com/article",
+            opener=deny,
+            resolver=resolver_for({}),
+        )
+
+    assert requested_urls == ["https://example.com/article"]
+    assert caught.value.error_code == f"http_{status_code}"
+    assert caught.value.method == "direct"
+    assert caught.value.fallback_attempted is False
+
+
+def test_fetch_article_reports_datadome_and_jina_failures():
+    def fail(request, timeout):
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 403)
+        raise http_error(request.full_url, 401, x_datadome="protected", x_dd_b="1")
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            "https://example.com/article",
+            opener=fail,
+            resolver=resolver_for({}),
+        )
+
+    assert caught.value.error_code == "http_403"
+    assert caught.value.method == "jina"
+    assert caught.value.extractor == "jina"
+    assert caught.value.fallback_attempted is True
+    assert caught.value.fallback_reason == "datadome_challenge"
+    assert "direct=datadome challenge" in str(caught.value)
+
+
 def test_fetch_jina_reader_text_preserves_markdown_structure():
     content = "# Report\n\n## Findings\n\n- First result\n- Second result"
     response = FakeResponse(
@@ -1387,7 +1476,7 @@ def test_fetch_jina_reader_text_preserves_markdown_structure():
     assert text == content
 
 
-@pytest.mark.parametrize("status_code", [403, 404])
+@pytest.mark.parametrize("status_code", [401, 403, 404])
 def test_fetch_article_text_does_not_use_jina_for_other_http_errors(status_code):
     requested_urls = []
 

@@ -112,11 +112,14 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
             ]
         )
         if item.article_retrieval.status == "failed":
-            error_code = item.article_retrieval.error_code or "fetch_failed"
-            lines.append(
-                "- Content: Error — 原文抓取失败"
-                f"（{_single_line_display_text(error_code)}）。"
-            )
+            if item.article_retrieval.origin_blocked:
+                lines.append("- Content: Error — 来源网站阻止自动抓取。")
+            else:
+                error_code = item.article_retrieval.error_code or "fetch_failed"
+                lines.append(
+                    "- Content: Error — 原文抓取失败"
+                    f"（{_single_line_display_text(error_code)}）。"
+                )
         lines.extend(
             [
                 f"- Why: {_single_line_display_text(item.why)}",

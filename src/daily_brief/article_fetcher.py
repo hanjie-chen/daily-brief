@@ -296,6 +296,20 @@ def fetch_article(
             pdf_address_space_bytes=pdf_address_space_bytes,
         )
     except HTTPError as exc:
+        if _is_datadome_challenge(exc):
+            LOGGER.warning(
+                "component=article_fetch method=direct status=datadome_challenge "
+                "fallback=jina"
+            )
+            return _fetch_jina_fallback(
+                url,
+                direct_failure="datadome challenge",
+                fallback_reason="datadome_challenge",
+                opener=open_request,
+                resolver=resolver,
+                timeout_seconds=timeout_seconds,
+                max_bytes=extracted_max_bytes,
+            )
         if not _is_cloudflare_challenge(exc):
             raise ArticleFetchError(
                 f"direct article request failed: {exc}",
@@ -1204,6 +1218,14 @@ def _is_standard_github_url(parsed) -> bool:
 
 def _is_cloudflare_challenge(error: HTTPError) -> bool:
     return _headers_indicate_challenge(error.headers)
+
+
+def _is_datadome_challenge(error: HTTPError) -> bool:
+    return bool(
+        error.code in {401, 403}
+        and error.headers
+        and error.headers.get("x-datadome", "").strip().lower() == "protected"
+    )
 
 
 def _headers_indicate_challenge(headers) -> bool:
