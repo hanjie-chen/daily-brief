@@ -307,11 +307,13 @@ def run_generate(
                     method = fetch_result.method
                     extractor = fetch_result.extractor
                     fallback_reason = fetch_result.fallback_reason
+                    attempts = fetch_result.attempts
                 elif isinstance(fetch_result, str):
                     fetched_text = fetch_result.strip()
                     method = "direct"
                     extractor = "plain_text"
                     fallback_reason = ""
+                    attempts = 1
                 else:
                     raise ArticleFetchError(
                         "article fetcher returned an invalid result",
@@ -332,6 +334,7 @@ def run_generate(
                     status="success",
                     method=method,
                     extractor=extractor,
+                    attempts=attempts,
                     fallback_attempted=bool(fallback_reason),
                     fallback_reason=fallback_reason,
                 )
@@ -342,11 +345,12 @@ def run_generate(
                 )
                 LOGGER.info(
                     "component=article_fetch item_id=%s status=success method=%s "
-                    "extractor=%s fallback_reason=%s",
+                    "extractor=%s fallback_reason=%s attempts=%d",
                     candidate.story.hn_item_id,
                     method,
                     extractor or "none",
                     fallback_reason or "none",
+                    attempts,
                 )
             except Exception as exc:
                 error_message = _bounded_error_message(exc)
@@ -355,10 +359,12 @@ def run_generate(
                 extractor = getattr(exc, "extractor", "")
                 fallback_attempted = getattr(exc, "fallback_attempted", False)
                 fallback_reason = getattr(exc, "fallback_reason", "")
+                attempts = getattr(exc, "attempts", 1)
                 candidate.article_retrieval = ArticleRetrieval(
                     status="failed",
                     method=method,
                     extractor=extractor,
+                    attempts=attempts,
                     fallback_attempted=fallback_attempted,
                     fallback_reason=fallback_reason,
                     error_type=type(exc).__name__,
@@ -370,12 +376,13 @@ def run_generate(
                 candidate.summary_status = "skipped"
                 LOGGER.error(
                     "component=article_fetch item_id=%s status=failed method=%s "
-                    "extractor=%s error=%s code=%s message=%s",
+                    "extractor=%s error=%s code=%s attempts=%d message=%s",
                     candidate.story.hn_item_id,
                     method,
                     extractor or "none",
                     type(exc).__name__,
                     error_code,
+                    attempts,
                     error_message,
                 )
                 continue

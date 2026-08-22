@@ -224,6 +224,7 @@ def test_fetch_article_reports_direct_retrieval_method():
     assert result.method == "direct"
     assert result.extractor == "plain_text"
     assert result.fallback_reason == ""
+    assert result.attempts == 1
 
 
 def test_fetch_article_routes_target_youtube_video_to_caption_extractor(monkeypatch):
@@ -637,8 +638,7 @@ def test_github_readme_preserves_markdown_lists_and_code_blocks():
     )
 
     assert result.text == (
-        "# Project\n\n- First item\n- Second item\n\n"
-        "```python\nvalue  = 1\n```"
+        "# Project\n\n- First item\n- Second item\n\n```python\nvalue  = 1\n```"
     )
 
 
@@ -1527,11 +1527,120 @@ def test_fetch_article_uses_jina_when_tls_issuer_is_unavailable(caplog):
     assert result.method == "jina"
     assert result.extractor == "jina"
     assert result.fallback_reason == "tls_issuer_unavailable"
+    assert result.attempts == 2
     assert "status=tls_issuer_unavailable fallback=jina" in caplog.text
     assert (
         "method=jina extractor=jina status=success "
         "fallback_reason=tls_issuer_unavailable"
     ) in caplog.text
+
+
+@pytest.mark.parametrize(
+    "timeout_error",
+    [
+        TimeoutError("The read operation timed out"),
+        URLError(TimeoutError("The handshake operation timed out")),
+    ],
+)
+def test_fetch_article_retries_network_timeout_once_before_direct_success(
+    caplog, timeout_error
+):
+    requested_urls = []
+    sleeps = []
+    direct_response = FakeResponse(
+        b"Recovered direct facts.", content_type="text/plain"
+    )
+
+    def open_response(request, timeout):
+        requested_urls.append(request.full_url)
+        if len(requested_urls) == 1:
+            raise timeout_error
+        return direct_response
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
+            "https://example.com/article",
+            opener=open_response,
+            resolver=resolver_for({}),
+            sleeper=sleeps.append,
+        )
+
+    assert requested_urls == [
+        "https://example.com/article",
+        "https://example.com/article",
+    ]
+    assert sleeps == [article_fetcher.DIRECT_RETRY_DELAY_SECONDS]
+    assert result.text == "Recovered direct facts."
+    assert result.method == "direct"
+    assert result.attempts == 2
+    assert "status=network_timeout attempt=1/2 retry_in=1s" in caplog.text
+
+
+def test_fetch_article_uses_jina_after_two_network_timeouts(caplog):
+    requested_urls = []
+    sleeps = []
+    jina_response = FakeResponse(
+        make_jina_payload("Recovered through Jina."),
+        content_type="application/json",
+        final_url="https://r.jina.ai/https://example.com/article",
+    )
+
+    def open_response(request, timeout):
+        requested_urls.append(request.full_url)
+        if request.full_url == "https://example.com/article":
+            raise URLError(TimeoutError("The handshake operation timed out"))
+        return jina_response
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
+            "https://example.com/article",
+            opener=open_response,
+            resolver=resolver_for({}),
+            sleeper=sleeps.append,
+        )
+
+    assert requested_urls == [
+        "https://example.com/article",
+        "https://example.com/article",
+        "https://r.jina.ai/https://example.com/article",
+    ]
+    assert sleeps == [article_fetcher.DIRECT_RETRY_DELAY_SECONDS]
+    assert result.text == "Recovered through Jina."
+    assert result.method == "jina"
+    assert result.extractor == "jina"
+    assert result.fallback_reason == "network_timeout"
+    assert result.attempts == 3
+    assert "status=network_timeout attempt=2/2 fallback=jina" in caplog.text
+
+
+def test_network_timeout_and_jina_failure_preserve_attempt_count():
+    requested_urls = []
+
+    def fail(request, timeout):
+        requested_urls.append(request.full_url)
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 502)
+        raise URLError(TimeoutError("The handshake operation timed out"))
+
+    with pytest.raises(
+        ArticleFetchError, match="network timeout after 2 attempts"
+    ) as caught:
+        fetch_article(
+            "https://example.com/article",
+            opener=fail,
+            resolver=resolver_for({}),
+            sleeper=lambda delay: None,
+        )
+
+    assert requested_urls == [
+        "https://example.com/article",
+        "https://example.com/article",
+        "https://r.jina.ai/https://example.com/article",
+    ]
+    assert caught.value.method == "jina"
+    assert caught.value.fallback_attempted is True
+    assert caught.value.fallback_reason == "network_timeout"
+    assert caught.value.attempts == 3
 
 
 @pytest.mark.parametrize(

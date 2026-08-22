@@ -124,6 +124,7 @@ def test_render_candidates_json_uses_snake_case_fields():
         "status": "not_attempted",
         "method": "",
         "extractor": "",
+        "attempts": 0,
         "fallback_attempted": False,
         "fallback_reason": "",
         "error_type": "",

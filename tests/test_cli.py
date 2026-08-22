@@ -747,6 +747,7 @@ def test_selected_external_article_text_reaches_summarizer(tmp_path, caplog):
     assert selected["article_retrieval"]["status"] == "success"
     assert selected["article_retrieval"]["method"] == "direct"
     assert selected["article_retrieval"]["extractor"] == "plain_text"
+    assert selected["article_retrieval"]["attempts"] == 1
     assert selected["summary_basis"] == "fetched_article"
     assert selected["summary_status"] == "success"
     assert selected["summary_mode"] == "generic"
@@ -1066,6 +1067,7 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
         "status": "failed",
         "method": "direct",
         "extractor": "trafilatura",
+        "attempts": 1,
         "fallback_attempted": False,
         "fallback_reason": "",
         "error_type": "ArticleFetchError",

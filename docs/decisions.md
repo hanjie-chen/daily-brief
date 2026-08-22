@@ -29,3 +29,11 @@
 理由:当前明确失败样本是 Claude Code 指南摘要只列主题,证据不足以支持新的高置信路由。共同的 base prompt 缺少信息量底线,先修正这条共同约束能以更小范围覆盖指南、公告、观点和项目介绍,同时保留现有 research 与 memorial module 的专项要求。
 
 验证:使用 6 篇真实材料组成微型固定对照组,覆盖指南、发布公告、观点、项目介绍、研究报告和悼念文章。第三方文章全文及模型输出保存在 Git 忽略的 `data/`,已跟踪的 `tests/fixtures/model_evaluation/phase_a_manifest.json` 只记录样本 metadata、输入哈希和单句 must-retain 条件,避免在仓库中转载完整原文。
+
+# 2026-08-22: 原文网络超时先重试一次,再使用 Jina fallback
+
+决定:原文 direct transport 遇到网络 timeout 时,固定等待 1 秒并重试一次;第二次仍 timeout 时,通过既有的 Jina Reader 路径尝试一次。候选审计记录总 transport attempts。其他已有的 challenge、empty content 和 TLS issuer fallback 保持不变,确定性的 URL 校验、HTTP、证书、content type、大小和 extraction 失败不进入这条 retry 路径。
+
+理由:当天一个入选条目在同批其他六条成功时发生 TLS handshake timeout,稍后 direct 和 Jina 均可成功抓取。现有证据只能确定这是 host-specific 的 timeout,不能区分临时路由、DDoS protection edge 故障或 anti-bot 处置。一次 direct retry 覆盖普通瞬时故障,随后切换 Jina 提供不同 retrieval path,同时保持尝试次数有界。
+
+暂不抽象共享 retry executor。HN、Gemini、publisher 和任意网页 retrieval 的可重试条件、退避和 provider 行为不同;当前真实缺口只在 article fetch。先让这套 article-specific policy 经受生产样本,以后出现明确的重复实现成本时再评估共享边界。

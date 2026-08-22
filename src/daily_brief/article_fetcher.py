@@ -9,6 +9,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from functools import partial
 from http.client import HTTPConnection, HTTPSConnection
@@ -37,6 +38,8 @@ from .youtube_captions import (
 )
 
 DEFAULT_TIMEOUT_SECONDS = 15
+DIRECT_MAX_ATTEMPTS = 2
+DIRECT_RETRY_DELAY_SECONDS = 1
 DEFAULT_MAX_EXTRACTED_BYTES = 256 * 1024
 DEFAULT_MAX_HTML_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_PDF_BYTES = 20 * 1024 * 1024
@@ -81,6 +84,7 @@ class ArticleFetchError(RuntimeError):
         extractor: str = "",
         fallback_attempted: bool = False,
         fallback_reason: str = "",
+        attempts: int = 1,
     ) -> None:
         super().__init__(message)
         self.error_code = error_code
@@ -88,6 +92,7 @@ class ArticleFetchError(RuntimeError):
         self.extractor = extractor
         self.fallback_attempted = fallback_attempted
         self.fallback_reason = fallback_reason
+        self.attempts = attempts
 
 
 @dataclass(frozen=True)
@@ -96,6 +101,7 @@ class ArticleFetchResult:
     method: str
     fallback_reason: str = ""
     extractor: str = ""
+    attempts: int = 1
 
 
 class _SafeRedirectHandler(HTTPRedirectHandler):
@@ -170,6 +176,7 @@ def fetch_article_text(
     pdf_max_pages: int = DEFAULT_MAX_PDF_PAGES,
     pdf_parse_timeout_seconds: int = DEFAULT_PDF_PARSE_TIMEOUT_SECONDS,
     pdf_address_space_bytes: int = DEFAULT_PDF_ADDRESS_SPACE_BYTES,
+    sleeper=time.sleep,
 ) -> str:
     """Fetch article text while preserving the original string-returning API."""
     return fetch_article(
@@ -184,6 +191,7 @@ def fetch_article_text(
         pdf_max_pages=pdf_max_pages,
         pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
         pdf_address_space_bytes=pdf_address_space_bytes,
+        sleeper=sleeper,
     ).text
 
 
@@ -200,6 +208,7 @@ def fetch_article(
     pdf_max_pages: int = DEFAULT_MAX_PDF_PAGES,
     pdf_parse_timeout_seconds: int = DEFAULT_PDF_PARSE_TIMEOUT_SECONDS,
     pdf_address_space_bytes: int = DEFAULT_PDF_ADDRESS_SPACE_BYTES,
+    sleeper=time.sleep,
 ) -> ArticleFetchResult:
     """Fetch an article and report transport and extraction provenance."""
     if max_bytes is not None:
@@ -282,122 +291,169 @@ def fetch_article(
     )
     open_request = opener or _build_safe_opener(resolver).open
 
-    try:
-        result = _fetch_direct_response(
-            direct_request,
-            opener=open_request,
-            resolver=resolver,
-            timeout_seconds=timeout_seconds,
-            html_max_bytes=html_max_bytes,
-            pdf_max_bytes=pdf_max_bytes,
-            extracted_max_bytes=extracted_max_bytes,
-            pdf_max_pages=pdf_max_pages,
-            pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
-            pdf_address_space_bytes=pdf_address_space_bytes,
-        )
-    except HTTPError as exc:
-        if _is_datadome_challenge(exc):
+    for attempt in range(1, DIRECT_MAX_ATTEMPTS + 1):
+        try:
+            result = _fetch_direct_response(
+                direct_request,
+                opener=open_request,
+                resolver=resolver,
+                timeout_seconds=timeout_seconds,
+                html_max_bytes=html_max_bytes,
+                pdf_max_bytes=pdf_max_bytes,
+                extracted_max_bytes=extracted_max_bytes,
+                pdf_max_pages=pdf_max_pages,
+                pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
+                pdf_address_space_bytes=pdf_address_space_bytes,
+            )
+        except HTTPError as exc:
+            if _is_datadome_challenge(exc):
+                LOGGER.warning(
+                    "component=article_fetch method=direct status=datadome_challenge "
+                    "fallback=jina"
+                )
+                return _fetch_jina_fallback(
+                    url,
+                    direct_failure="datadome challenge",
+                    fallback_reason="datadome_challenge",
+                    opener=open_request,
+                    resolver=resolver,
+                    timeout_seconds=timeout_seconds,
+                    max_bytes=extracted_max_bytes,
+                    direct_attempts=attempt,
+                )
+            if not _is_cloudflare_challenge(exc):
+                raise ArticleFetchError(
+                    f"direct article request failed: {exc}",
+                    error_code=f"http_{exc.code}",
+                    method="direct",
+                    attempts=attempt,
+                ) from exc
             LOGGER.warning(
-                "component=article_fetch method=direct status=datadome_challenge "
+                "component=article_fetch method=direct status=cloudflare_challenge "
                 "fallback=jina"
             )
             return _fetch_jina_fallback(
                 url,
-                direct_failure="datadome challenge",
-                fallback_reason="datadome_challenge",
+                direct_failure="cloudflare challenge",
+                fallback_reason="cloudflare_challenge",
                 opener=open_request,
                 resolver=resolver,
                 timeout_seconds=timeout_seconds,
                 max_bytes=extracted_max_bytes,
+                direct_attempts=attempt,
             )
-        if not _is_cloudflare_challenge(exc):
+        except ArticleFetchError as exc:
+            if exc.error_code == "challenge_page":
+                LOGGER.warning(
+                    "component=article_fetch method=direct status=challenge_page "
+                    "fallback=jina"
+                )
+                return _fetch_jina_fallback(
+                    url,
+                    direct_failure="browser verification challenge page",
+                    fallback_reason="challenge_page",
+                    opener=open_request,
+                    resolver=resolver,
+                    timeout_seconds=timeout_seconds,
+                    max_bytes=extracted_max_bytes,
+                    direct_attempts=attempt,
+                )
+            if exc.error_code == "empty_content" and exc.extractor == "trafilatura":
+                LOGGER.warning(
+                    "component=article_fetch method=direct extractor=trafilatura "
+                    "status=empty_content fallback=jina"
+                )
+                return _fetch_jina_fallback(
+                    url,
+                    direct_failure="trafilatura empty_content",
+                    fallback_reason="empty_content",
+                    opener=open_request,
+                    resolver=resolver,
+                    timeout_seconds=timeout_seconds,
+                    max_bytes=extracted_max_bytes,
+                    direct_attempts=attempt,
+                )
+            raise ArticleFetchError(
+                f"direct article retrieval failed: {exc}",
+                error_code=exc.error_code,
+                method="direct",
+                extractor=exc.extractor,
+                fallback_attempted=exc.fallback_attempted,
+                fallback_reason=exc.fallback_reason,
+                attempts=attempt,
+            ) from exc
+        except (URLError, TimeoutError) as exc:
+            if _is_tls_issuer_unavailable(exc):
+                LOGGER.warning(
+                    "component=article_fetch method=direct "
+                    "status=tls_issuer_unavailable fallback=jina"
+                )
+                return _fetch_jina_fallback(
+                    url,
+                    direct_failure="TLS issuer unavailable",
+                    fallback_reason="tls_issuer_unavailable",
+                    opener=open_request,
+                    resolver=resolver,
+                    timeout_seconds=timeout_seconds,
+                    max_bytes=extracted_max_bytes,
+                    direct_attempts=attempt,
+                )
+            if _is_network_timeout(exc):
+                if attempt < DIRECT_MAX_ATTEMPTS:
+                    LOGGER.warning(
+                        "component=article_fetch method=direct status=network_timeout "
+                        "attempt=%d/%d retry_in=%ss",
+                        attempt,
+                        DIRECT_MAX_ATTEMPTS,
+                        DIRECT_RETRY_DELAY_SECONDS,
+                    )
+                    sleeper(DIRECT_RETRY_DELAY_SECONDS)
+                    continue
+                LOGGER.warning(
+                    "component=article_fetch method=direct status=network_timeout "
+                    "attempt=%d/%d fallback=jina",
+                    attempt,
+                    DIRECT_MAX_ATTEMPTS,
+                )
+                return _fetch_jina_fallback(
+                    url,
+                    direct_failure=(f"network timeout after {attempt} attempts: {exc}"),
+                    fallback_reason="network_timeout",
+                    opener=open_request,
+                    resolver=resolver,
+                    timeout_seconds=timeout_seconds,
+                    max_bytes=extracted_max_bytes,
+                    direct_attempts=attempt,
+                )
             raise ArticleFetchError(
                 f"direct article request failed: {exc}",
-                error_code=f"http_{exc.code}",
+                error_code="request_failed",
                 method="direct",
+                attempts=attempt,
             ) from exc
-        LOGGER.warning(
-            "component=article_fetch method=direct status=cloudflare_challenge "
-            "fallback=jina"
-        )
-        return _fetch_jina_fallback(
-            url,
-            direct_failure="cloudflare challenge",
-            fallback_reason="cloudflare_challenge",
-            opener=open_request,
-            resolver=resolver,
-            timeout_seconds=timeout_seconds,
-            max_bytes=extracted_max_bytes,
-        )
-    except ArticleFetchError as exc:
-        if exc.error_code == "challenge_page":
-            LOGGER.warning(
-                "component=article_fetch method=direct status=challenge_page "
-                "fallback=jina"
-            )
-            return _fetch_jina_fallback(
-                url,
-                direct_failure="browser verification challenge page",
-                fallback_reason="challenge_page",
-                opener=open_request,
-                resolver=resolver,
-                timeout_seconds=timeout_seconds,
-                max_bytes=extracted_max_bytes,
-            )
-        if exc.error_code == "empty_content" and exc.extractor == "trafilatura":
-            LOGGER.warning(
-                "component=article_fetch method=direct extractor=trafilatura "
-                "status=empty_content fallback=jina"
-            )
-            return _fetch_jina_fallback(
-                url,
-                direct_failure="trafilatura empty_content",
-                fallback_reason="empty_content",
-                opener=open_request,
-                resolver=resolver,
-                timeout_seconds=timeout_seconds,
-                max_bytes=extracted_max_bytes,
-            )
-        raise ArticleFetchError(
-            f"direct article retrieval failed: {exc}",
-            error_code=exc.error_code,
-            method="direct",
-            extractor=exc.extractor,
-            fallback_attempted=exc.fallback_attempted,
-            fallback_reason=exc.fallback_reason,
-        ) from exc
-    except URLError as exc:
-        if _is_tls_issuer_unavailable(exc):
-            LOGGER.warning(
-                "component=article_fetch method=direct "
-                "status=tls_issuer_unavailable fallback=jina"
-            )
-            return _fetch_jina_fallback(
-                url,
-                direct_failure="TLS issuer unavailable",
-                fallback_reason="tls_issuer_unavailable",
-                opener=open_request,
-                resolver=resolver,
-                timeout_seconds=timeout_seconds,
-                max_bytes=extracted_max_bytes,
-            )
-        raise ArticleFetchError(
-            f"direct article request failed: {exc}",
-            error_code="request_failed",
-            method="direct",
-        ) from exc
-    except Exception as exc:
-        raise ArticleFetchError(
-            f"direct article request failed: {exc}",
-            error_code="request_failed",
-            method="direct",
-        ) from exc
+        except Exception as exc:
+            raise ArticleFetchError(
+                f"direct article request failed: {exc}",
+                error_code="request_failed",
+                method="direct",
+                attempts=attempt,
+            ) from exc
 
-    LOGGER.info(
-        "component=article_fetch method=direct extractor=%s status=success",
-        result.extractor,
-    )
-    return result
+        LOGGER.info(
+            "component=article_fetch method=direct extractor=%s status=success "
+            "attempts=%d",
+            result.extractor,
+            attempt,
+        )
+        return ArticleFetchResult(
+            text=result.text,
+            method=result.method,
+            fallback_reason=result.fallback_reason,
+            extractor=result.extractor,
+            attempts=attempt,
+        )
+
+    raise AssertionError("direct article retry loop ended unexpectedly")
 
 
 def _fetch_jina_fallback(
@@ -409,6 +465,7 @@ def _fetch_jina_fallback(
     resolver,
     timeout_seconds: int,
     max_bytes: int,
+    direct_attempts: int = 1,
 ) -> ArticleFetchResult:
     try:
         text = fetch_jina_reader_text(
@@ -426,17 +483,20 @@ def _fetch_jina_fallback(
             extractor="jina",
             fallback_attempted=True,
             fallback_reason=fallback_reason,
+            attempts=direct_attempts + 1,
         ) from jina_exc
     LOGGER.info(
         "component=article_fetch method=jina extractor=jina status=success "
-        "fallback_reason=%s",
+        "fallback_reason=%s attempts=%d",
         fallback_reason,
+        direct_attempts + 1,
     )
     return ArticleFetchResult(
         text=text,
         method="jina",
         extractor="jina",
         fallback_reason=fallback_reason,
+        attempts=direct_attempts + 1,
     )
 
 
@@ -1262,12 +1322,17 @@ def _is_challenge_page(
     )
 
 
-def _is_tls_issuer_unavailable(error: URLError) -> bool:
-    reason = error.reason
+def _is_tls_issuer_unavailable(error: BaseException) -> bool:
+    reason = getattr(error, "reason", None)
     return (
         isinstance(reason, ssl.SSLCertVerificationError)
         and reason.verify_code == 20
     )
+
+
+def _is_network_timeout(error: BaseException) -> bool:
+    reason = getattr(error, "reason", error)
+    return isinstance(reason, TimeoutError)
 
 
 def _build_safe_opener(resolver):

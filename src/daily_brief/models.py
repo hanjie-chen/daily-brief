@@ -32,6 +32,7 @@ class ArticleRetrieval:
     status: str = "not_attempted"
     method: str = ""
     extractor: str = ""
+    attempts: int = 0
     fallback_attempted: bool = False
     fallback_reason: str = ""
     error_type: str = ""
