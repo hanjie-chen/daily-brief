@@ -37,3 +37,11 @@
 理由:当天一个入选条目在同批其他六条成功时发生 TLS handshake timeout,稍后 direct 和 Jina 均可成功抓取。现有证据只能确定这是 host-specific 的 timeout,不能区分临时路由、DDoS protection edge 故障或 anti-bot 处置。一次 direct retry 覆盖普通瞬时故障,随后切换 Jina 提供不同 retrieval path,同时保持尝试次数有界。
 
 暂不抽象共享 retry executor。HN、Gemini、publisher 和任意网页 retrieval 的可重试条件、退避和 provider 行为不同;当前真实缺口只在 article fetch。先让这套 article-specific policy 经受生产样本,以后出现明确的重复实现成本时再评估共享边界。
+
+# 2026-08-22: Reuters DataDome 失败后只恢复经验证的同稿转载
+
+决定:仅当原始 `reuters.com` URL 被高置信度 DataDome challenge 阻止、且既有 Jina fallback 也失败时,通过 Tavily Search 在显式 allowlist 中发现最多三个同稿转载候选。首期 allowlist 只有 `finance.yahoo.com`。Tavily 只提供候选标题和 URL;候选正文必须由现有本地 article fetcher 取得,并通过 Reuters marker、原文 URL 日期、story anchors、正文长度和 teaser 排除等确定性验证,才能进入现有 grounded summarizer。
+
+理由:目标是取得足以支持可靠摘要、且可审计的材料,而不是绕过 Reuters 的站点防护。搜索 snippet 或供应商生成的 answer 无法提供同等的材料 provenance;任意搜索结果又存在误匹配风险。域名 allowlist、本地抓取与多信号验证把首期范围限制在已真实验证的 Reuters 通讯社转载模式。
+
+边界:discovery 位于 `cli.run_generate(...)` 的原始 Reuters failure 路径,不进入通用 `article_fetcher.py`,因此转载候选失败不会递归触发搜索。公共 source URL 继续指向 Reuters,public schema 不变。candidate audit 记录实际材料 URL、最终 transport/extractor/attempts、原始 Reuters/Jina 失败链和有界 recovery 结果。缺少 `TAVILY_API_KEY`、供应商错误、候选抓取或验证失败都 fail closed,保留原始阻止状态且不影响整份简报。

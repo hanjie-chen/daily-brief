@@ -28,6 +28,28 @@ class KeywordMatch:
 
 
 @dataclass
+class RetrievalFailure:
+    method: str = ""
+    extractor: str = ""
+    attempts: int = 0
+    fallback_attempted: bool = False
+    fallback_reason: str = ""
+    error_type: str = ""
+    error_code: str = ""
+    error_message: str = ""
+
+
+@dataclass
+class SyndicatedRecovery:
+    status: str = "not_attempted"
+    provider: str = ""
+    discovered_candidates: int = 0
+    attempted_candidates: int = 0
+    rejection_reasons: list[str] = field(default_factory=list)
+    error_code: str = ""
+
+
+@dataclass
 class ArticleRetrieval:
     status: str = "not_attempted"
     method: str = ""
@@ -38,6 +60,10 @@ class ArticleRetrieval:
     error_type: str = ""
     error_code: str = ""
     error_message: str = ""
+    retrieved_url: str = ""
+    material_origin: str = ""
+    origin_failure: RetrievalFailure | None = None
+    syndicated_recovery: SyndicatedRecovery = field(default_factory=SyndicatedRecovery)
 
     @property
     def origin_blocked(self) -> bool:

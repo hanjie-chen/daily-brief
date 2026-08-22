@@ -21,7 +21,13 @@ from .model_evaluation import (
     capture_model_evaluation_input,
     run_model_evaluation,
 )
-from .models import ArticleRetrieval, Candidate, Story
+from .models import (
+    ArticleRetrieval,
+    Candidate,
+    RetrievalFailure,
+    Story,
+    SyndicatedRecovery,
+)
 from .publisher import PublishError, publish_brief
 from .render import render_candidates_json, render_markdown, render_public_brief_json
 from .scoring import score_candidate
@@ -32,6 +38,16 @@ from .summarizer import (
     fallback_summary,
     normalize_summary_text,
     route_summary_mode,
+)
+from .syndicated_copy import (
+    MAX_SYNDICATED_CANDIDATES,
+    SyndicatedCandidate,
+    SyndicatedCopyFinder,
+    SyndicatedFinderError,
+    TavilySyndicatedCopyFinder,
+    is_reuters_url,
+    normalize_allowed_candidate_url,
+    validate_syndicated_copy,
 )
 from .time_window import daily_window
 
@@ -44,6 +60,22 @@ class GenerateResult:
     data_path: Path
     public_json_path: Path
     model_input_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class _FetchedMaterial:
+    text: str
+    method: str
+    extractor: str
+    attempts: int
+    fallback_reason: str
+    retrieved_url: str
+
+
+@dataclass(frozen=True)
+class _SyndicatedOutcome:
+    material: _FetchedMaterial | None
+    audit: SyndicatedRecovery
 
 
 def _fetch_source(
@@ -165,6 +197,7 @@ def run_generate(
     summarizer=None,
     classifier=None,
     article_fetcher=None,
+    syndicated_finder: SyndicatedCopyFinder | None = None,
     clock: Callable[[], float] = time.monotonic,
     generated_at: str | None = None,
     model_backend: ModelBackend | None = None,
@@ -301,91 +334,103 @@ def run_generate(
             and candidate.story.source_url != candidate.story.hn_discussion_url
         ):
             try:
-                fetch_result = article_client(candidate.story.source_url)
-                if isinstance(fetch_result, ArticleFetchResult):
-                    fetched_text = fetch_result.text.strip()
-                    method = fetch_result.method
-                    extractor = fetch_result.extractor
-                    fallback_reason = fetch_result.fallback_reason
-                    attempts = fetch_result.attempts
-                elif isinstance(fetch_result, str):
-                    fetched_text = fetch_result.strip()
-                    method = "direct"
-                    extractor = "plain_text"
-                    fallback_reason = ""
-                    attempts = 1
-                else:
-                    raise ArticleFetchError(
-                        "article fetcher returned an invalid result",
-                        error_code="invalid_fetch_result",
-                        method="direct",
-                    )
-                if not fetched_text:
-                    raise ArticleFetchError(
-                        "article response contained no visible text",
-                        error_code="empty_content",
-                        method=method,
-                        extractor=extractor,
-                    )
-                candidate.story = replace(
-                    candidate.story, fetched_text=fetched_text
+                material = _coerce_fetched_material(
+                    article_client(candidate.story.source_url),
+                    candidate.story.source_url,
                 )
+                candidate.story = replace(candidate.story, fetched_text=material.text)
                 candidate.article_retrieval = ArticleRetrieval(
                     status="success",
-                    method=method,
-                    extractor=extractor,
-                    attempts=attempts,
-                    fallback_attempted=bool(fallback_reason),
-                    fallback_reason=fallback_reason,
+                    method=material.method,
+                    extractor=material.extractor,
+                    attempts=material.attempts,
+                    fallback_attempted=bool(material.fallback_reason),
+                    fallback_reason=material.fallback_reason,
+                    retrieved_url=material.retrieved_url,
+                    material_origin="original",
                 )
                 candidate.summary_basis = (
                     "youtube_caption"
-                    if method == "youtube_caption"
+                    if material.method == "youtube_caption"
                     else "fetched_article"
                 )
                 LOGGER.info(
                     "component=article_fetch item_id=%s status=success method=%s "
                     "extractor=%s fallback_reason=%s attempts=%d",
                     candidate.story.hn_item_id,
-                    method,
-                    extractor or "none",
-                    fallback_reason or "none",
-                    attempts,
+                    material.method,
+                    material.extractor or "none",
+                    material.fallback_reason or "none",
+                    material.attempts,
                 )
             except Exception as exc:
-                error_message = _bounded_error_message(exc)
-                error_code = getattr(exc, "error_code", "fetch_failed")
-                method = getattr(exc, "method", "") or "direct"
-                extractor = getattr(exc, "extractor", "")
-                fallback_attempted = getattr(exc, "fallback_attempted", False)
-                fallback_reason = getattr(exc, "fallback_reason", "")
-                attempts = getattr(exc, "attempts", 1)
-                candidate.article_retrieval = ArticleRetrieval(
-                    status="failed",
-                    method=method,
-                    extractor=extractor,
-                    attempts=attempts,
-                    fallback_attempted=fallback_attempted,
-                    fallback_reason=fallback_reason,
-                    error_type=type(exc).__name__,
-                    error_code=error_code,
-                    error_message=error_message,
+                original_failure = _retrieval_failure(exc)
+                recovery = _SyndicatedOutcome(
+                    material=None,
+                    audit=SyndicatedRecovery(),
                 )
-                candidate.summary = article_fetch_failure_summary(candidate)
-                candidate.summary_basis = "none"
-                candidate.summary_status = "skipped"
-                LOGGER.error(
-                    "component=article_fetch item_id=%s status=failed method=%s "
-                    "extractor=%s error=%s code=%s attempts=%d message=%s",
-                    candidate.story.hn_item_id,
-                    method,
-                    extractor or "none",
-                    type(exc).__name__,
-                    error_code,
-                    attempts,
-                    error_message,
-                )
-                continue
+                if _should_attempt_reuters_recovery(candidate, original_failure):
+                    recovery = _attempt_syndicated_recovery(
+                        candidate,
+                        article_client,
+                        syndicated_finder,
+                    )
+                if recovery.material is not None:
+                    material = recovery.material
+                    candidate.story = replace(
+                        candidate.story, fetched_text=material.text
+                    )
+                    candidate.article_retrieval = ArticleRetrieval(
+                        status="success",
+                        method=material.method,
+                        extractor=material.extractor,
+                        attempts=material.attempts,
+                        fallback_attempted=bool(material.fallback_reason),
+                        fallback_reason=material.fallback_reason,
+                        retrieved_url=material.retrieved_url,
+                        material_origin="syndicated_copy",
+                        origin_failure=original_failure,
+                        syndicated_recovery=recovery.audit,
+                    )
+                    candidate.summary_basis = "fetched_article"
+                    LOGGER.info(
+                        "component=article_fetch item_id=%s status=success "
+                        "material_origin=syndicated_copy method=%s extractor=%s "
+                        "fallback_reason=%s attempts=%d",
+                        candidate.story.hn_item_id,
+                        material.method,
+                        material.extractor or "none",
+                        material.fallback_reason or "none",
+                        material.attempts,
+                    )
+                else:
+                    candidate.article_retrieval = ArticleRetrieval(
+                        status="failed",
+                        method=original_failure.method,
+                        extractor=original_failure.extractor,
+                        attempts=original_failure.attempts,
+                        fallback_attempted=original_failure.fallback_attempted,
+                        fallback_reason=original_failure.fallback_reason,
+                        error_type=original_failure.error_type,
+                        error_code=original_failure.error_code,
+                        error_message=original_failure.error_message,
+                        syndicated_recovery=recovery.audit,
+                    )
+                    candidate.summary = article_fetch_failure_summary(candidate)
+                    candidate.summary_basis = "none"
+                    candidate.summary_status = "skipped"
+                    LOGGER.error(
+                        "component=article_fetch item_id=%s status=failed method=%s "
+                        "extractor=%s error=%s code=%s attempts=%d message=%s",
+                        candidate.story.hn_item_id,
+                        original_failure.method,
+                        original_failure.extractor or "none",
+                        original_failure.error_type,
+                        original_failure.error_code,
+                        original_failure.attempts,
+                        original_failure.error_message,
+                    )
+                    continue
         else:
             candidate.article_retrieval = ArticleRetrieval(
                 status="not_needed",
@@ -490,6 +535,186 @@ def _has_non_weak_keyword_match(candidate: Candidate) -> bool:
 
 def _bounded_error_message(exc: Exception, max_chars: int = 500) -> str:
     return " ".join(str(exc).split())[:max_chars]
+
+
+def _coerce_fetched_material(fetch_result, retrieved_url: str) -> _FetchedMaterial:
+    if isinstance(fetch_result, ArticleFetchResult):
+        text = fetch_result.text.strip()
+        method = fetch_result.method
+        extractor = fetch_result.extractor
+        fallback_reason = fetch_result.fallback_reason
+        attempts = fetch_result.attempts
+    elif isinstance(fetch_result, str):
+        text = fetch_result.strip()
+        method = "direct"
+        extractor = "plain_text"
+        fallback_reason = ""
+        attempts = 1
+    else:
+        raise ArticleFetchError(
+            "article fetcher returned an invalid result",
+            error_code="invalid_fetch_result",
+            method="direct",
+        )
+    if not text:
+        raise ArticleFetchError(
+            "article response contained no visible text",
+            error_code="empty_content",
+            method=method,
+            extractor=extractor,
+            fallback_attempted=bool(fallback_reason),
+            fallback_reason=fallback_reason,
+            attempts=attempts,
+        )
+    return _FetchedMaterial(
+        text=text,
+        method=method,
+        extractor=extractor,
+        attempts=attempts,
+        fallback_reason=fallback_reason,
+        retrieved_url=retrieved_url,
+    )
+
+
+def _retrieval_failure(exc: Exception) -> RetrievalFailure:
+    return RetrievalFailure(
+        method=getattr(exc, "method", "") or "direct",
+        extractor=getattr(exc, "extractor", ""),
+        attempts=getattr(exc, "attempts", 1),
+        fallback_attempted=getattr(exc, "fallback_attempted", False),
+        fallback_reason=getattr(exc, "fallback_reason", ""),
+        error_type=type(exc).__name__,
+        error_code=getattr(exc, "error_code", "fetch_failed"),
+        error_message=_bounded_error_message(exc),
+    )
+
+
+def _should_attempt_reuters_recovery(
+    candidate: Candidate,
+    failure: RetrievalFailure,
+) -> bool:
+    return (
+        is_reuters_url(candidate.story.source_url)
+        and failure.method == "jina"
+        and failure.fallback_attempted
+        and failure.fallback_reason == "datadome_challenge"
+    )
+
+
+def _attempt_syndicated_recovery(
+    candidate: Candidate,
+    article_client,
+    finder: SyndicatedCopyFinder | None,
+) -> _SyndicatedOutcome:
+    active_finder = finder
+    if active_finder is None:
+        active_finder = TavilySyndicatedCopyFinder.from_environment()
+    provider = getattr(active_finder, "provider", "unknown")
+    try:
+        discovered = active_finder.find(candidate)
+    except Exception as exc:
+        error_code = (
+            exc.error_code
+            if isinstance(exc, SyndicatedFinderError)
+            else "finder_failed"
+        )
+        LOGGER.warning(
+            "component=syndicated_recovery item_id=%s provider=%s "
+            "status=finder_failed code=%s",
+            candidate.story.hn_item_id,
+            provider,
+            error_code,
+        )
+        return _SyndicatedOutcome(
+            material=None,
+            audit=SyndicatedRecovery(
+                status="finder_failed",
+                provider=provider,
+                error_code=error_code,
+            ),
+        )
+
+    if not isinstance(discovered, list):
+        return _SyndicatedOutcome(
+            material=None,
+            audit=SyndicatedRecovery(
+                status="finder_failed",
+                provider=provider,
+                error_code="malformed_results",
+            ),
+        )
+
+    attempted = 0
+    rejection_reasons: list[str] = []
+    seen_urls: set[str] = set()
+    bounded_candidates = discovered[:MAX_SYNDICATED_CANDIDATES]
+    for syndicated in bounded_candidates:
+        if not isinstance(syndicated, SyndicatedCandidate):
+            rejection_reasons.append("malformed_candidate")
+            continue
+        normalized_url = normalize_allowed_candidate_url(syndicated.url)
+        if normalized_url is None:
+            rejection_reasons.append("unsupported_url")
+            continue
+        if normalized_url in seen_urls:
+            rejection_reasons.append("duplicate_url")
+            continue
+        seen_urls.add(normalized_url)
+        attempted += 1
+        try:
+            material = _coerce_fetched_material(
+                article_client(normalized_url),
+                normalized_url,
+            )
+        except Exception as exc:
+            rejection_reasons.append("fetch_failed")
+            LOGGER.warning(
+                "component=syndicated_recovery item_id=%s provider=%s "
+                "status=candidate_fetch_failed code=%s",
+                candidate.story.hn_item_id,
+                provider,
+                getattr(exc, "error_code", "fetch_failed"),
+            )
+            continue
+        validation = validate_syndicated_copy(candidate, syndicated, material.text)
+        if not validation.accepted:
+            rejection_reasons.append(validation.reason)
+            continue
+        audit = SyndicatedRecovery(
+            status="success",
+            provider=provider,
+            discovered_candidates=len(discovered),
+            attempted_candidates=attempted,
+            rejection_reasons=rejection_reasons,
+        )
+        LOGGER.info(
+            "component=syndicated_recovery item_id=%s provider=%s "
+            "status=success discovered=%d attempted=%d",
+            candidate.story.hn_item_id,
+            provider,
+            len(discovered),
+            attempted,
+        )
+        return _SyndicatedOutcome(material=material, audit=audit)
+
+    status = "not_found" if not discovered else "exhausted"
+    audit = SyndicatedRecovery(
+        status=status,
+        provider=provider,
+        discovered_candidates=len(discovered),
+        attempted_candidates=attempted,
+        rejection_reasons=rejection_reasons,
+    )
+    LOGGER.warning(
+        "component=syndicated_recovery item_id=%s provider=%s "
+        "status=%s discovered=%d attempted=%d",
+        candidate.story.hn_item_id,
+        provider,
+        status,
+        len(discovered),
+        attempted,
+    )
+    return _SyndicatedOutcome(material=None, audit=audit)
 
 
 def _keyword_matches(story: Story):

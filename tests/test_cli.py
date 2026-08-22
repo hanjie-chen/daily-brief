@@ -15,6 +15,10 @@ from daily_brief.summarizer import (
     SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY,
     SUMMARY_MODE_RESEARCH_REPORT,
 )
+from daily_brief.syndicated_copy import (
+    SyndicatedCandidate,
+    SyndicatedFinderError,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -748,6 +752,10 @@ def test_selected_external_article_text_reaches_summarizer(tmp_path, caplog):
     assert selected["article_retrieval"]["method"] == "direct"
     assert selected["article_retrieval"]["extractor"] == "plain_text"
     assert selected["article_retrieval"]["attempts"] == 1
+    assert selected["article_retrieval"]["retrieved_url"] == (
+        "https://example.com/selected"
+    )
+    assert selected["article_retrieval"]["material_origin"] == "original"
     assert selected["summary_basis"] == "fetched_article"
     assert selected["summary_status"] == "success"
     assert selected["summary_mode"] == "generic"
@@ -1073,6 +1081,17 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
         "error_type": "ArticleFetchError",
         "error_code": "http_403",
         "error_message": "HTTP Error 403: Forbidden",
+        "retrieved_url": "",
+        "material_origin": "",
+        "origin_failure": None,
+        "syndicated_recovery": {
+            "status": "not_attempted",
+            "provider": "",
+            "discovered_candidates": 0,
+            "attempted_candidates": 0,
+            "rejection_reasons": [],
+            "error_code": "",
+        },
     }
     assert failed["summary_basis"] == "none"
     assert failed["summary_status"] == "skipped"
@@ -1163,6 +1182,383 @@ def test_empty_content_jina_failure_skips_summary_and_persists_provenance(
     )
 
 
+def test_reuters_datadome_failure_recovers_verified_yahoo_copy(tmp_path):
+    reuters_url = reuters_story_url()
+    yahoo_url = yahoo_story_url()
+    fetched_urls = []
+    finder = FakeSyndicatedFinder(
+        [
+            SyndicatedCandidate(
+                title=(
+                    "Nvidia scales back funding guarantee for Ohio OpenAI data "
+                    "center, WSJ reports"
+                ),
+                url=yahoo_url,
+            )
+        ]
+    )
+    summarizer = CapturingSummarizer()
+
+    def fetch(url):
+        fetched_urls.append(url)
+        if url == reuters_url:
+            raise datadome_jina_failure(attempts=2)
+        return ArticleFetchResult(
+            text=verified_reuters_copy_body(),
+            method="direct",
+            extractor="trafilatura",
+            attempts=2,
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "49323686",
+                "Nvidia dramatically reduces amount of OpenAI infra financing it may guarantee",
+                points=40,
+                comments=8,
+                url=reuters_url,
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=fetch,
+        syndicated_finder=finder,
+        summarizer=summarizer,
+    )
+
+    assert finder.calls == ["49323686"]
+    assert fetched_urls == [reuters_url, yahoo_url]
+    assert summarizer.fetched_texts == [verified_reuters_copy_body().strip()]
+    payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    retrieval = payload["article_retrieval"]
+    assert retrieval["status"] == "success"
+    assert retrieval["retrieved_url"] == yahoo_url
+    assert retrieval["material_origin"] == "syndicated_copy"
+    assert retrieval["method"] == "direct"
+    assert retrieval["extractor"] == "trafilatura"
+    assert retrieval["attempts"] == 2
+    assert retrieval["origin_failure"] == {
+        "method": "jina",
+        "extractor": "jina",
+        "attempts": 2,
+        "fallback_attempted": True,
+        "fallback_reason": "datadome_challenge",
+        "error_type": "ArticleFetchError",
+        "error_code": "http_403",
+        "error_message": "Reuters blocked; Jina failed",
+    }
+    assert retrieval["syndicated_recovery"] == {
+        "status": "success",
+        "provider": "fake",
+        "discovered_candidates": 1,
+        "attempted_candidates": 1,
+        "rejection_reasons": [],
+        "error_code": "",
+    }
+    public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    public_item = public_payload["sections"]["ai"]["items"][0]
+    assert public_item["source_url"] == reuters_url
+    assert public_item["content_status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("url_kind", "failure_kind"),
+    [
+        ("non_reuters", "datadome"),
+        ("reuters", "not_found"),
+    ],
+)
+def test_syndicated_finder_is_not_called_outside_narrow_reuters_route(
+    tmp_path, url_kind, failure_kind
+):
+    url = (
+        "https://example.com/article"
+        if url_kind == "non_reuters"
+        else reuters_story_url()
+    )
+    failure = (
+        datadome_jina_failure()
+        if failure_kind == "datadome"
+        else ArticleFetchError(
+            "not found",
+            error_code="http_404",
+            method="direct",
+        )
+    )
+    finder = FakeSyndicatedFinder([])
+
+    def fail_fetch(requested_url):
+        raise failure
+
+    run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "1",
+                "OpenAI infrastructure report",
+                points=40,
+                comments=8,
+                url=url,
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=fail_fetch,
+        syndicated_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+
+    assert finder.calls == []
+
+
+def test_syndicated_recovery_filters_urls_and_continues_after_fetch_failure(
+    tmp_path,
+):
+    reuters_url = reuters_story_url()
+    first_yahoo = "https://finance.yahoo.com/articles/first.html"
+    second_yahoo = yahoo_story_url()
+    finder = FakeSyndicatedFinder(
+        [
+            SyndicatedCandidate("Untrusted", "https://evil.example/article"),
+            SyndicatedCandidate("First Yahoo copy", first_yahoo),
+            SyndicatedCandidate("Verified Yahoo copy", second_yahoo),
+            SyndicatedCandidate("Over the limit", "https://finance.yahoo.com/late"),
+        ]
+    )
+    fetched_urls = []
+
+    def fetch(url):
+        fetched_urls.append(url)
+        if url == reuters_url:
+            raise datadome_jina_failure()
+        if url == first_yahoo:
+            raise ArticleFetchError("Yahoo failed", error_code="http_403")
+        return ArticleFetchResult(
+            verified_reuters_copy_body(),
+            method="direct",
+            extractor="trafilatura",
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "49323686",
+                "Nvidia and OpenAI financing guarantee",
+                points=40,
+                comments=8,
+                url=reuters_url,
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=fetch,
+        syndicated_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+
+    assert fetched_urls == [reuters_url, first_yahoo, second_yahoo]
+    recovery = json.loads(result.data_path.read_text(encoding="utf-8"))[0][
+        "article_retrieval"
+    ]["syndicated_recovery"]
+    assert recovery["status"] == "success"
+    assert recovery["discovered_candidates"] == 4
+    assert recovery["attempted_candidates"] == 2
+    assert recovery["rejection_reasons"] == ["unsupported_url", "fetch_failed"]
+
+
+def test_failed_syndicated_candidates_preserve_original_block_and_do_not_recurse(
+    tmp_path,
+):
+    reuters_url = reuters_story_url()
+    yahoo_url = yahoo_story_url()
+    finder = FakeSyndicatedFinder([SyndicatedCandidate("Yahoo copy", yahoo_url)])
+
+    def fetch(url):
+        if url == reuters_url:
+            raise datadome_jina_failure(attempts=2)
+        raise datadome_jina_failure(attempts=3)
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "49323686",
+                "Nvidia and OpenAI financing guarantee",
+                points=40,
+                comments=8,
+                url=reuters_url,
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=fetch,
+        syndicated_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+
+    assert finder.calls == ["49323686"]
+    retrieval = json.loads(result.data_path.read_text(encoding="utf-8"))[0][
+        "article_retrieval"
+    ]
+    assert retrieval["status"] == "failed"
+    assert retrieval["attempts"] == 2
+    assert retrieval["fallback_reason"] == "datadome_challenge"
+    assert retrieval["origin_failure"] is None
+    assert retrieval["syndicated_recovery"]["status"] == "exhausted"
+    assert retrieval["syndicated_recovery"]["rejection_reasons"] == ["fetch_failed"]
+    assert "来源网站阻止自动抓取" in result.brief_path.read_text(encoding="utf-8")
+
+
+def test_syndicated_recovery_deduplicates_candidates_before_fetch(tmp_path):
+    reuters_url = reuters_story_url()
+    yahoo_url = yahoo_story_url()
+    finder = FakeSyndicatedFinder(
+        [
+            SyndicatedCandidate("First", f"{yahoo_url}#first"),
+            SyndicatedCandidate("Duplicate", f"{yahoo_url}#second"),
+        ]
+    )
+    fetched_urls = []
+
+    def fetch(url):
+        fetched_urls.append(url)
+        if url == reuters_url:
+            raise datadome_jina_failure()
+        raise ArticleFetchError("Yahoo failed", error_code="http_403")
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "49323686",
+                "Nvidia and OpenAI financing guarantee",
+                points=40,
+                comments=8,
+                url=reuters_url,
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=fetch,
+        syndicated_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+
+    assert fetched_urls == [reuters_url, yahoo_url]
+    recovery = json.loads(result.data_path.read_text(encoding="utf-8"))[0][
+        "article_retrieval"
+    ]["syndicated_recovery"]
+    assert recovery["attempted_candidates"] == 1
+    assert recovery["rejection_reasons"] == ["fetch_failed", "duplicate_url"]
+
+
+def test_short_teaser_is_rejected_without_running_summarizer(tmp_path):
+    summarizer = FakeSummarizer()
+
+    def fetch(url):
+        if url == reuters_story_url():
+            raise datadome_jina_failure()
+        return ArticleFetchResult(
+            "Read the full article. Get unlimited access.",
+            method="direct",
+            extractor="trafilatura",
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "49323686",
+                "Nvidia and OpenAI financing guarantee",
+                points=40,
+                comments=8,
+                url=reuters_story_url(),
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=fetch,
+        syndicated_finder=FakeSyndicatedFinder(
+            [SyndicatedCandidate("Teaser", yahoo_story_url())]
+        ),
+        summarizer=summarizer,
+    )
+
+    payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    assert payload["article_retrieval"]["syndicated_recovery"]["rejection_reasons"] == [
+        "body_too_short"
+    ]
+    assert payload["summary_status"] == "skipped"
+    assert summarizer.titles == []
+
+
+def test_syndicated_finder_failure_is_audited_without_failing_generation(tmp_path):
+    finder = RaisingSyndicatedFinder()
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "49323686",
+                "Nvidia and OpenAI financing guarantee",
+                points=40,
+                comments=8,
+                url=reuters_story_url(),
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=lambda url: (_ for _ in ()).throw(datadome_jina_failure()),
+        syndicated_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+
+    recovery = json.loads(result.data_path.read_text(encoding="utf-8"))[0][
+        "article_retrieval"
+    ]["syndicated_recovery"]
+    assert recovery["status"] == "finder_failed"
+    assert recovery["error_code"] == "provider_request_failed"
+    assert result.brief_path.exists()
+
+
+def test_missing_tavily_key_fails_closed_without_live_search(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "49323686",
+                "Nvidia and OpenAI financing guarantee",
+                points=40,
+                comments=8,
+                url=reuters_story_url(),
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=lambda url: (_ for _ in ()).throw(datadome_jina_failure()),
+        summarizer=FakeSummarizer(),
+    )
+
+    retrieval = json.loads(result.data_path.read_text(encoding="utf-8"))[0][
+        "article_retrieval"
+    ]
+    assert retrieval["status"] == "failed"
+    assert retrieval["fallback_reason"] == "datadome_challenge"
+    assert retrieval["syndicated_recovery"]["status"] == "finder_failed"
+    assert retrieval["syndicated_recovery"]["error_code"] == "not_configured"
+
+
 class FakeSummarizer:
     def __init__(self):
         self.titles = []
@@ -1220,6 +1616,66 @@ class FakeGeminiBackendFactory:
 class RaisingClassifier:
     def classify(self, candidates):
         raise RuntimeError("classifier unavailable")
+
+
+class FakeSyndicatedFinder:
+    provider = "fake"
+
+    def __init__(self, results):
+        self.results = results
+        self.calls = []
+
+    def find(self, candidate):
+        self.calls.append(candidate.story.hn_item_id)
+        return self.results
+
+
+class RaisingSyndicatedFinder:
+    provider = "fake"
+
+    def find(self, candidate):
+        raise SyndicatedFinderError(
+            "provider unavailable",
+            error_code="provider_request_failed",
+        )
+
+
+def reuters_story_url():
+    return (
+        "https://www.reuters.com/business/"
+        "nvidia-scales-back-250-billion-openai-data-center-guarantee-"
+        "wsj-reports-2026-08-14/"
+    )
+
+
+def yahoo_story_url():
+    return (
+        "https://finance.yahoo.com/technology/ai/articles/"
+        "nvidia-scales-back-250-billion-234356524.html"
+    )
+
+
+def datadome_jina_failure(*, attempts=2):
+    return ArticleFetchError(
+        "Reuters blocked; Jina failed",
+        error_code="http_403",
+        method="jina",
+        extractor="jina",
+        fallback_attempted=True,
+        fallback_reason="datadome_challenge",
+        attempts=attempts,
+    )
+
+
+def verified_reuters_copy_body():
+    facts = (
+        "Aug 14 (Reuters) - Nvidia scaled back the amount of financing it may "
+        "guarantee for OpenAI's Ohio data center from a previously discussed "
+        "$250 billion to less than $120 billion. Investors were concerned about "
+        "Nvidia's exposure, while OpenAI discussed leases for the complete 10GW "
+        "project. "
+    )
+    return facts + ("Additional grounded reporting detail. " * 20)
 
 
 def story(

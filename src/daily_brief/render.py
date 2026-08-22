@@ -60,6 +60,31 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                     "error_type": candidate.article_retrieval.error_type,
                     "error_code": candidate.article_retrieval.error_code,
                     "error_message": candidate.article_retrieval.error_message,
+                    "retrieved_url": candidate.article_retrieval.retrieved_url,
+                    "material_origin": candidate.article_retrieval.material_origin,
+                    "origin_failure": _retrieval_failure_payload(
+                        candidate.article_retrieval.origin_failure
+                    ),
+                    "syndicated_recovery": {
+                        "status": (
+                            candidate.article_retrieval.syndicated_recovery.status
+                        ),
+                        "provider": (
+                            candidate.article_retrieval.syndicated_recovery.provider
+                        ),
+                        "discovered_candidates": (
+                            candidate.article_retrieval.syndicated_recovery.discovered_candidates
+                        ),
+                        "attempted_candidates": (
+                            candidate.article_retrieval.syndicated_recovery.attempted_candidates
+                        ),
+                        "rejection_reasons": (
+                            candidate.article_retrieval.syndicated_recovery.rejection_reasons
+                        ),
+                        "error_code": (
+                            candidate.article_retrieval.syndicated_recovery.error_code
+                        ),
+                    },
                 },
                 "summary_basis": candidate.summary_basis,
                 "summary_status": candidate.summary_status,
@@ -135,6 +160,21 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
 
 def _single_line_display_text(value: str) -> str:
     return " ".join(value.split())
+
+
+def _retrieval_failure_payload(failure):
+    if failure is None:
+        return None
+    return {
+        "method": failure.method,
+        "extractor": failure.extractor,
+        "attempts": failure.attempts,
+        "fallback_attempted": failure.fallback_attempted,
+        "fallback_reason": failure.fallback_reason,
+        "error_type": failure.error_type,
+        "error_code": failure.error_code,
+        "error_message": failure.error_message,
+    }
 
 
 def _public_item(candidate: Candidate) -> dict:

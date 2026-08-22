@@ -130,6 +130,17 @@ def test_render_candidates_json_uses_snake_case_fields():
         "error_type": "",
         "error_code": "",
         "error_message": "",
+        "retrieved_url": "",
+        "material_origin": "",
+        "origin_failure": None,
+        "syndicated_recovery": {
+            "status": "not_attempted",
+            "provider": "",
+            "discovered_candidates": 0,
+            "attempted_candidates": 0,
+            "rejection_reasons": [],
+            "error_code": "",
+        },
     }
     assert data[0]["summary_basis"] == "not_generated"
     assert data[0]["summary_status"] == "not_generated"
