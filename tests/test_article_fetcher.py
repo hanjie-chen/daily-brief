@@ -212,7 +212,11 @@ def test_fetch_article_text_extracts_html_from_public_url():
 
 
 def test_fetch_article_reports_direct_retrieval_method():
-    response = FakeResponse(b"Direct facts.", content_type="text/plain")
+    response = FakeResponse(
+        b"Direct facts.",
+        content_type="text/plain",
+        final_url="https://example.com/final-article",
+    )
 
     result = fetch_article(
         "https://example.com/article",
@@ -225,6 +229,7 @@ def test_fetch_article_reports_direct_retrieval_method():
     assert result.extractor == "plain_text"
     assert result.fallback_reason == ""
     assert result.attempts == 1
+    assert result.retrieved_url == "https://example.com/final-article"
 
 
 def test_fetch_article_routes_target_youtube_video_to_caption_extractor(monkeypatch):
@@ -1406,6 +1411,7 @@ def test_fetch_article_uses_jina_for_datadome_challenge(caplog, status_code):
     assert result.method == "jina"
     assert result.extractor == "jina"
     assert result.fallback_reason == "datadome_challenge"
+    assert result.retrieved_url == "https://example.com/article"
     assert "method=direct status=datadome_challenge fallback=jina" in caplog.text
 
 

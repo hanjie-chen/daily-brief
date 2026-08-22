@@ -15,7 +15,7 @@
 
 每条内容包含：原标题、中文摘要、推荐理由、原文链接、HN 讨论链接、points 和评论数。
 
-若入选条目的原文抓取失败，简报会明确显示错误并跳过模型摘要；网页直连发生网络超时时，会在等待 1 秒后重试一次，仍然超时则尝试一次 Jina Reader；识别到来源网站的浏览器验证或自动抓取阻止时，会显示更具体的失败说明。Reuters 原文及 Jina 均因 DataDome 失败时，系统可通过 Tavily 在显式 allowlist 中发现同稿转载，再由本地抓取和确定性验证取得摘要材料；搜索结果摘要本身不会交给模型。
+若入选条目的原文抓取失败，简报会明确显示错误并跳过模型摘要；
 
 每次运行写出三类文件：
 
@@ -36,19 +36,3 @@
 ## Config
 
 `.env` 中需要的参数可以参考 `.env.example`。`TAVILY_API_KEY` 为可选项；未配置时 Reuters 同稿转载 fallback 会安全跳过，不影响其余简报生成。
-
-## Publish
-
-```bash
-daily-brief publish
-```
-
-`publish` 发送当天（或 `--date` 明确指定日期）尚未成功发布或内容已变化的 JSON，成功内容的 SHA-256 记录在 `data/publish-state.json`；
-
-失败内容不会被标记成功。修正某天的简报后可强制重发：
-
-```bash
-daily-brief publish --date YYYY-MM-DD --force
-```
-
-自动流程每天 08:00（Asia/Singapore）依次执行 `daily-brief generate && daily-brief publish`。

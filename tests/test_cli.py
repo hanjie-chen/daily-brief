@@ -1372,6 +1372,50 @@ def test_syndicated_recovery_filters_urls_and_continues_after_fetch_failure(
     assert recovery["rejection_reasons"] == ["unsupported_url", "fetch_failed"]
 
 
+def test_syndicated_recovery_rejects_cross_host_redirect(tmp_path):
+    reuters_url = reuters_story_url()
+    yahoo_url = yahoo_story_url()
+    summarizer = FakeSummarizer()
+
+    def fetch(url):
+        if url == reuters_url:
+            raise datadome_jina_failure()
+        return ArticleFetchResult(
+            verified_reuters_copy_body(),
+            method="direct",
+            extractor="trafilatura",
+            retrieved_url="https://evil.example/reuters-copy",
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "49323686",
+                "Nvidia and OpenAI financing guarantee",
+                points=40,
+                comments=8,
+                url=reuters_url,
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=fetch,
+        syndicated_finder=FakeSyndicatedFinder(
+            [SyndicatedCandidate("Yahoo copy", yahoo_url)]
+        ),
+        summarizer=summarizer,
+    )
+
+    payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    recovery = payload["article_retrieval"]["syndicated_recovery"]
+    assert recovery["status"] == "exhausted"
+    assert recovery["rejection_reasons"] == ["redirected_to_unsupported_url"]
+    assert payload["summary_status"] == "skipped"
+    assert summarizer.titles == []
+
+
 def test_failed_syndicated_candidates_preserve_original_block_and_do_not_recurse(
     tmp_path,
 ):

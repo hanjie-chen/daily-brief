@@ -544,12 +544,14 @@ def _coerce_fetched_material(fetch_result, retrieved_url: str) -> _FetchedMateri
         extractor = fetch_result.extractor
         fallback_reason = fetch_result.fallback_reason
         attempts = fetch_result.attempts
+        effective_url = fetch_result.retrieved_url or retrieved_url
     elif isinstance(fetch_result, str):
         text = fetch_result.strip()
         method = "direct"
         extractor = "plain_text"
         fallback_reason = ""
         attempts = 1
+        effective_url = retrieved_url
     else:
         raise ArticleFetchError(
             "article fetcher returned an invalid result",
@@ -572,7 +574,7 @@ def _coerce_fetched_material(fetch_result, retrieved_url: str) -> _FetchedMateri
         extractor=extractor,
         attempts=attempts,
         fallback_reason=fallback_reason,
-        retrieved_url=retrieved_url,
+        retrieved_url=effective_url,
     )
 
 
@@ -676,6 +678,11 @@ def _attempt_syndicated_recovery(
                 getattr(exc, "error_code", "fetch_failed"),
             )
             continue
+        effective_url = normalize_allowed_candidate_url(material.retrieved_url)
+        if effective_url is None:
+            rejection_reasons.append("redirected_to_unsupported_url")
+            continue
+        material = replace(material, retrieved_url=effective_url)
         validation = validate_syndicated_copy(candidate, syndicated, material.text)
         if not validation.accepted:
             rejection_reasons.append(validation.reason)

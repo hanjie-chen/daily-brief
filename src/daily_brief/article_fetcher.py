@@ -102,6 +102,13 @@ class ArticleFetchResult:
     fallback_reason: str = ""
     extractor: str = ""
     attempts: int = 1
+    retrieved_url: str = ""
+
+
+@dataclass(frozen=True)
+class _JinaReaderResult:
+    text: str
+    origin_url: str
 
 
 class _SafeRedirectHandler(HTTPRedirectHandler):
@@ -451,6 +458,7 @@ def fetch_article(
             fallback_reason=result.fallback_reason,
             extractor=result.extractor,
             attempts=attempt,
+            retrieved_url=result.retrieved_url,
         )
 
     raise AssertionError("direct article retry loop ended unexpectedly")
@@ -468,7 +476,7 @@ def _fetch_jina_fallback(
     direct_attempts: int = 1,
 ) -> ArticleFetchResult:
     try:
-        text = fetch_jina_reader_text(
+        reader_result = _fetch_jina_reader(
             url,
             opener=opener,
             resolver=resolver,
@@ -492,11 +500,12 @@ def _fetch_jina_fallback(
         direct_attempts + 1,
     )
     return ArticleFetchResult(
-        text=text,
+        text=reader_result.text,
         method="jina",
         extractor="jina",
         fallback_reason=fallback_reason,
         attempts=direct_attempts + 1,
+        retrieved_url=reader_result.origin_url,
     )
 
 
@@ -650,6 +659,23 @@ def fetch_jina_reader_text(
     max_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
 ) -> str:
     """Fetch and validate one bounded Jina Reader JSON response."""
+    return _fetch_jina_reader(
+        url,
+        opener=opener,
+        resolver=resolver,
+        timeout_seconds=timeout_seconds,
+        max_bytes=max_bytes,
+    ).text
+
+
+def _fetch_jina_reader(
+    url: str,
+    *,
+    opener=None,
+    resolver=socket.getaddrinfo,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
+) -> _JinaReaderResult:
     _validate_public_http_url(url, resolver)
     reader_url = f"{JINA_READER_BASE_URL}{url}"
     _validate_public_http_url(reader_url, resolver)
@@ -749,7 +775,7 @@ def fetch_jina_reader_text(
                 error_code="challenge_page",
             )
         _enforce_extracted_limit(text, max_bytes, extractor="jina")
-        return text
+        return _JinaReaderResult(text=text, origin_url=origin_url)
     except HTTPError as exc:
         raise ArticleFetchError(
             f"Jina Reader request failed: {exc}",
@@ -843,7 +869,14 @@ def _fetch_direct_response(
             error_code="challenge_page",
             extractor=result.extractor,
         )
-    return result
+    return ArticleFetchResult(
+        text=result.text,
+        method=result.method,
+        fallback_reason=result.fallback_reason,
+        extractor=result.extractor,
+        attempts=result.attempts,
+        retrieved_url=final_url,
+    )
 
 
 def _extract_response_payload(
