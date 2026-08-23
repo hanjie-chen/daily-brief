@@ -25,14 +25,22 @@
 
 ## How It Works
 
-1. 收集候选:双来源(Algolia 搜 AI + HN 官方热榜),得到一批候选条目
-2. 筛选条目:层层过滤,得到今日至多 5(AI)+ 2(non-AI)条
-3. 抓取材料:只抓入选条目（网页正文、PDF、YouTube 字幕），尽力而为，允许失败
-4. 生成摘要:根据抓到的材料生成中文摘要,材料不足则逐级降级
-5. 输出与发布:生成三份简报文件;发布是独立命令,推送到网站
+1. 收集候选: 双来源(Algolia 搜 AI + HN 官方热榜),得到一批候选条目
+2. 筛选条目: 层层过滤,得到今日至多 5(AI)+ 2(non-AI)条
+3. 抓取材料: 只抓入选条目（网页正文、PDF、YouTube 字幕），尽力而为，允许失败
+4. 生成摘要: 根据抓到的材料生成中文摘要,材料不足则逐级降级
+5. 输出与发布: 生成三份简报文件;发布是独立命令,推送到网站
 
 每个步骤的 details 详见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
 
 ## Config
 
-`.env` 中需要的参数可以参考 `.env.example`。`TAVILY_API_KEY` 为可选项；未配置时 Reuters 同稿转载 fallback 会安全跳过，不影响其余简报生成。
+请参考 `.env.example` 设置变量和 key：
+
+- `GEMINI_API_KEY`：生成简报时必填；
+- `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL`、`DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`：可选的固定模型 ID；
+- `TAVILY_API_KEY`：可选；未配置时 Reuters 同稿转载 fallback 会安全跳过；
+- `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：可选，但必须同时配置，启用 Adobe PDF-to-Markdown；
+- `DAILY_BRIEF_PUBLISH_URL`、`DAILY_BRIEF_PUBLISH_TOKEN`：仅发布时需要，必须同时配置。
+
+应用只读取进程环境变量，不会自动加载 .env
