@@ -11,10 +11,11 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from http.client import HTTPConnection, HTTPSConnection
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import (
     HTTPHandler,
     HTTPRedirectHandler,
@@ -52,6 +53,11 @@ DEFAULT_MAX_BYTES = DEFAULT_MAX_EXTRACTED_BYTES
 JINA_READER_BASE_URL = "https://r.jina.ai/"
 JINA_CACHE_TOLERANCE_SECONDS = 5 * 60
 JINA_JSON_CONTENT_TYPES = {"application/json", "text/json"}
+WAYBACK_CDX_BASE_URL = "https://web.archive.org/cdx/search/cdx"
+WAYBACK_REPLAY_BASE_URL = "https://web.archive.org/web"
+WAYBACK_DEFAULT_LOOKBACK = timedelta(days=2)
+WAYBACK_METADATA_MAX_BYTES = 64 * 1024
+WAYBACK_TIMESTAMP_PATTERN = re.compile(r"^\d{14}$")
 GITHUB_API_BASE_URL = "https://api.github.com"
 GITHUB_RAW_BASE_URL = "https://raw.githubusercontent.com"
 GITHUB_API_VERSION = "2022-11-28"
@@ -61,6 +67,7 @@ CHALLENGE_TEXT_MARKER_GROUPS = (
     ("verifying your browser", "complete the check below"),
     ("complete the check below to continue", "complete the verification above"),
     ("checking your browser", "enable javascript and cookies to continue"),
+    ("vercel security checkpoint", "verifying your browser"),
 )
 CHALLENGE_HTML_MARKER_GROUPS = (
     ("challenges.cloudflare.com", "cf-turnstile"),
@@ -103,12 +110,19 @@ class ArticleFetchResult:
     extractor: str = ""
     attempts: int = 1
     retrieved_url: str = ""
+    material_origin: str = "original"
 
 
 @dataclass(frozen=True)
 class _JinaReaderResult:
     text: str
     origin_url: str
+
+
+@dataclass(frozen=True)
+class _WaybackCapture:
+    timestamp: str
+    original_url: str
 
 
 class _SafeRedirectHandler(HTTPRedirectHandler):
@@ -183,6 +197,8 @@ def fetch_article_text(
     pdf_max_pages: int = DEFAULT_MAX_PDF_PAGES,
     pdf_parse_timeout_seconds: int = DEFAULT_PDF_PARSE_TIMEOUT_SECONDS,
     pdf_address_space_bytes: int = DEFAULT_PDF_ADDRESS_SPACE_BYTES,
+    wayback_not_before: datetime | None = None,
+    wayback_not_after: datetime | None = None,
     sleeper=time.sleep,
 ) -> str:
     """Fetch article text while preserving the original string-returning API."""
@@ -198,6 +214,8 @@ def fetch_article_text(
         pdf_max_pages=pdf_max_pages,
         pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
         pdf_address_space_bytes=pdf_address_space_bytes,
+        wayback_not_before=wayback_not_before,
+        wayback_not_after=wayback_not_after,
         sleeper=sleeper,
     ).text
 
@@ -215,6 +233,8 @@ def fetch_article(
     pdf_max_pages: int = DEFAULT_MAX_PDF_PAGES,
     pdf_parse_timeout_seconds: int = DEFAULT_PDF_PARSE_TIMEOUT_SECONDS,
     pdf_address_space_bytes: int = DEFAULT_PDF_ADDRESS_SPACE_BYTES,
+    wayback_not_before: datetime | None = None,
+    wayback_not_after: datetime | None = None,
     sleeper=time.sleep,
 ) -> ArticleFetchResult:
     """Fetch an article and report transport and extraction provenance."""
@@ -313,6 +333,29 @@ def fetch_article(
                 pdf_address_space_bytes=pdf_address_space_bytes,
             )
         except HTTPError as exc:
+            if _is_vercel_challenge(exc):
+                LOGGER.warning(
+                    "component=article_fetch method=direct status=vercel_challenge "
+                    "fallback=jina"
+                )
+                return _fetch_jina_fallback(
+                    url,
+                    direct_failure="vercel challenge",
+                    fallback_reason="vercel_challenge",
+                    opener=open_request,
+                    resolver=resolver,
+                    timeout_seconds=timeout_seconds,
+                    max_bytes=extracted_max_bytes,
+                    direct_attempts=attempt,
+                    wayback_enabled=True,
+                    wayback_not_before=wayback_not_before,
+                    wayback_not_after=wayback_not_after,
+                    html_max_bytes=html_max_bytes,
+                    pdf_max_bytes=pdf_max_bytes,
+                    pdf_max_pages=pdf_max_pages,
+                    pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
+                    pdf_address_space_bytes=pdf_address_space_bytes,
+                )
             if _is_datadome_challenge(exc):
                 LOGGER.warning(
                     "component=article_fetch method=direct status=datadome_challenge "
@@ -350,6 +393,29 @@ def fetch_article(
                 direct_attempts=attempt,
             )
         except ArticleFetchError as exc:
+            if exc.error_code == "vercel_challenge":
+                LOGGER.warning(
+                    "component=article_fetch method=direct status=vercel_challenge "
+                    "fallback=jina"
+                )
+                return _fetch_jina_fallback(
+                    url,
+                    direct_failure="vercel challenge",
+                    fallback_reason="vercel_challenge",
+                    opener=open_request,
+                    resolver=resolver,
+                    timeout_seconds=timeout_seconds,
+                    max_bytes=extracted_max_bytes,
+                    direct_attempts=attempt,
+                    wayback_enabled=True,
+                    wayback_not_before=wayback_not_before,
+                    wayback_not_after=wayback_not_after,
+                    html_max_bytes=html_max_bytes,
+                    pdf_max_bytes=pdf_max_bytes,
+                    pdf_max_pages=pdf_max_pages,
+                    pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
+                    pdf_address_space_bytes=pdf_address_space_bytes,
+                )
             if exc.error_code == "challenge_page":
                 LOGGER.warning(
                     "component=article_fetch method=direct status=challenge_page "
@@ -474,6 +540,14 @@ def _fetch_jina_fallback(
     timeout_seconds: int,
     max_bytes: int,
     direct_attempts: int = 1,
+    wayback_enabled: bool = False,
+    wayback_not_before: datetime | None = None,
+    wayback_not_after: datetime | None = None,
+    html_max_bytes: int = DEFAULT_MAX_HTML_BYTES,
+    pdf_max_bytes: int = DEFAULT_MAX_PDF_BYTES,
+    pdf_max_pages: int = DEFAULT_MAX_PDF_PAGES,
+    pdf_parse_timeout_seconds: int = DEFAULT_PDF_PARSE_TIMEOUT_SECONDS,
+    pdf_address_space_bytes: int = DEFAULT_PDF_ADDRESS_SPACE_BYTES,
 ) -> ArticleFetchResult:
     try:
         reader_result = _fetch_jina_reader(
@@ -484,6 +558,30 @@ def _fetch_jina_fallback(
             max_bytes=max_bytes,
         )
     except ArticleFetchError as jina_exc:
+        if wayback_enabled:
+            LOGGER.warning(
+                "component=article_fetch method=jina extractor=jina status=failed "
+                "code=%s fallback=wayback",
+                jina_exc.error_code,
+            )
+            return _fetch_wayback_fallback(
+                url,
+                direct_failure=direct_failure,
+                jina_failure=jina_exc,
+                fallback_reason=fallback_reason,
+                opener=opener,
+                resolver=resolver,
+                timeout_seconds=timeout_seconds,
+                html_max_bytes=html_max_bytes,
+                pdf_max_bytes=pdf_max_bytes,
+                extracted_max_bytes=max_bytes,
+                pdf_max_pages=pdf_max_pages,
+                pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
+                pdf_address_space_bytes=pdf_address_space_bytes,
+                prior_attempts=direct_attempts + 1,
+                not_before=wayback_not_before,
+                not_after=wayback_not_after,
+            )
         raise ArticleFetchError(
             f"article retrieval failed: direct={direct_failure}; jina={jina_exc}",
             error_code=jina_exc.error_code,
@@ -507,6 +605,425 @@ def _fetch_jina_fallback(
         attempts=direct_attempts + 1,
         retrieved_url=reader_result.origin_url,
     )
+
+
+def _fetch_wayback_fallback(
+    url: str,
+    *,
+    direct_failure: str,
+    jina_failure: ArticleFetchError,
+    fallback_reason: str,
+    opener,
+    resolver,
+    timeout_seconds: int,
+    html_max_bytes: int,
+    pdf_max_bytes: int,
+    extracted_max_bytes: int,
+    pdf_max_pages: int,
+    pdf_parse_timeout_seconds: int,
+    pdf_address_space_bytes: int,
+    prior_attempts: int,
+    not_before: datetime | None,
+    not_after: datetime | None,
+) -> ArticleFetchResult:
+    try:
+        capture = _find_wayback_capture(
+            url,
+            opener=opener,
+            resolver=resolver,
+            timeout_seconds=timeout_seconds,
+            not_before=not_before,
+            not_after=not_after,
+        )
+    except ArticleFetchError as wayback_exc:
+        raise ArticleFetchError(
+            "article retrieval failed: "
+            f"direct={direct_failure}; jina={jina_failure}; "
+            f"wayback={wayback_exc}",
+            error_code=wayback_exc.error_code,
+            method="wayback",
+            extractor=wayback_exc.extractor,
+            fallback_attempted=True,
+            fallback_reason=fallback_reason,
+            attempts=prior_attempts + 1,
+        ) from wayback_exc
+
+    try:
+        archived = _fetch_wayback_capture(
+            capture,
+            source_url=url,
+            opener=opener,
+            resolver=resolver,
+            timeout_seconds=timeout_seconds,
+            html_max_bytes=html_max_bytes,
+            pdf_max_bytes=pdf_max_bytes,
+            extracted_max_bytes=extracted_max_bytes,
+            pdf_max_pages=pdf_max_pages,
+            pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
+            pdf_address_space_bytes=pdf_address_space_bytes,
+        )
+    except ArticleFetchError as wayback_exc:
+        raise ArticleFetchError(
+            "article retrieval failed: "
+            f"direct={direct_failure}; jina={jina_failure}; "
+            f"wayback={wayback_exc}",
+            error_code=wayback_exc.error_code,
+            method="wayback",
+            extractor=wayback_exc.extractor,
+            fallback_attempted=True,
+            fallback_reason=fallback_reason,
+            attempts=prior_attempts + 2,
+        ) from wayback_exc
+
+    attempts = prior_attempts + 2
+    LOGGER.info(
+        "component=article_fetch method=wayback extractor=%s status=success "
+        "fallback_reason=%s capture_timestamp=%s attempts=%d",
+        archived.extractor,
+        fallback_reason,
+        capture.timestamp,
+        attempts,
+    )
+    return ArticleFetchResult(
+        text=archived.text,
+        method="wayback",
+        fallback_reason=fallback_reason,
+        extractor=archived.extractor,
+        attempts=attempts,
+        retrieved_url=archived.retrieved_url,
+        material_origin="archived_copy",
+    )
+
+
+def _find_wayback_capture(
+    url: str,
+    *,
+    opener,
+    resolver,
+    timeout_seconds: int,
+    not_before: datetime | None,
+    not_after: datetime | None,
+) -> _WaybackCapture:
+    lower_bound, upper_bound = _wayback_capture_window(not_before, not_after)
+    fields = [
+        "timestamp",
+        "original",
+        "mimetype",
+        "statuscode",
+        "digest",
+        "length",
+    ]
+    query = urlencode(
+        [
+            ("url", url),
+            ("matchType", "exact"),
+            ("output", "json"),
+            ("fl", ",".join(fields)),
+            ("filter", "statuscode:200"),
+            ("filter", "mimetype:text/html"),
+            ("from", _wayback_timestamp(lower_bound)),
+            ("to", _wayback_timestamp(upper_bound)),
+            ("limit", "-5"),
+            ("gzip", "false"),
+        ]
+    )
+    request_url = f"{WAYBACK_CDX_BASE_URL}?{query}"
+    _validate_public_http_url(request_url, resolver)
+    request = Request(
+        request_url,
+        headers={
+            "User-Agent": "daily-brief/0.1",
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+        },
+    )
+
+    try:
+        with opener(request, timeout=timeout_seconds) as response:
+            _validate_wayback_cdx_response_url(response.geturl())
+            _reject_encoded_wayback_response(response.headers)
+            content_type = response.headers.get_content_type().lower()
+            if content_type not in JINA_JSON_CONTENT_TYPES:
+                raise ArticleFetchError(
+                    "Wayback CDX returned an unsupported content type",
+                    error_code="wayback_unsupported_content_type",
+                    method="wayback",
+                )
+            payload = _read_bounded(response, WAYBACK_METADATA_MAX_BYTES)
+            charset = response.headers.get_content_charset() or "utf-8"
+    except HTTPError as exc:
+        raise ArticleFetchError(
+            f"Wayback CDX request failed: {exc}",
+            error_code=f"wayback_http_{exc.code}",
+            method="wayback",
+        ) from exc
+    except ArticleFetchError:
+        raise
+    except Exception as exc:
+        raise ArticleFetchError(
+            f"Wayback CDX request failed: {exc}",
+            error_code="wayback_request_failed",
+            method="wayback",
+        ) from exc
+
+    try:
+        rows = json.loads(payload.decode(charset))
+    except (LookupError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ArticleFetchError(
+            "Wayback CDX returned malformed JSON",
+            error_code="wayback_malformed_json",
+            method="wayback",
+        ) from exc
+    if not isinstance(rows, list) or not rows or rows[0] != fields:
+        raise ArticleFetchError(
+            "Wayback CDX returned an invalid result envelope",
+            error_code="wayback_invalid_index",
+            method="wayback",
+        )
+
+    if len(rows) == 1:
+        raise ArticleFetchError(
+            "Wayback CDX found no capture in the allowed time window",
+            error_code="wayback_no_capture",
+            method="wayback",
+        )
+
+    captures = []
+    for row in rows[1:]:
+        capture = _parse_wayback_index_row(
+            row,
+            source_url=url,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+            resolver=resolver,
+        )
+        captures.append(capture)
+    return max(captures, key=lambda capture: capture.timestamp)
+
+
+def _fetch_wayback_capture(
+    capture: _WaybackCapture,
+    *,
+    source_url: str,
+    opener,
+    resolver,
+    timeout_seconds: int,
+    html_max_bytes: int,
+    pdf_max_bytes: int,
+    extracted_max_bytes: int,
+    pdf_max_pages: int,
+    pdf_parse_timeout_seconds: int,
+    pdf_address_space_bytes: int,
+) -> ArticleFetchResult:
+    replay_url = (
+        f"{WAYBACK_REPLAY_BASE_URL}/{capture.timestamp}id_/"
+        f"{capture.original_url}"
+    )
+    _validate_public_http_url(replay_url, resolver)
+    request = Request(
+        replay_url,
+        headers={
+            "User-Agent": "daily-brief/0.1",
+            "Accept": "text/html",
+            "Accept-Encoding": "identity",
+        },
+    )
+    try:
+        result = _fetch_direct_response(
+            request,
+            opener=opener,
+            resolver=resolver,
+            timeout_seconds=timeout_seconds,
+            html_max_bytes=html_max_bytes,
+            pdf_max_bytes=pdf_max_bytes,
+            extracted_max_bytes=extracted_max_bytes,
+            pdf_max_pages=pdf_max_pages,
+            pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
+            pdf_address_space_bytes=pdf_address_space_bytes,
+            require_identity_encoding=True,
+        )
+    except HTTPError as exc:
+        raise ArticleFetchError(
+            f"Wayback replay request failed: {exc}",
+            error_code=f"wayback_http_{exc.code}",
+            method="wayback",
+        ) from exc
+    except ArticleFetchError as exc:
+        error_code = exc.error_code
+        if exc.error_code in {"challenge_page", "vercel_challenge"}:
+            error_code = "wayback_challenge_page"
+        elif not exc.error_code.startswith("wayback_"):
+            error_code = f"wayback_{exc.error_code}"
+        raise ArticleFetchError(
+            f"Wayback replay failed: {exc}",
+            error_code=error_code,
+            method="wayback",
+            extractor=exc.extractor,
+        ) from exc
+    except Exception as exc:
+        raise ArticleFetchError(
+            f"Wayback replay request failed: {exc}",
+            error_code="wayback_request_failed",
+            method="wayback",
+        ) from exc
+
+    _validate_wayback_replay_url(
+        result.retrieved_url,
+        capture=capture,
+        source_url=source_url,
+    )
+    return ArticleFetchResult(
+        text=result.text,
+        method="wayback",
+        extractor=result.extractor,
+        retrieved_url=result.retrieved_url,
+        material_origin="archived_copy",
+    )
+
+
+def _wayback_capture_window(
+    not_before: datetime | None,
+    not_after: datetime | None,
+) -> tuple[datetime, datetime]:
+    upper_bound = _utc_datetime(not_after or datetime.now(UTC))
+    lower_bound = _utc_datetime(
+        not_before or (upper_bound - WAYBACK_DEFAULT_LOOKBACK)
+    )
+    if lower_bound > upper_bound:
+        raise ArticleFetchError(
+            "Wayback capture time window is invalid",
+            error_code="wayback_invalid_window",
+            method="wayback",
+        )
+    return lower_bound, upper_bound
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ArticleFetchError(
+            "Wayback capture bounds must include a timezone",
+            error_code="wayback_invalid_window",
+            method="wayback",
+        )
+    return value.astimezone(UTC)
+
+
+def _wayback_timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).strftime("%Y%m%d%H%M%S")
+
+
+def _parse_wayback_index_row(
+    row,
+    *,
+    source_url: str,
+    lower_bound: datetime,
+    upper_bound: datetime,
+    resolver,
+) -> _WaybackCapture:
+    if not isinstance(row, list) or len(row) != 6:
+        raise _invalid_wayback_index_row()
+    timestamp, original, mimetype, statuscode, digest, length = row
+    if not all(isinstance(value, str) for value in row):
+        raise _invalid_wayback_index_row()
+    if not WAYBACK_TIMESTAMP_PATTERN.fullmatch(timestamp):
+        raise _invalid_wayback_index_row()
+    try:
+        captured_at = datetime.strptime(timestamp, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+        captured_length = int(length)
+    except ValueError:
+        raise _invalid_wayback_index_row()
+    if not lower_bound <= captured_at <= upper_bound:
+        raise _invalid_wayback_index_row()
+    if mimetype != "text/html" or statuscode != "200" or not digest:
+        raise _invalid_wayback_index_row()
+    if captured_length <= 0:
+        raise _invalid_wayback_index_row()
+    try:
+        _validate_public_http_url(original, resolver)
+    except ArticleFetchError:
+        raise _invalid_wayback_index_row()
+    if _archive_url_identity(original) != _archive_url_identity(source_url):
+        raise _invalid_wayback_index_row()
+    return _WaybackCapture(timestamp=timestamp, original_url=original)
+
+
+def _invalid_wayback_index_row() -> ArticleFetchError:
+    return ArticleFetchError(
+        "Wayback CDX returned an invalid capture row",
+        error_code="wayback_invalid_index",
+        method="wayback",
+    )
+
+
+def _archive_url_identity(url: str) -> tuple[str, str, int | None, str, str]:
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower()
+    port = parsed.port
+    if (scheme, port) in {("http", 80), ("https", 443)}:
+        port = None
+    return scheme, hostname, port, parsed.path or "/", parsed.query
+
+
+def _validate_wayback_cdx_response_url(url: str) -> None:
+    parsed = urlparse(url)
+    if not (
+        parsed.scheme == "https"
+        and parsed.hostname
+        and parsed.hostname.lower() == "web.archive.org"
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.port is None
+        and parsed.path == "/cdx/search/cdx"
+    ):
+        raise ArticleFetchError(
+            "Wayback CDX redirected to an unexpected URL",
+            error_code="wayback_invalid_index_url",
+            method="wayback",
+        )
+
+
+def _validate_wayback_replay_url(
+    url: str,
+    *,
+    capture: _WaybackCapture,
+    source_url: str,
+) -> None:
+    parsed = urlparse(url)
+    replay_prefix = f"/web/{capture.timestamp}id_/"
+    if not (
+        parsed.scheme == "https"
+        and parsed.hostname
+        and parsed.hostname.lower() == "web.archive.org"
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.port is None
+        and parsed.path.startswith(replay_prefix)
+    ):
+        raise ArticleFetchError(
+            "Wayback replay redirected to an unexpected URL",
+            error_code="wayback_invalid_replay_url",
+            method="wayback",
+        )
+    embedded_original = parsed.path[len(replay_prefix) :]
+    if parsed.query:
+        embedded_original = f"{embedded_original}?{parsed.query}"
+    if _archive_url_identity(embedded_original) != _archive_url_identity(source_url):
+        raise ArticleFetchError(
+            "Wayback replay URL does not match the requested source",
+            error_code="wayback_identity_mismatch",
+            method="wayback",
+        )
+
+
+def _reject_encoded_wayback_response(headers) -> None:
+    content_encoding = headers.get("Content-Encoding", "").strip().lower()
+    if content_encoding not in {"", "identity"}:
+        raise ArticleFetchError(
+            "Wayback returned an unsupported content encoding",
+            error_code="wayback_unsupported_content_encoding",
+            method="wayback",
+        )
 
 
 def fetch_github_readme_text(
@@ -815,15 +1332,19 @@ def _fetch_direct_response(
     pdf_max_pages: int,
     pdf_parse_timeout_seconds: int,
     pdf_address_space_bytes: int,
+    require_identity_encoding: bool = False,
 ) -> ArticleFetchResult:
     expects_pdf = urlparse(request.full_url).path.lower().endswith(".pdf")
     with opener(request, timeout=timeout_seconds) as response:
         final_url = response.geturl()
         _validate_public_http_url(final_url, resolver)
-        if _headers_indicate_challenge(response.headers):
+        if require_identity_encoding:
+            _reject_encoded_wayback_response(response.headers)
+        header_challenge = _challenge_from_headers(response.headers)
+        if header_challenge:
             raise ArticleFetchError(
                 "article response was a browser verification challenge page",
-                error_code="challenge_page",
+                error_code=header_challenge,
             )
         content_type = response.headers.get_content_type().lower()
         if content_type == "text/html":
@@ -1310,7 +1831,19 @@ def _is_standard_github_url(parsed) -> bool:
 
 
 def _is_cloudflare_challenge(error: HTTPError) -> bool:
-    return _headers_indicate_challenge(error.headers)
+    return bool(
+        error.headers
+        and error.headers.get("cf-mitigated", "").strip().lower() == "challenge"
+    )
+
+
+def _is_vercel_challenge(error: HTTPError) -> bool:
+    return bool(
+        error.code == 429
+        and error.headers
+        and error.headers.get("x-vercel-mitigated", "").strip().lower()
+        == "challenge"
+    )
 
 
 def _is_datadome_challenge(error: HTTPError) -> bool:
@@ -1321,10 +1854,14 @@ def _is_datadome_challenge(error: HTTPError) -> bool:
     )
 
 
-def _headers_indicate_challenge(headers) -> bool:
-    return bool(
-        headers and headers.get("cf-mitigated", "").strip().lower() == "challenge"
-    )
+def _challenge_from_headers(headers) -> str:
+    if not headers:
+        return ""
+    if headers.get("cf-mitigated", "").strip().lower() == "challenge":
+        return "challenge_page"
+    if headers.get("x-vercel-mitigated", "").strip().lower() == "challenge":
+        return "vercel_challenge"
+    return ""
 
 
 def _is_challenge_page(

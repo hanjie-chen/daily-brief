@@ -24,7 +24,11 @@ from daily_brief.syndicated_copy import (
 @pytest.fixture(autouse=True)
 def prevent_live_classifier_and_article_calls(monkeypatch):
     monkeypatch.setattr(cli, "GeminiBackend", FakeGeminiBackendFactory)
-    monkeypatch.setattr(cli, "fetch_article", lambda url: "Test article facts.")
+    monkeypatch.setattr(
+        cli,
+        "fetch_article",
+        lambda url, **kwargs: "Test article facts.",
+    )
 
 
 def test_parser_defaults_to_generate_command():
@@ -909,6 +913,46 @@ def test_empty_content_jina_success_is_summarized_and_persisted(tmp_path):
     assert summarizer.titles == ["Claude release"]
 
 
+def test_wayback_article_is_summarized_with_archived_copy_provenance(tmp_path):
+    summarizer = FakeSummarizer()
+    replay_url = (
+        "https://web.archive.org/web/20260822062417id_/"
+        "https://www.felonybench.com/"
+    )
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-23",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        article_fetcher=lambda url: ArticleFetchResult(
+            text="Grounded archived article facts.",
+            method="wayback",
+            extractor="trafilatura",
+            fallback_reason="vercel_challenge",
+            attempts=4,
+            retrieved_url=replay_url,
+            material_origin="archived_copy",
+        ),
+        summarizer=summarizer,
+    )
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
+    retrieval = candidate_payload[0]["article_retrieval"]
+
+    assert retrieval["status"] == "success"
+    assert retrieval["method"] == "wayback"
+    assert retrieval["extractor"] == "trafilatura"
+    assert retrieval["fallback_attempted"] is True
+    assert retrieval["fallback_reason"] == "vercel_challenge"
+    assert retrieval["attempts"] == 4
+    assert retrieval["retrieved_url"] == replay_url
+    assert retrieval["material_origin"] == "archived_copy"
+    assert candidate_payload[0]["summary_basis"] == "fetched_article"
+    assert candidate_payload[0]["summary_status"] == "success"
+    assert summarizer.titles == ["Claude release"]
+
+
 def test_youtube_caption_is_used_as_the_summary_basis(tmp_path):
     summarizer = CapturingSummarizer()
     result = run_generate(
@@ -1105,16 +1149,19 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
     assert model_input["summary_candidates"] == []
 
 
-def test_origin_block_failure_uses_specific_reader_message(tmp_path):
+@pytest.mark.parametrize("fallback_reason", ["datadome_challenge", "vercel_challenge"])
+def test_origin_block_failure_uses_specific_reader_message(
+    tmp_path,
+    fallback_reason,
+):
     def raise_fetch_error(url):
         raise ArticleFetchError(
-            "article retrieval failed: direct=datadome challenge; "
-            "jina=Jina Reader request failed",
+            "article retrieval failed after origin challenge",
             error_code="http_403",
             method="jina",
             extractor="jina",
             fallback_attempted=True,
-            fallback_reason="datadome_challenge",
+            fallback_reason=fallback_reason,
         )
 
     result = run_generate(
@@ -1134,7 +1181,7 @@ def test_origin_block_failure_uses_specific_reader_message(tmp_path):
     candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
     retrieval = candidate_payload[0]["article_retrieval"]
     assert retrieval["fallback_attempted"] is True
-    assert retrieval["fallback_reason"] == "datadome_challenge"
+    assert retrieval["fallback_reason"] == fallback_reason
     assert retrieval["error_code"] == "http_403"
 
 

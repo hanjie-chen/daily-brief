@@ -6,7 +6,8 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 
 from .article_fetcher import ArticleFetchError, ArticleFetchResult, fetch_article
@@ -70,6 +71,7 @@ class _FetchedMaterial:
     attempts: int
     fallback_reason: str
     retrieved_url: str
+    material_origin: str
 
 
 @dataclass(frozen=True)
@@ -316,7 +318,6 @@ def run_generate(
     ]
 
     ai_items, selected_hot_items = select_sections(ai_pool, hot_pool)
-    article_client = article_fetcher or fetch_article
     summary_client = summarizer or backend
     summary_candidates = [*ai_items, *selected_hot_items]
     summarization_inputs = []
@@ -333,6 +334,14 @@ def run_generate(
             and candidate.story.source_url
             and candidate.story.source_url != candidate.story.hn_discussion_url
         ):
+            article_client = article_fetcher or partial(
+                fetch_article,
+                wayback_not_before=_wayback_not_before(
+                    candidate.story.created_at,
+                    window.start,
+                ),
+                wayback_not_after=window.end,
+            )
             try:
                 material = _coerce_fetched_material(
                     article_client(candidate.story.source_url),
@@ -347,7 +356,7 @@ def run_generate(
                     fallback_attempted=bool(material.fallback_reason),
                     fallback_reason=material.fallback_reason,
                     retrieved_url=material.retrieved_url,
-                    material_origin="original",
+                    material_origin=material.material_origin,
                 )
                 candidate.summary_basis = (
                     "youtube_caption"
@@ -545,6 +554,7 @@ def _coerce_fetched_material(fetch_result, retrieved_url: str) -> _FetchedMateri
         fallback_reason = fetch_result.fallback_reason
         attempts = fetch_result.attempts
         effective_url = fetch_result.retrieved_url or retrieved_url
+        material_origin = fetch_result.material_origin
     elif isinstance(fetch_result, str):
         text = fetch_result.strip()
         method = "direct"
@@ -552,6 +562,7 @@ def _coerce_fetched_material(fetch_result, retrieved_url: str) -> _FetchedMateri
         fallback_reason = ""
         attempts = 1
         effective_url = retrieved_url
+        material_origin = "original"
     else:
         raise ArticleFetchError(
             "article fetcher returned an invalid result",
@@ -575,7 +586,18 @@ def _coerce_fetched_material(fetch_result, retrieved_url: str) -> _FetchedMateri
         attempts=attempts,
         fallback_reason=fallback_reason,
         retrieved_url=effective_url,
+        material_origin=material_origin,
     )
+
+
+def _wayback_not_before(created_at: str, default: datetime) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return default
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return default
+    return parsed - timedelta(days=1)
 
 
 def _retrieval_failure(exc: Exception) -> RetrievalFailure:

@@ -71,6 +71,7 @@ class ArticleRetrieval:
             "challenge_page",
             "cloudflare_challenge",
             "datadome_challenge",
+            "vercel_challenge",
         }
 
 

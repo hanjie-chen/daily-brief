@@ -1,9 +1,11 @@
-from email.message import Message
-from io import BytesIO
 import json
 import ssl
 import subprocess
+from datetime import UTC, datetime
+from email.message import Message
+from io import BytesIO
 from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from pypdf import PdfWriter
@@ -100,6 +102,22 @@ def make_jina_payload(
             },
         },
         ensure_ascii=False,
+    ).encode()
+
+
+def make_wayback_payload(*rows):
+    return json.dumps(
+        [
+            [
+                "timestamp",
+                "original",
+                "mimetype",
+                "statuscode",
+                "digest",
+                "length",
+            ],
+            *rows,
+        ]
     ).encode()
 
 
@@ -1373,6 +1391,258 @@ def test_fetch_article_reports_jina_retrieval_method():
     assert result.method == "jina"
     assert result.extractor == "jina"
     assert result.fallback_reason == "cloudflare_challenge"
+
+
+def test_fetch_article_uses_jina_for_vercel_challenge_without_wayback(caplog):
+    requests = []
+    source_url = "https://example.com/article"
+    jina_response = FakeResponse(
+        make_jina_payload("Recovered from Jina."),
+        content_type="application/json",
+        final_url=f"https://r.jina.ai/{source_url}",
+    )
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        if len(requests) == 1:
+            raise http_error(
+                request.full_url,
+                429,
+                server="Vercel",
+                x_vercel_mitigated="challenge",
+            )
+        return jina_response
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
+            source_url,
+            opener=open_response,
+            resolver=resolver_for({}),
+        )
+
+    assert requests == [source_url, f"https://r.jina.ai/{source_url}"]
+    assert result.text == "Recovered from Jina."
+    assert result.method == "jina"
+    assert result.fallback_reason == "vercel_challenge"
+    assert result.attempts == 2
+    assert result.material_origin == "original"
+    assert "method=direct status=vercel_challenge fallback=jina" in caplog.text
+    assert "fallback=wayback" not in caplog.text
+
+
+def test_vercel_and_jina_failures_use_recent_wayback_capture(caplog):
+    requests = []
+    source_url = "https://www.felonybench.com/"
+    capture_timestamp = "20260822062417"
+    replay_url = (
+        f"https://web.archive.org/web/{capture_timestamp}id_/{source_url}"
+    )
+    archived_html = b"""
+    <html><body><main>
+      <h1>Felony Bench</h1>
+      <p>A benchmark you really do not want models to be saturated with.</p>
+      <p>Anthropic scored eight incidents and OpenAI scored eight incidents.</p>
+      <h2>Methodology</h2>
+      <p>The benchmark counts unique cases where agents affect third parties.</p>
+    </main></body></html>
+    """
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        if request.full_url == source_url:
+            raise http_error(
+                request.full_url,
+                429,
+                server="Vercel",
+                x_vercel_mitigated="challenge",
+            )
+        if request.full_url.startswith("https://r.jina.ai/"):
+            return FakeResponse(
+                make_jina_payload(
+                    "Vercel Security Checkpoint",
+                    http_status=429,
+                    url=source_url,
+                ),
+                content_type="application/json",
+                final_url=f"https://r.jina.ai/{source_url}",
+            )
+        if request.full_url.startswith("https://web.archive.org/cdx/search/cdx?"):
+            return FakeResponse(
+                make_wayback_payload(
+                    [
+                        capture_timestamp,
+                        source_url,
+                        "text/html",
+                        "200",
+                        "CAPTUREDIGEST",
+                        str(len(archived_html)),
+                    ]
+                ),
+                content_type="application/json",
+                final_url=request.full_url,
+            )
+        assert request.full_url == replay_url
+        return FakeResponse(
+            archived_html,
+            final_url=replay_url,
+        )
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
+            source_url,
+            opener=open_response,
+            resolver=resolver_for({}),
+            wayback_not_before=datetime(2026, 8, 21, 15, 17, tzinfo=UTC),
+            wayback_not_after=datetime(2026, 8, 23, 0, 0, tzinfo=UTC),
+        )
+
+    assert len(requests) == 4
+    cdx_query = parse_qs(urlparse(requests[2]).query)
+    assert cdx_query["matchType"] == ["exact"]
+    assert cdx_query["from"] == ["20260821151700"]
+    assert cdx_query["to"] == ["20260823000000"]
+    assert cdx_query["filter"] == ["statuscode:200", "mimetype:text/html"]
+    assert cdx_query["limit"] == ["-5"]
+    assert cdx_query["gzip"] == ["false"]
+    assert result.method == "wayback"
+    assert result.extractor == "trafilatura"
+    assert result.fallback_reason == "vercel_challenge"
+    assert result.attempts == 4
+    assert result.retrieved_url == replay_url
+    assert result.material_origin == "archived_copy"
+    assert "Felony Bench" in result.text
+    assert "unique cases where agents affect third parties" in result.text
+    assert "method=jina extractor=jina status=failed" in caplog.text
+    assert "method=wayback extractor=trafilatura status=success" in caplog.text
+
+
+def test_wayback_rejects_index_row_outside_allowed_window():
+    source_url = "https://example.com/article"
+    requested_urls = []
+
+    def open_response(request, timeout):
+        requested_urls.append(request.full_url)
+        if request.full_url == source_url:
+            raise http_error(
+                request.full_url,
+                429,
+                x_vercel_mitigated="challenge",
+            )
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 403)
+        return FakeResponse(
+            make_wayback_payload(
+                [
+                    "20260819000000",
+                    source_url,
+                    "text/html",
+                    "200",
+                    "OLDDIGEST",
+                    "2000",
+                ]
+            ),
+            content_type="application/json",
+            final_url=request.full_url,
+        )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            source_url,
+            opener=open_response,
+            resolver=resolver_for({}),
+            wayback_not_before=datetime(2026, 8, 21, 0, 0, tzinfo=UTC),
+            wayback_not_after=datetime(2026, 8, 23, 0, 0, tzinfo=UTC),
+        )
+
+    assert len(requested_urls) == 3
+    assert caught.value.error_code == "wayback_invalid_index"
+    assert caught.value.method == "wayback"
+    assert caught.value.fallback_attempted is True
+    assert caught.value.fallback_reason == "vercel_challenge"
+    assert caught.value.attempts == 3
+    assert "direct=vercel challenge" in str(caught.value)
+    assert "jina=Jina Reader request failed" in str(caught.value)
+
+
+def test_wayback_reports_no_capture_without_requesting_replay():
+    source_url = "https://example.com/article"
+    requested_urls = []
+
+    def open_response(request, timeout):
+        requested_urls.append(request.full_url)
+        if request.full_url == source_url:
+            raise http_error(
+                request.full_url,
+                429,
+                x_vercel_mitigated="challenge",
+            )
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 403)
+        return FakeResponse(
+            make_wayback_payload(),
+            content_type="application/json",
+            final_url=request.full_url,
+        )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            source_url,
+            opener=open_response,
+            resolver=resolver_for({}),
+            wayback_not_before=datetime(2026, 8, 21, 0, 0, tzinfo=UTC),
+            wayback_not_after=datetime(2026, 8, 23, 0, 0, tzinfo=UTC),
+        )
+
+    assert len(requested_urls) == 3
+    assert caught.value.error_code == "wayback_no_capture"
+    assert caught.value.attempts == 3
+
+
+def test_wayback_rejects_replay_redirect_to_live_source():
+    source_url = "https://example.com/article"
+    capture_timestamp = "20260822062417"
+
+    def open_response(request, timeout):
+        if request.full_url == source_url:
+            raise http_error(
+                request.full_url,
+                429,
+                x_vercel_mitigated="challenge",
+            )
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 403)
+        if request.full_url.startswith("https://web.archive.org/cdx/search/cdx?"):
+            return FakeResponse(
+                make_wayback_payload(
+                    [
+                        capture_timestamp,
+                        source_url,
+                        "text/html",
+                        "200",
+                        "CAPTUREDIGEST",
+                        "2000",
+                    ]
+                ),
+                content_type="application/json",
+                final_url=request.full_url,
+            )
+        return FakeResponse(
+            b"<html><body><article>Archived facts.</article></body></html>",
+            final_url=source_url,
+        )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            source_url,
+            opener=open_response,
+            resolver=resolver_for({}),
+            wayback_not_before=datetime(2026, 8, 21, 0, 0, tzinfo=UTC),
+            wayback_not_after=datetime(2026, 8, 23, 0, 0, tzinfo=UTC),
+        )
+
+    assert caught.value.error_code == "wayback_invalid_replay_url"
+    assert caught.value.method == "wayback"
+    assert caught.value.attempts == 4
 
 
 @pytest.mark.parametrize("status_code", [401, 403])
