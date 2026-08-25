@@ -25,6 +25,8 @@ from urllib.request import (
     build_opener,
 )
 
+from lxml import etree
+from lxml import html as lxml_html
 import trafilatura
 
 from .adobe_pdf_extractor import (
@@ -79,6 +81,8 @@ PDF_CONTENT_TYPES = {
     "binary/octet-stream",
 }
 LOGGER = logging.getLogger(__name__)
+_TABLE_TAG_PATTERN = re.compile(r"<table(?:\s|>)", re.IGNORECASE)
+_IMPORTANT_SUFFIX_PATTERN = re.compile(r"\s*!\s*important\s*$", re.IGNORECASE)
 
 
 class ArticleFetchError(RuntimeError):
@@ -176,12 +180,95 @@ class _PinnedHTTPSHandler(HTTPSHandler):
 def extract_html(markup: str) -> str:
     """Extract article body text from HTML with the production settings."""
     extracted = trafilatura.extract(
-        markup,
+        _normalize_semantic_tables(markup),
         include_comments=False,
         favor_precision=True,
         include_tables=True,
     )
     return _normalize_extracted_blocks(extracted or "")
+
+
+def _normalize_semantic_tables(markup: str) -> str:
+    """Preserve narrowly scoped table semantics that Trafilatura discards."""
+    if not markup or _TABLE_TAG_PATTERN.search(markup) is None:
+        return markup
+
+    parser = lxml_html.HTMLParser(
+        encoding="utf-8",
+        no_network=True,
+        huge_tree=False,
+    )
+    try:
+        document = lxml_html.document_fromstring(markup.encode("utf-8"), parser=parser)
+    except (etree.ParserError, etree.XMLSyntaxError):
+        return markup
+
+    changed = False
+    for element in document.xpath(".//table//*"):
+        if _is_explicitly_hidden(element):
+            _drop_element_preserving_tail(element)
+            changed = True
+
+    for table in document.iter("table"):
+        for header in table.iter("th"):
+            if (header.get("scope") or "").strip().casefold() != "row":
+                continue
+            for span in tuple(header.iterdescendants("span")):
+                if (
+                    span.getparent() is not None
+                    and len(span) == 0
+                    and not (span.text or "").strip()
+                    and (span.tail or "").strip()
+                ):
+                    span.drop_tag()
+                    changed = True
+
+        for time_element in tuple(table.iterdescendants("time")):
+            if (
+                time_element.getparent() is not None
+                and time_element.text_content().strip()
+            ):
+                time_element.drop_tag()
+                changed = True
+
+    if not changed:
+        return markup
+    return etree.tostring(document, encoding="unicode", method="html")
+
+
+def _is_explicitly_hidden(element) -> bool:
+    if "hidden" in element.attrib:
+        return True
+    if (element.get("aria-hidden") or "").strip().casefold() == "true":
+        return True
+
+    for declaration in (element.get("style") or "").split(";"):
+        property_name, separator, value = declaration.partition(":")
+        if not separator:
+            continue
+        property_name = property_name.strip().casefold()
+        value = _IMPORTANT_SUFFIX_PATTERN.sub("", value).strip().casefold()
+        if property_name == "display" and value == "none":
+            return True
+        if property_name == "visibility" and value == "hidden":
+            return True
+    return False
+
+
+def _drop_element_preserving_tail(element) -> None:
+    """Drop an element subtree without dropping following visible text."""
+    parent = element.getparent()
+    if parent is None:
+        return
+    tail = element.tail
+    previous = element.getprevious()
+    parent.remove(element)
+    if not tail:
+        return
+    if previous is None:
+        parent.text = f"{parent.text or ''}{tail}"
+    else:
+        previous.tail = f"{previous.tail or ''}{tail}"
 
 
 def fetch_article_text(

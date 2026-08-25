@@ -209,6 +209,160 @@ def test_extract_html_preserves_nested_list_indentation():
     assert "- Top item\n  - Nested item\n- Second top" in extract_html(markup)
 
 
+def test_extract_html_preserves_felony_bench_semantic_table_fields():
+    rows = [
+        (
+            "Anthropic",
+            "Incident alpha was documented in detail.",
+            "8/9/2026",
+            "ABC Australia",
+        ),
+        (
+            "OpenAI",
+            "Incident beta was documented in detail.",
+            "8/8/2026",
+            "The Information",
+        ),
+        ("Meta", "Incident gamma was documented in detail.", "8/7/2026", "Reuters"),
+        (
+            "Mistral",
+            "Incident delta was documented in detail.",
+            "8/6/2026",
+            "Court Listener",
+        ),
+        (
+            "Moonshot",
+            "Incident epsilon was documented in detail.",
+            "8/5/2026",
+            "TechCrunch",
+        ),
+        ("Anthropic", "Incident zeta was documented in detail.", "8/4/2026", "Wired"),
+        ("OpenAI", "Incident eta was documented in detail.", "8/3/2026", "Bloomberg"),
+        ("Meta", "Incident theta was documented in detail.", "8/2/2026", "The Verge"),
+    ]
+    table_rows = "".join(
+        f"""
+        <tr>
+          <th scope="row"><span class="company-name">
+            <span class="company-marker"></span>{company}
+          </span></th>
+          <td>{description}</td>
+          <td><time datetime="2026-08-01">{date}</time></td>
+          <td>{source}</td>
+        </tr>
+        """
+        for company, description, date, source in rows
+    )
+    markup = f"""
+    <html><body><article>
+      <h1>Felony Bench</h1>
+      <p>This report documents concrete legal incidents involving major
+      artificial intelligence companies using public source material.</p>
+      <table>
+        <thead><tr><th>Company</th><th>Description</th><th>Date</th><th>Source</th></tr></thead>
+        <tbody>{table_rows}</tbody>
+      </table>
+      <h2>Methodology</h2>
+      <p>The methodology counts documented convictions and guilty pleas.</p>
+    </article></body></html>
+    """
+
+    text = extract_html(markup)
+
+    positions = []
+    for company, description, date, source in rows:
+        row_text = f"| {company} | {description} | {date} | {source} |"
+        assert text.count(description) == 1
+        positions.append(text.index(row_text))
+    assert positions == sorted(positions)
+    assert "Methodology" in text
+
+
+def test_extract_html_drops_explicitly_hidden_table_content_and_preserves_tail():
+    markup = """
+    <html><body><article>
+      <h1>Visible table facts</h1>
+      <p>This article provides enough grounded context for precise extraction.</p>
+      <p>Published <time datetime="2026-08-10">OUTSIDE_TIME</time> for readers.</p>
+      <table>
+        <tr><th>Company</th><th>Date</th></tr>
+        <tr>
+          <th scope="row">
+            <span hidden>HIDDEN_ATTRIBUTE</span>
+            <span aria-hidden="true">ARIA_HIDDEN</span>
+            <span style="DISPLAY: none ! important">DISPLAY_HIDDEN</span>
+            <span style="visibility: hidden !important">VISIBILITY_HIDDEN</span>
+            <span class="company-marker"></span>Anthropic
+          </th>
+          <td>
+            <time hidden>HIDDEN_DATE</time>
+            <time datetime="2026-08-09">8/9/2026</time>
+          </td>
+        </tr>
+      </table>
+      <h2>Methodology</h2>
+      <p>Only visible source material contributes to the result.</p>
+    </article></body></html>
+    """
+
+    text = extract_html(markup)
+
+    assert "| Anthropic | 8/9/2026 |" in text
+    assert "HIDDEN_ATTRIBUTE" not in text
+    assert "ARIA_HIDDEN" not in text
+    assert "DISPLAY_HIDDEN" not in text
+    assert "VISIBILITY_HIDDEN" not in text
+    assert "HIDDEN_DATE" not in text
+    assert "OUTSIDE_TIME" not in text
+
+
+def test_semantic_table_normalization_is_idempotent_for_multiple_malformed_tables():
+    markup = """<?xml version="1.0" encoding="iso-8859-1"?>
+    <html><body><article>
+      <p>This document contains enough useful context for extraction.</p>
+      <table><tr><th scope="row"><span></span>Alpha</th>
+        <td><time>8/1/2026</time></td></tr></table>
+      <table><tr><th scope="row"><span></span>Beta
+        <td><time>8/2/2026</time></td></tr>
+      <h2>Methodology</h2><p>The rows use public source records.</p>
+    </article></body></html>
+    """
+
+    normalized = article_fetcher._normalize_semantic_tables(markup)
+
+    assert article_fetcher._normalize_semantic_tables(normalized) == normalized
+    assert "Alpha" in extract_html(markup)
+    assert "8/1/2026" in extract_html(markup)
+    assert "Beta" in extract_html(markup)
+    assert "8/2/2026" in extract_html(markup)
+
+
+def test_semantic_table_normalization_keeps_nonempty_inline_spans():
+    markup = """
+    <table><tr><th scope="row">
+      <span class="company-name">Anthropic</span>
+      <span class="company-marker"></span>Company tail
+    </th><td><time>8/9/2026</time></td></tr></table>
+    """
+
+    normalized = article_fetcher._normalize_semantic_tables(markup)
+
+    assert '<span class="company-name">Anthropic</span>' in normalized
+    assert "company-marker" not in normalized
+    assert "Company tail" in normalized
+
+
+def test_semantic_table_normalization_parser_failure_keeps_original(monkeypatch):
+    markup = "<table><tr><td><time>8/9/2026</time></td></tr></table>"
+
+    def fail_to_parse(*args, **kwargs):
+        raise article_fetcher.etree.ParserError("parser limit reached")
+
+    monkeypatch.setattr(article_fetcher.lxml_html, "document_fromstring", fail_to_parse)
+
+    assert article_fetcher._normalize_semantic_tables(markup) == markup
+
+
 def test_fetch_article_text_extracts_html_from_public_url():
     response = FakeResponse(
         b"""
