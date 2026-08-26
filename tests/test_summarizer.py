@@ -146,6 +146,20 @@ def test_summary_prompt_uses_fetched_text_when_story_text_is_whitespace():
     assert " \n\t" not in prompt
 
 
+def test_summary_uses_fetched_article_when_story_text_also_exists():
+    body = research_body()
+    item = candidate(
+        story_text='<a href="https://web.archive.org/example">archive</a>',
+        fetched_text=body,
+        title="Enterprise AI study",
+    )
+
+    assert route_summary_mode(item) == SUMMARY_MODE_RESEARCH_REPORT
+    prompt = build_summary_prompt(item)
+    assert "Output tokens increased sevenfold" in prompt
+    assert "web.archive.org" not in prompt
+
+
 def test_summary_prompt_marks_youtube_captions_as_possibly_generated():
     item = candidate(
         story_text="",

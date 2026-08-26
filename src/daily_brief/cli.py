@@ -322,16 +322,8 @@ def run_generate(
     summary_candidates = [*ai_items, *selected_hot_items]
     summarization_inputs = []
     for candidate in summary_candidates:
-        if candidate.story.story_text.strip():
-            candidate.article_retrieval = ArticleRetrieval(
-                status="not_needed",
-                method="story_text",
-                extractor="plain_text",
-            )
-            candidate.summary_basis = "story_text"
-        elif (
-            not candidate.story.story_text.strip()
-            and candidate.story.source_url
+        if (
+            candidate.story.source_url
             and candidate.story.source_url != candidate.story.hn_discussion_url
         ):
             article_client = article_fetcher or partial(
@@ -440,6 +432,13 @@ def run_generate(
                         original_failure.error_message,
                     )
                     continue
+        elif candidate.story.story_text.strip():
+            candidate.article_retrieval = ArticleRetrieval(
+                status="not_needed",
+                method="story_text",
+                extractor="plain_text",
+            )
+            candidate.summary_basis = "story_text"
         else:
             candidate.article_retrieval = ArticleRetrieval(
                 status="not_needed",

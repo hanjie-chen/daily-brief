@@ -170,7 +170,7 @@ def route_summary_mode(candidate: Candidate) -> str:
     """Select one summary mode from fetched, untrusted source material."""
     story_text = candidate.story.story_text.strip()
     fetched_text = candidate.story.fetched_text.strip()
-    body = story_text or fetched_text
+    body = fetched_text or story_text
     if not body:
         return SUMMARY_MODE_GENERIC
 
@@ -196,7 +196,7 @@ def build_summary_context(candidate: Candidate) -> SummaryContext:
     """Build the bounded, summary-specific view without mutating source text."""
     story_text = candidate.story.story_text.strip()
     fetched_text = candidate.story.fetched_text.strip()
-    body = story_text or fetched_text
+    body = fetched_text or story_text
     if not body:
         return SummaryContext(
             text="(not available)",
