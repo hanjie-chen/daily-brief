@@ -37,8 +37,13 @@ class FakeBackend:
         self.summary_ids = []
 
     def classify(self, candidates):
-        self.classifier_ids = [item.story.hn_item_id for item in candidates]
-        return {"1", "unknown"}
+        self.classifier_ids.extend(item.story.hn_item_id for item in candidates)
+        return {
+            item.story.hn_item_id: (
+                "ai" if item.story.hn_item_id == "1" else "core_non_ai"
+            )
+            for item in candidates
+        }
 
     def summarize(self, item):
         self.summary_ids.append(item.story.hn_item_id)
@@ -65,17 +70,19 @@ def test_capture_and_load_preserve_exact_unicode_model_inputs(tmp_path):
     capture_model_evaluation_input(
         input_path,
         "2026-07-20",
-        [candidate("1", "分类标题")],
+        [[candidate("1", "分类标题", fetched_text="分类正文")]],
         [candidate("2", "摘要标题", fetched_text="抓取的中文与 English 正文")],
     )
 
     loaded = load_model_evaluation_input(input_path)
 
     assert loaded.date_label == "2026-07-20"
-    assert loaded.classifier_candidates[0].story.title == "分类标题"
+    assert loaded.exploration_classification_batches[0][0].story.title == "分类标题"
     assert (
-        loaded.summary_candidates[0].story.fetched_text
-        == "抓取的中文与 English 正文"
+        loaded.exploration_classification_batches[0][0].story.fetched_text == "分类正文"
+    )
+    assert (
+        loaded.summary_candidates[0].story.fetched_text == "抓取的中文与 English 正文"
     )
 
 
@@ -121,7 +128,10 @@ def test_evaluation_replays_one_input_without_touching_state_files(tmp_path):
     capture_model_evaluation_input(
         input_path,
         "2026-07-20",
-        [candidate("1", "AI tool"), candidate("2", "Database")],
+        [
+            [candidate("1", "AI tool", fetched_text="AI article evidence")],
+            [candidate("2", "Database", fetched_text="Database article evidence")],
+        ],
         [candidate("1", "AI tool"), candidate("2", "Database")],
     )
     original_input = input_path.read_bytes()
@@ -135,7 +145,7 @@ def test_evaluation_replays_one_input_without_touching_state_files(tmp_path):
         input_path,
         data_dir / "model-evaluations",
         backend,
-        clock=iter([1.0, 1.5, 2.0, 2.25, 3.0, 3.75]).__next__,
+        clock=iter([1.0, 1.5, 2.0, 2.25, 3.0, 3.75, 4.0, 4.5]).__next__,
         evaluated_at="2026-07-20T09:00:00+08:00",
     )
 
@@ -148,12 +158,22 @@ def test_evaluation_replays_one_input_without_touching_state_files(tmp_path):
     payload = json.loads(result.output_path.read_text(encoding="utf-8"))
     assert payload["backend"] == "fake"
     assert payload["evaluated_at"] == "2026-07-20T09:00:00+08:00"
-    assert payload["classifier"] == {
-        "status": "success",
-        "duration_seconds": 0.5,
-        "selected_ids": ["1"],
-        "error": "",
-    }
+    assert payload["exploration_classifications"] == [
+        {
+            "item_ids": ["1"],
+            "status": "success",
+            "duration_seconds": 0.5,
+            "decisions": [{"id": "1", "label": "ai"}],
+            "error": "",
+        },
+        {
+            "item_ids": ["2"],
+            "status": "success",
+            "duration_seconds": 0.25,
+            "decisions": [{"id": "2", "label": "core_non_ai"}],
+            "error": "",
+        },
+    ]
     assert [item["summary"] for item in payload["summaries"]] == [
         "中文摘要：AI tool",
         "中文摘要：Database",
@@ -165,7 +185,7 @@ def test_evaluation_records_partial_failures_and_continues(tmp_path):
     capture_model_evaluation_input(
         input_path,
         "2026-07-20",
-        [candidate("1", "AI tool")],
+        [[candidate("1", "AI tool", fetched_text="AI article evidence")]],
         [candidate("1", "AI tool"), candidate("2", "Database")],
     )
 
@@ -178,7 +198,7 @@ def test_evaluation_records_partial_failures_and_continues(tmp_path):
 
     payload = json.loads(result.output_path.read_text(encoding="utf-8"))
     assert result.failures == 2
-    assert payload["classifier"]["status"] == "failed"
+    assert payload["exploration_classifications"][0]["status"] == "failed"
     assert payload["summaries"][0]["status"] == "success"
     assert payload["summaries"][1]["status"] == "failed"
     assert payload["summaries"][1]["summary"] == ""
@@ -212,7 +232,7 @@ def test_evaluation_normalizes_summary_before_writing_artifact(tmp_path):
         {
             "schema_version": 1,
             "date": "20-07-2026",
-            "classifier_candidates": [],
+            "exploration_classification_batches": [],
             "summary_candidates": [],
         },
     ],

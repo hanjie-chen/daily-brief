@@ -25,6 +25,10 @@ class PublicBriefValidationError(ValueError):
     pass
 
 
+class EmptyPublicBriefError(PublicBriefValidationError):
+    pass
+
+
 def validate_public_brief(payload) -> None:
     if not isinstance(payload, dict) or set(payload) != ROOT_KEYS:
         raise PublicBriefValidationError(
@@ -47,36 +51,27 @@ def validate_public_brief(payload) -> None:
         section = sections[section_name]
         if not isinstance(section, dict) or set(section) != SECTION_KEYS:
             raise PublicBriefValidationError(f"invalid {section_name} section")
-        _validate_text(
-            section["note"], f"{section_name}.note", 500, allow_empty=True
-        )
+        _validate_text(section["note"], f"{section_name}.note", 500, allow_empty=True)
         items = section["items"]
         if not isinstance(items, list) or len(items) > item_limit:
-            raise PublicBriefValidationError(
-                f"{section_name} contains too many items"
-            )
+            raise PublicBriefValidationError(f"{section_name} contains too many items")
         for item in items:
             _validate_item(item)
         total_items += len(items)
 
     if total_items == 0:
-        raise PublicBriefValidationError("brief must contain at least one item")
+        raise EmptyPublicBriefError("brief must contain at least one item")
 
 
 def _validate_item(item) -> None:
     if not isinstance(item, dict) or set(item) != ITEM_KEYS:
-        raise PublicBriefValidationError(
-            "item must contain the exact schema v2 fields"
-        )
+        raise PublicBriefValidationError("item must contain the exact schema v2 fields")
 
     hn_item_id = _validate_text(item["hn_item_id"], "hn_item_id", 32)
     if not hn_item_id.isdigit():
         raise PublicBriefValidationError("hn_item_id must contain only digits")
     content_status = item["content_status"]
-    if (
-        not isinstance(content_status, str)
-        or content_status not in CONTENT_STATUSES
-    ):
+    if not isinstance(content_status, str) or content_status not in CONTENT_STATUSES:
         raise PublicBriefValidationError("unsupported content_status")
 
     _validate_text(item["title"], "title", 300)

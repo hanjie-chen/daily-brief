@@ -49,6 +49,14 @@ def publish_brief(
         raise PublishError(f"{PUBLISH_TOKEN_ENV} is required")
 
     brief_path = _brief_path(Path(brief_dir), date_label)
+    marker_path = _no_content_marker_path(Path(brief_dir), date_label)
+    if not brief_path.exists():
+        if marker_path.is_file():
+            LOGGER.info("component=publisher status=no_content date=%s", date_label)
+            return PublishResult(published=0, skipped=1)
+        raise PublishError(f"brief JSON not found: {brief_path}")
+    if not brief_path.is_file():
+        raise PublishError(f"brief JSON is not a file: {brief_path}")
     state_path = Path(data_dir) / "publish-state.json"
     published_hashes = _load_state(state_path)
     payload_bytes = brief_path.read_bytes()
@@ -75,10 +83,11 @@ def _brief_path(brief_dir: Path, date_label: str) -> Path:
         date.fromisoformat(date_label)
     except ValueError as exc:
         raise PublishError(f"invalid date: {date_label}") from exc
-    path = brief_dir / f"{date_label}.json"
-    if not path.is_file():
-        raise PublishError(f"brief JSON not found: {path}")
-    return path
+    return brief_dir / f"{date_label}.json"
+
+
+def _no_content_marker_path(brief_dir: Path, date_label: str) -> Path:
+    return brief_dir / f"{date_label}.no-content"
 
 
 def _validate_local_payload(path: Path, payload_bytes: bytes) -> None:

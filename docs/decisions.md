@@ -45,3 +45,27 @@
 理由:目标是取得足以支持可靠摘要、且可审计的材料,而不是绕过 Reuters 的站点防护。搜索 snippet 或供应商生成的 answer 无法提供同等的材料 provenance;任意搜索结果又存在误匹配风险。域名 allowlist、本地抓取与多信号验证把首期范围限制在已真实验证的 Reuters 通讯社转载模式。
 
 边界:discovery 位于 `cli.run_generate(...)` 的原始 Reuters failure 路径,不进入通用 `article_fetcher.py`,因此转载候选失败不会递归触发搜索。公共 source URL 继续指向 Reuters,public schema 不变。candidate audit 记录实际材料 URL、最终 transport/extractor/attempts、原始 Reuters/Jina 失败链和有界 recovery 结果。缺少 `TAVILY_API_KEY`、供应商错误、候选抓取或验证失败都 fail closed,保留原始阻止状态且不影响整份简报。
+
+# 2026-08-26: 圈外探索使用正文四态分类并 fail closed
+
+决定:圈外探索候选在取得正文后分类为 `ai`、`core_non_ai`、`outside` 或 `uncertain`;正文抓取失败单独记为 `topic_unknown`。只有正文明确表明主要主题位于计算与软件领域之外时才允许 `outside` 占用探索名额。跨领域、主题模糊、材料不足或 excerpt 截断导致证据不完整时一律使用 `uncertain`,不能把“没有看到圈内证据”当作“确认圈外”。
+
+分类边界:AI 是文章的主要对象、核心方法或关键因果因素,或者文章主要讨论 AI 的影响、安全或政策问题时,属于 `ai`;仅顺带提及 AI 或只使用 AI 润色文章不算。软件开发、编程语言、数据库、计算机系统与硬件、互联网技术、密码学、开源项目和开发工具等属于 `core_non_ai`;SQLite、分布式系统或密码学文章不能因为不是 AI 就进入圈外探索。
+
+理由:触发案例 `Everything I own, owned` 的标题和 host 没有 Claude 证据,原来的 title-only 二元分类把证据不足错误地记录成确定的非 AI。公开栏目的产品语义是受控的圈外探索,需要正面圈外证据,而不是“未被识别成 AI”。四态分类把代码对齐到 `docs/product.md` 已有的 Content Scope,并用非对称的 `outside` 门槛避免同类错误的镜像版本。
+
+# 2026-08-26: 正文分类只保证探索纯度,暂不改变 AI ranking
+
+决定:删除最多 30 条候选的 title-only 批量分类。AI 栏继续只由明确关键词候选按现有 score 和最多五条的限额选定。圈外探索改为沿 HN 热度顺序有界游走:只检查达到热门门槛的未匹配候选,最多抓取和分类五条正文,取得两条 `outside` 后立即停止。正文阶段发现的 `ai` 不加入 AI pool,但写入 `topic_route=article_ai` 和日志,供以后评估 content-aware scoring。筛选阶段已经取得的正文在条目入选后直接复用于摘要。
+
+理由:2026-08-17 至 2026-08-26 的历史回放中,原 `classifier_ai` 连续十天进入 AI 前五的次数为 0;该调用的实际作用只是从第二栏排除疑似 AI,没有提升 AI 召回。标题关键词候选带约 5 分 keyword bonus,正文确认 AI 的候选只有纯 heat score,两者在当前评分体系中不可直接公平竞争。此次改动因此只修复每天实际发生作用的探索栏目纯度,不暗中改变 AI scoring 或栏目限额。
+
+边界:至多五个探索候选即使最终未入选,也可能在 candidate audit 中带有 retrieval provenance;其他未入选候选仍是 `not_attempted`。若真实日志反复出现值得保留的 `article_ai`,应单独设计 content-aware scoring,而不是给正文分类结果临时加 bonus。探索栏因热门候选全部属于核心领域而为空是预期结果;扩大探索来源属于另一项产品决策。
+
+# 2026-08-26: 删除热门栏兜底并显式表示 no-content
+
+决定:圈外探索不再在没有候选达到门槛时强行填一条。若 AI 与圈外两个栏目都为空,`generate` 仍写 Markdown 和 candidate audit,但不写 schema 不允许的空 public JSON;改为原子写入空文件 `briefs/YYYY-MM-DD.no-content`。有有效内容时先原子替换同日 public JSON,再清理 marker;无内容时先删除同日 JSON,再原子写 marker。
+
+发布规则:同日 JSON 一旦存在就必须通过完整校验并发布,即使残留 marker 也不能掩盖损坏的 JSON。只有 JSON 不存在且 marker 存在时,`publish` 才以 info 日志正常、幂等地跳过;两者都不存在仍视为 generate 未运行、异常中断或产物丢失并报错。仅圈外栏目为空、AI 栏有内容时仍是正常有效简报。
+
+理由:产品原则明确不应为填满数量而增加噪声,而 public schema v2 又有 `total_items > 0` 的合法性要求。显式 marker 能区分“当天确定无内容”和“生成没有完成”,并使独立运行的 publish 命令在预期 no-content 日期不制造假告警。空 marker 的日期由文件名承载,无需再维护第二套 schema。

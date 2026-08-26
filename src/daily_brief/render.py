@@ -14,8 +14,10 @@ def render_markdown(
     hot_note: str = "",
 ) -> str:
     lines = [f"# Daily Brief - {date_label}", ""]
+    if not ai_items and not hot_items:
+        lines.extend(["No publishable items selected today.", ""])
     lines.extend(_render_section("Hacker News: AI", ai_items, ai_note))
-    lines.extend(_render_section("Hacker News: Non-AI Hot", hot_items, hot_note))
+    lines.extend(_render_section("Hacker News: Beyond the Bubble", hot_items, hot_note))
     return "\n".join(lines).rstrip() + "\n"
 
 

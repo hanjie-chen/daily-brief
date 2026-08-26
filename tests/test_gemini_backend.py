@@ -124,12 +124,21 @@ def request_payload(opener: RecordingOpener, index: int = 0):
 
 def test_classifier_uses_pinned_model_structured_output_and_header_key():
     opener = RecordingOpener(
-        FakeResponse(interaction({"selected_ids": ["1"]}))
+        FakeResponse(
+            interaction(
+                {
+                    "decisions": [
+                        {"id": "1", "label": "ai"},
+                        {"id": "2", "label": "core_non_ai"},
+                    ]
+                }
+            )
+        )
     )
     backend = GeminiBackend(api_key="secret-key", opener=opener)
     items = [candidate("1", "Qwen release"), candidate("2", "SQLite release")]
 
-    assert backend.classify(items) == {"1"}
+    assert backend.classify(items) == {"1": "ai", "2": "core_non_ai"}
 
     request, timeout = opener.calls[0]
     payload = request_payload(opener)
@@ -140,10 +149,15 @@ def test_classifier_uses_pinned_model_structured_output_and_header_key():
     assert payload["model"] == DEFAULT_CLASSIFIER_MODEL
     assert payload["store"] is False
     assert payload["response_format"]["mime_type"] == "application/json"
-    selected_schema = payload["response_format"]["schema"]["properties"][
-        "selected_ids"
+    decisions_schema = payload["response_format"]["schema"]["properties"]["decisions"]
+    assert decisions_schema["items"]["properties"]["id"]["enum"] == ["1", "2"]
+    assert decisions_schema["items"]["properties"]["label"]["enum"] == [
+        "ai",
+        "core_non_ai",
+        "outside",
+        "uncertain",
     ]
-    assert selected_schema["items"]["enum"] == ["1", "2"]
+    assert decisions_schema["minItems"] == 2
     assert payload["generation_config"] == {"max_output_tokens": 512}
     assert "temperature" not in json.dumps(payload)
     assert "Qwen release" in payload["input"]
@@ -154,7 +168,7 @@ def test_classifier_skips_api_for_empty_input():
     opener = RecordingOpener()
     backend = GeminiBackend(api_key="secret-key", opener=opener)
 
-    assert backend.classify([]) == set()
+    assert backend.classify([]) == {}
     assert opener.calls == []
 
 
@@ -202,7 +216,7 @@ def test_transient_http_errors_retry_with_retry_after_and_backoff():
     opener = RecordingOpener(
         http_error(429, "quota reached", retry_after="2.5"),
         http_error(503, "temporarily unavailable"),
-        FakeResponse(interaction({"selected_ids": []})),
+        FakeResponse(interaction({"decisions": [{"id": "1", "label": "core_non_ai"}]})),
     )
     backend = GeminiBackend(
         api_key="secret-key",
@@ -212,7 +226,7 @@ def test_transient_http_errors_retry_with_retry_after_and_backoff():
         retry_base_seconds=1,
     )
 
-    assert backend.classify([candidate("1", "Database")]) == set()
+    assert backend.classify([candidate("1", "Database")]) == {"1": "core_non_ai"}
     assert len(opener.calls) == 3
     assert delays == [2.5, 2.25]
 
@@ -222,7 +236,7 @@ def test_quota_error_retries_with_bounded_provider_retry_delay():
     opener = RecordingOpener(
         http_error(429, "quota reached. Please retry in 39.106525668s."),
         http_error(429, "quota reached", retry_delay="999s"),
-        FakeResponse(interaction({"selected_ids": []})),
+        FakeResponse(interaction({"decisions": [{"id": "1", "label": "core_non_ai"}]})),
     )
     backend = GeminiBackend(
         api_key="secret-key",
@@ -230,7 +244,7 @@ def test_quota_error_retries_with_bounded_provider_retry_delay():
         sleeper=delays.append,
     )
 
-    assert backend.classify([candidate("1", "Database")]) == set()
+    assert backend.classify([candidate("1", "Database")]) == {"1": "core_non_ai"}
     assert len(opener.calls) == 3
     assert delays == [39.106525668, 60.0]
 
@@ -269,10 +283,20 @@ def test_non_retryable_http_error_fails_once_without_exposing_key():
 @pytest.mark.parametrize(
     ("output", "message"),
     [
-        ({"selected_ids": ["unknown"]}, "unknown IDs"),
-        ({"selected_ids": ["1", "1"]}, "duplicate IDs"),
-        ({"selected_ids": [1]}, "non-string IDs"),
-        ({"selected_ids": [], "extra": True}, "invalid object"),
+        ({"decisions": [{"id": "unknown", "label": "ai"}]}, "unknown IDs"),
+        (
+            {
+                "decisions": [
+                    {"id": "1", "label": "ai"},
+                    {"id": "1", "label": "outside"},
+                ]
+            },
+            "duplicate IDs",
+        ),
+        ({"decisions": [{"id": "1", "label": "unsupported"}]}, "unknown labels"),
+        ({"decisions": []}, "omitted item IDs"),
+        ({"decisions": [{"id": 1, "label": "ai"}]}, "invalid decisions"),
+        ({"decisions": [], "extra": True}, "invalid object"),
         ([], "must be an object"),
         ("not JSON", "invalid structured JSON"),
     ],

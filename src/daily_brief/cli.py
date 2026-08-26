@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -11,12 +14,12 @@ from functools import partial
 from pathlib import Path
 
 from .article_fetcher import ArticleFetchError, ArticleFetchResult, fetch_article
-from .config import TIMEZONE, TOPIC_CLASSIFIER_MAX_CANDIDATES
+from .config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES, NON_AI_MAX_ITEMS, TIMEZONE
 from .gemini_backend import GeminiBackend
 from .history import load_history, recent_ids, save_history
 from .hn_client import fetch_algolia_stories, fetch_hot_stories
 from .keywords import match_keywords
-from .model_backend import ModelBackend
+from .model_backend import ModelBackend, ensure_topic_decisions
 from .model_evaluation import (
     ModelEvaluationInputError,
     capture_model_evaluation_input,
@@ -30,9 +33,15 @@ from .models import (
     SyndicatedRecovery,
 )
 from .publisher import PublishError, publish_brief
+from .public_schema import EmptyPublicBriefError, validate_public_brief
 from .render import render_candidates_json, render_markdown, render_public_brief_json
 from .scoring import score_candidate
-from .selection import dedupe_candidates, select_sections
+from .selection import (
+    dedupe_candidates,
+    rank_exploration_candidates,
+    select_ai_candidates,
+    select_exploration_candidates,
+)
 from .summarizer import (
     article_fetch_failure_summary,
     build_summary_context,
@@ -59,7 +68,8 @@ LOGGER = logging.getLogger(__name__)
 class GenerateResult:
     brief_path: Path
     data_path: Path
-    public_json_path: Path
+    public_json_path: Path | None
+    no_content_marker_path: Path | None = None
     model_input_path: Path | None = None
 
 
@@ -256,195 +266,104 @@ def run_generate(
         for candidate in eligible_candidates
         if not _has_non_weak_keyword_match(candidate)
     ]
-    classification_batch = sorted(
-        unmatched_candidates,
-        key=lambda candidate: (
-            candidate.score,
-            candidate.story.points,
-            candidate.story.comments,
-        ),
-        reverse=True,
-    )[:TOPIC_CLASSIFIER_MAX_CANDIDATES]
     backend = model_backend
     if classifier is None or summarizer is None:
         backend = backend or GeminiBackend.from_environment()
     topic_classifier = classifier or backend
-    classification_started = clock()
-    try:
-        classified_ai_ids = topic_classifier.classify(classification_batch)
-    except Exception as exc:
-        classification_duration = clock() - classification_started
-        for candidate in classification_batch:
-            candidate.topic_route = "classifier_failed"
-        LOGGER.error(
-            "component=topic_classifier status=failed candidates=%d duration=%.3fs error=%s message=%s",
-            len(classification_batch),
-            classification_duration,
-            type(exc).__name__,
-            exc,
-        )
-        classified_ai_ids = set()
-    else:
-        classification_duration = clock() - classification_started
-        for candidate in classification_batch:
-            candidate.topic_route = (
-                "classifier_ai"
-                if candidate.story.hn_item_id in classified_ai_ids
-                else "classifier_non_ai"
+    ai_items = select_ai_candidates(known_ai_candidates)
+    ranked_exploration = rank_exploration_candidates(unmatched_candidates)
+    outside_candidates: list[Candidate] = []
+    classification_batches: list[list[Candidate]] = []
+    inspected_exploration = 0
+    for candidate in ranked_exploration[:EXPLORATION_CLASSIFIER_MAX_CANDIDATES]:
+        if len(outside_candidates) == NON_AI_MAX_ITEMS:
+            break
+        inspected_exploration += 1
+        if not _prepare_candidate_material(
+            candidate,
+            article_fetcher,
+            syndicated_finder,
+            window,
+        ):
+            candidate.topic_route = "topic_unknown"
+            candidate.rejection_reason = "topic_unknown"
+            continue
+        if not (candidate.story.fetched_text or candidate.story.story_text).strip():
+            candidate.topic_route = "article_uncertain"
+            candidate.rejection_reason = "topic_uncertain"
+            continue
+
+        classification_batch = [candidate]
+        classification_batches.append(classification_batch)
+        classification_started = clock()
+        try:
+            decisions = ensure_topic_decisions(
+                topic_classifier.classify(classification_batch),
+                classification_batch,
             )
+            label_decision = decisions[candidate.story.hn_item_id]
+        except Exception as exc:
+            classification_duration = clock() - classification_started
+            candidate.topic_route = "classifier_failed"
+            candidate.rejection_reason = "topic_unknown"
+            LOGGER.error(
+                "component=topic_classifier status=failed item_id=%s "
+                "duration=%.3fs error=%s message=%s",
+                candidate.story.hn_item_id,
+                classification_duration,
+                type(exc).__name__,
+                exc,
+            )
+            continue
+
+        classification_duration = clock() - classification_started
+        candidate.topic_route = f"article_{label_decision}"
         LOGGER.info(
-            "component=topic_classifier status=success candidates=%d ai_items=%d duration=%.3fs",
-            len(classification_batch),
-            sum(
-                candidate.topic_route == "classifier_ai"
-                for candidate in classification_batch
-            ),
+            "component=topic_classifier status=success item_id=%s label=%s "
+            "duration=%.3fs",
+            candidate.story.hn_item_id,
+            label_decision,
             classification_duration,
         )
+        if label_decision == "outside":
+            outside_candidates.append(candidate)
+        elif label_decision == "uncertain":
+            candidate.rejection_reason = "topic_uncertain"
+        else:
+            candidate.rejection_reason = "core_topic_not_exploration"
+            if label_decision == "ai":
+                LOGGER.info(
+                    "component=exploration_router item_id=%s status=article_ai "
+                    "score=%.4f",
+                    candidate.story.hn_item_id,
+                    candidate.score,
+                )
 
-    classified_ai_candidates = [
-        candidate
-        for candidate in unmatched_candidates
-        if candidate.story.hn_item_id in classified_ai_ids
-    ]
-    for candidate in classified_ai_candidates:
-        candidate.why = "topic classifier: AI"
-    classified_ai_identity = {id(candidate) for candidate in classified_ai_candidates}
-    ai_pool = [*known_ai_candidates, *classified_ai_candidates]
-    hot_pool = [
-        candidate
-        for candidate in unmatched_candidates
-        if id(candidate) not in classified_ai_identity
-    ]
-
-    ai_items, selected_hot_items = select_sections(ai_pool, hot_pool)
+    selected_hot_items = select_exploration_candidates(outside_candidates)
+    LOGGER.info(
+        "component=exploration_router status=completed inspected=%d outside=%d "
+        "selected=%d limit=%d",
+        inspected_exploration,
+        len(outside_candidates),
+        len(selected_hot_items),
+        EXPLORATION_CLASSIFIER_MAX_CANDIDATES,
+    )
     summary_client = summarizer or backend
     summary_candidates = [*ai_items, *selected_hot_items]
     summarization_inputs = []
     for candidate in summary_candidates:
         if (
-            candidate.story.source_url
-            and candidate.story.source_url != candidate.story.hn_discussion_url
+            candidate.article_retrieval.status == "not_attempted"
+            and not _prepare_candidate_material(
+                candidate,
+                article_fetcher,
+                syndicated_finder,
+                window,
+            )
         ):
-            article_client = article_fetcher or partial(
-                fetch_article,
-                wayback_not_before=_wayback_not_before(
-                    candidate.story.created_at,
-                    window.start,
-                ),
-                wayback_not_after=window.end,
-            )
-            try:
-                material = _coerce_fetched_material(
-                    article_client(candidate.story.source_url),
-                    candidate.story.source_url,
-                )
-                candidate.story = replace(candidate.story, fetched_text=material.text)
-                candidate.article_retrieval = ArticleRetrieval(
-                    status="success",
-                    method=material.method,
-                    extractor=material.extractor,
-                    attempts=material.attempts,
-                    fallback_attempted=bool(material.fallback_reason),
-                    fallback_reason=material.fallback_reason,
-                    retrieved_url=material.retrieved_url,
-                    material_origin=material.material_origin,
-                )
-                candidate.summary_basis = (
-                    "youtube_caption"
-                    if material.method == "youtube_caption"
-                    else "fetched_article"
-                )
-                LOGGER.info(
-                    "component=article_fetch item_id=%s status=success method=%s "
-                    "extractor=%s fallback_reason=%s attempts=%d",
-                    candidate.story.hn_item_id,
-                    material.method,
-                    material.extractor or "none",
-                    material.fallback_reason or "none",
-                    material.attempts,
-                )
-            except Exception as exc:
-                original_failure = _retrieval_failure(exc)
-                recovery = _SyndicatedOutcome(
-                    material=None,
-                    audit=SyndicatedRecovery(),
-                )
-                if _should_attempt_reuters_recovery(candidate, original_failure):
-                    recovery = _attempt_syndicated_recovery(
-                        candidate,
-                        article_client,
-                        syndicated_finder,
-                    )
-                if recovery.material is not None:
-                    material = recovery.material
-                    candidate.story = replace(
-                        candidate.story, fetched_text=material.text
-                    )
-                    candidate.article_retrieval = ArticleRetrieval(
-                        status="success",
-                        method=material.method,
-                        extractor=material.extractor,
-                        attempts=material.attempts,
-                        fallback_attempted=bool(material.fallback_reason),
-                        fallback_reason=material.fallback_reason,
-                        retrieved_url=material.retrieved_url,
-                        material_origin="syndicated_copy",
-                        origin_failure=original_failure,
-                        syndicated_recovery=recovery.audit,
-                    )
-                    candidate.summary_basis = "fetched_article"
-                    LOGGER.info(
-                        "component=article_fetch item_id=%s status=success "
-                        "material_origin=syndicated_copy method=%s extractor=%s "
-                        "fallback_reason=%s attempts=%d",
-                        candidate.story.hn_item_id,
-                        material.method,
-                        material.extractor or "none",
-                        material.fallback_reason or "none",
-                        material.attempts,
-                    )
-                else:
-                    candidate.article_retrieval = ArticleRetrieval(
-                        status="failed",
-                        method=original_failure.method,
-                        extractor=original_failure.extractor,
-                        attempts=original_failure.attempts,
-                        fallback_attempted=original_failure.fallback_attempted,
-                        fallback_reason=original_failure.fallback_reason,
-                        error_type=original_failure.error_type,
-                        error_code=original_failure.error_code,
-                        error_message=original_failure.error_message,
-                        syndicated_recovery=recovery.audit,
-                    )
-                    candidate.summary = article_fetch_failure_summary(candidate)
-                    candidate.summary_basis = "none"
-                    candidate.summary_status = "skipped"
-                    LOGGER.error(
-                        "component=article_fetch item_id=%s status=failed method=%s "
-                        "extractor=%s error=%s code=%s attempts=%d message=%s",
-                        candidate.story.hn_item_id,
-                        original_failure.method,
-                        original_failure.extractor or "none",
-                        original_failure.error_type,
-                        original_failure.error_code,
-                        original_failure.attempts,
-                        original_failure.error_message,
-                    )
-                    continue
-        elif candidate.story.story_text.strip():
-            candidate.article_retrieval = ArticleRetrieval(
-                status="not_needed",
-                method="story_text",
-                extractor="plain_text",
-            )
-            candidate.summary_basis = "story_text"
-        else:
-            candidate.article_retrieval = ArticleRetrieval(
-                status="not_needed",
-                method="title",
-            )
-            candidate.summary_basis = "title_only"
+            continue
+        if candidate.article_retrieval.status == "failed":
+            continue
         candidate.summary_mode = route_summary_mode(candidate)
         summary_context = build_summary_context(candidate)
         candidate.summary_context_strategy = summary_context.strategy
@@ -464,6 +383,7 @@ def run_generate(
 
     output_path = Path(output_dir) / f"{label}.md"
     public_json_path = Path(output_dir) / f"{label}.json"
+    no_content_marker_path = Path(output_dir) / f"{label}.no-content"
     data_path = Path(data_dir) / f"{label}-hn-candidates.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     data_path.parent.mkdir(parents=True, exist_ok=True)
@@ -473,19 +393,30 @@ def run_generate(
         ),
         encoding="utf-8",
     )
-    public_json_path.write_text(
-        render_public_brief_json(
-            label,
-            generated_at or datetime.now(TIMEZONE).isoformat(timespec="seconds"),
-            ai_items,
-            selected_hot_items,
-            ai_note=("AI 数据源本次不可用，当前栏目可能不完整。" if ai_note else ""),
-            hot_note=(
-                "HN 热门数据源本次不可用，当前栏目可能不完整。" if hot_note else ""
-            ),
-        ),
-        encoding="utf-8",
+    public_json_text = render_public_brief_json(
+        label,
+        generated_at or datetime.now(TIMEZONE).isoformat(timespec="seconds"),
+        ai_items,
+        selected_hot_items,
+        ai_note=("AI 数据源本次不可用，当前栏目可能不完整。" if ai_note else ""),
+        hot_note=("HN 热门数据源本次不可用，当前栏目可能不完整。" if hot_note else ""),
     )
+    public_payload = json.loads(public_json_text)
+    written_public_json_path: Path | None
+    written_marker_path: Path | None
+    try:
+        validate_public_brief(public_payload)
+    except EmptyPublicBriefError:
+        public_json_path.unlink(missing_ok=True)
+        _atomic_write_text(no_content_marker_path, "")
+        written_public_json_path = None
+        written_marker_path = no_content_marker_path
+        LOGGER.info("component=generate status=no_content date=%s", label)
+    else:
+        _atomic_write_text(public_json_path, public_json_text)
+        no_content_marker_path.unlink(missing_ok=True)
+        written_public_json_path = public_json_path
+        written_marker_path = None
     data_path.write_text(render_candidates_json(candidates), encoding="utf-8")
     model_input_path = None
     if capture_model_inputs:
@@ -493,7 +424,7 @@ def run_generate(
         capture_model_evaluation_input(
             model_input_path,
             label,
-            classification_batch,
+            classification_batches,
             summarization_inputs,
         )
     try:
@@ -522,9 +453,144 @@ def run_generate(
     return GenerateResult(
         brief_path=output_path,
         data_path=data_path,
-        public_json_path=public_json_path,
+        public_json_path=written_public_json_path,
+        no_content_marker_path=written_marker_path,
         model_input_path=model_input_path,
     )
+
+
+def _prepare_candidate_material(
+    candidate: Candidate,
+    article_fetcher_fn,
+    syndicated_finder: SyndicatedCopyFinder | None,
+    window,
+) -> bool:
+    if (
+        candidate.story.source_url
+        and candidate.story.source_url != candidate.story.hn_discussion_url
+    ):
+        article_client = article_fetcher_fn or partial(
+            fetch_article,
+            wayback_not_before=_wayback_not_before(
+                candidate.story.created_at,
+                window.start,
+            ),
+            wayback_not_after=window.end,
+        )
+        try:
+            material = _coerce_fetched_material(
+                article_client(candidate.story.source_url),
+                candidate.story.source_url,
+            )
+        except Exception as exc:
+            original_failure = _retrieval_failure(exc)
+            recovery = _SyndicatedOutcome(
+                material=None,
+                audit=SyndicatedRecovery(),
+            )
+            if _should_attempt_reuters_recovery(candidate, original_failure):
+                recovery = _attempt_syndicated_recovery(
+                    candidate,
+                    article_client,
+                    syndicated_finder,
+                )
+            if recovery.material is None:
+                candidate.article_retrieval = ArticleRetrieval(
+                    status="failed",
+                    method=original_failure.method,
+                    extractor=original_failure.extractor,
+                    attempts=original_failure.attempts,
+                    fallback_attempted=original_failure.fallback_attempted,
+                    fallback_reason=original_failure.fallback_reason,
+                    error_type=original_failure.error_type,
+                    error_code=original_failure.error_code,
+                    error_message=original_failure.error_message,
+                    syndicated_recovery=recovery.audit,
+                )
+                candidate.summary = article_fetch_failure_summary(candidate)
+                candidate.summary_basis = "none"
+                candidate.summary_status = "skipped"
+                LOGGER.error(
+                    "component=article_fetch item_id=%s status=failed method=%s "
+                    "extractor=%s error=%s code=%s attempts=%d message=%s",
+                    candidate.story.hn_item_id,
+                    original_failure.method,
+                    original_failure.extractor or "none",
+                    original_failure.error_type,
+                    original_failure.error_code,
+                    original_failure.attempts,
+                    original_failure.error_message,
+                )
+                return False
+
+            material = recovery.material
+            candidate.story = replace(candidate.story, fetched_text=material.text)
+            candidate.article_retrieval = ArticleRetrieval(
+                status="success",
+                method=material.method,
+                extractor=material.extractor,
+                attempts=material.attempts,
+                fallback_attempted=bool(material.fallback_reason),
+                fallback_reason=material.fallback_reason,
+                retrieved_url=material.retrieved_url,
+                material_origin="syndicated_copy",
+                origin_failure=original_failure,
+                syndicated_recovery=recovery.audit,
+            )
+            candidate.summary_basis = "fetched_article"
+            LOGGER.info(
+                "component=article_fetch item_id=%s status=success "
+                "material_origin=syndicated_copy method=%s extractor=%s "
+                "fallback_reason=%s attempts=%d",
+                candidate.story.hn_item_id,
+                material.method,
+                material.extractor or "none",
+                material.fallback_reason or "none",
+                material.attempts,
+            )
+            return True
+
+        candidate.story = replace(candidate.story, fetched_text=material.text)
+        candidate.article_retrieval = ArticleRetrieval(
+            status="success",
+            method=material.method,
+            extractor=material.extractor,
+            attempts=material.attempts,
+            fallback_attempted=bool(material.fallback_reason),
+            fallback_reason=material.fallback_reason,
+            retrieved_url=material.retrieved_url,
+            material_origin=material.material_origin,
+        )
+        candidate.summary_basis = (
+            "youtube_caption"
+            if material.method == "youtube_caption"
+            else "fetched_article"
+        )
+        LOGGER.info(
+            "component=article_fetch item_id=%s status=success method=%s "
+            "extractor=%s fallback_reason=%s attempts=%d",
+            candidate.story.hn_item_id,
+            material.method,
+            material.extractor or "none",
+            material.fallback_reason or "none",
+            material.attempts,
+        )
+        return True
+
+    if candidate.story.story_text.strip():
+        candidate.article_retrieval = ArticleRetrieval(
+            status="not_needed",
+            method="story_text",
+            extractor="plain_text",
+        )
+        candidate.summary_basis = "story_text"
+    else:
+        candidate.article_retrieval = ArticleRetrieval(
+            status="not_needed",
+            method="title",
+        )
+        candidate.summary_basis = "title_only"
+    return True
 
 
 def _model_backend() -> ModelBackend:
@@ -543,6 +609,27 @@ def _has_non_weak_keyword_match(candidate: Candidate) -> bool:
 
 def _bounded_error_message(exc: Exception, max_chars: int = 500) -> str:
     return " ".join(str(exc).split())[:max_chars]
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_file.write(content)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+            temporary_path = Path(temporary_file.name)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
 
 
 def _coerce_fetched_material(fetch_result, retrieved_url: str) -> _FetchedMaterial:

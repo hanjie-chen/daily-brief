@@ -41,7 +41,7 @@ def test_render_markdown_contains_required_fields():
     assert "Source: https://example.com" in markdown
     assert "Discussion: https://news.ycombinator.com/item?id=1" in markdown
     assert "Stats: 30 points / 5 comments" in markdown
-    assert "## Hacker News: Non-AI Hot" in markdown
+    assert "## Hacker News: Beyond the Bubble" in markdown
     assert "No items selected." in markdown
     assert markdown.endswith("\n")
 
@@ -50,7 +50,7 @@ def test_render_markdown_shows_empty_ai_section():
     markdown = render_markdown("2026-07-08", [], [candidate(section="non_ai_hot")])
 
     assert "## Hacker News: AI\n\nNo items selected." in markdown
-    assert "## Hacker News: Non-AI Hot" in markdown
+    assert "## Hacker News: Beyond the Bubble" in markdown
 
 
 def test_render_markdown_normalizes_multiline_display_text():

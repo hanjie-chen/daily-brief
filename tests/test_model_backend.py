@@ -1,4 +1,6 @@
-from daily_brief.model_backend import ensure_selected_ids
+import pytest
+
+from daily_brief.model_backend import ensure_topic_decisions
 from daily_brief.models import Candidate, Story
 
 
@@ -17,7 +19,23 @@ def candidate(item_id: str) -> Candidate:
     )
 
 
-def test_selected_ids_are_limited_to_supplied_candidates():
+def test_topic_decisions_cover_exactly_supplied_candidates():
     items = [candidate("1"), candidate("2")]
 
-    assert ensure_selected_ids(["2", "unknown"], items) == {"2"}
+    assert ensure_topic_decisions({"1": "ai", "2": "outside"}, items) == {
+        "1": "ai",
+        "2": "outside",
+    }
+
+
+@pytest.mark.parametrize(
+    "decisions",
+    [
+        {"1": "ai"},
+        {"1": "ai", "2": "outside", "unknown": "outside"},
+        {"1": "ai", "2": "unsupported"},
+    ],
+)
+def test_topic_decisions_reject_missing_unknown_or_invalid_values(decisions):
+    with pytest.raises(ValueError):
+        ensure_topic_decisions(decisions, [candidate("1"), candidate("2")])

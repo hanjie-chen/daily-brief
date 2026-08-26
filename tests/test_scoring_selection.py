@@ -1,7 +1,12 @@
 from daily_brief.models import Candidate, KeywordMatch, Story
 from daily_brief.config import AI_MIN_POINTS, AI_MIN_SCORE
 from daily_brief.scoring import score_candidate
-from daily_brief.selection import dedupe_candidates, select_sections
+from daily_brief.selection import (
+    dedupe_candidates,
+    rank_exploration_candidates,
+    select_exploration_candidates,
+    select_sections,
+)
 
 
 def story(item_id, title, points=50, comments=10, url=None):
@@ -18,7 +23,14 @@ def story(item_id, title, points=50, comments=10, url=None):
 
 
 def match(keyword, weight, bonus):
-    return KeywordMatch(keyword=keyword, weight=weight, source="text", bonus=bonus, start=0, end=len(keyword))
+    return KeywordMatch(
+        keyword=keyword,
+        weight=weight,
+        source="text",
+        bonus=bonus,
+        start=0,
+        end=len(keyword),
+    )
 
 
 def test_score_uses_log_heat_and_bonus_caps():
@@ -64,7 +76,12 @@ def test_score_topic_bonus_ignores_non_topic_high_match():
 
 def test_score_caps_combined_keyword_bonus_and_topic_bonus_independently():
     candidate = Candidate(
-        story=story(1, "AI coding with Gemini, AI workflow, and AI benchmark", points=100, comments=20),
+        story=story(
+            1,
+            "AI coding with Gemini, AI workflow, and AI benchmark",
+            points=100,
+            comments=20,
+        ),
         matched_keywords=[
             match("AI coding", "high", 4.0),
             match("AI agent", "high", 4.0),
@@ -181,7 +198,10 @@ def test_score_and_why_count_duplicate_keyword_occurrences_once():
 
 def test_select_ai_requires_score_and_minimum_points():
     low_heat = score_candidate(
-        Candidate(story=story(1, "AI agent", points=0, comments=0), matched_keywords=[match("AI agent", "high", 4.0)])
+        Candidate(
+            story=story(1, "AI agent", points=0, comments=0),
+            matched_keywords=[match("AI agent", "high", 4.0)],
+        )
     )
     enough_heat = score_candidate(
         Candidate(
@@ -199,7 +219,9 @@ def test_select_ai_requires_score_and_minimum_points():
 
 def test_select_ai_rejects_candidate_below_minimum_score_with_enough_points():
     low_score = Candidate(
-        story=story(1, "AI mention without enough signal", points=AI_MIN_POINTS, comments=0),
+        story=story(
+            1, "AI mention without enough signal", points=AI_MIN_POINTS, comments=0
+        ),
         matched_keywords=[match("AI", "weak", 0.0)],
         score=AI_MIN_SCORE - 0.01,
     )
@@ -269,7 +291,9 @@ def test_select_ai_dedupe_prefers_eligible_duplicate_before_score():
         score=AI_MIN_SCORE + 1.0,
     )
 
-    ai_items, hot_items = select_sections([ineligible_high_score, eligible_lower_score], [])
+    ai_items, hot_items = select_sections(
+        [ineligible_high_score, eligible_lower_score], []
+    )
 
     assert ai_items == [eligible_lower_score]
     assert hot_items == []
@@ -280,7 +304,7 @@ def test_select_ai_dedupe_prefers_eligible_duplicate_before_score():
     assert ineligible_high_score.rejection_reason == "not_selected"
 
 
-def test_non_ai_hot_uses_threshold_or_fallback():
+def test_non_ai_hot_uses_explicit_threshold_without_fallback():
     hot = Candidate(story=story(1, "SQLite release", points=320, comments=12))
     fallback = Candidate(story=story(2, "Compiler notes", points=90, comments=10))
 
@@ -289,11 +313,16 @@ def test_non_ai_hot_uses_threshold_or_fallback():
     assert ai_items == []
     assert [item.story.hn_item_id for item in hot_items] == ["1"]
     assert hot_items[0].section == "non_ai_hot"
+    assert fallback.selected is False
 
 
 def test_non_ai_hot_selects_two_when_multiple_stories_meet_threshold():
-    highest_points = Candidate(story=story(1, "SQLite release", points=330, comments=12))
-    highest_comments = Candidate(story=story(2, "Compiler notes", points=90, comments=180))
+    highest_points = Candidate(
+        story=story(1, "SQLite release", points=330, comments=12)
+    )
+    highest_comments = Candidate(
+        story=story(2, "Compiler notes", points=90, comments=180)
+    )
 
     ai_items, hot_items = select_sections([], [highest_comments, highest_points])
 
@@ -303,34 +332,74 @@ def test_non_ai_hot_selects_two_when_multiple_stories_meet_threshold():
     assert highest_comments.selected is True
 
 
-def test_non_ai_hot_fallback_selects_one_when_no_threshold_met():
+def test_non_ai_hot_does_not_fill_section_when_no_threshold_is_met():
     first = Candidate(story=story(1, "SQLite release", points=120, comments=12))
     second = Candidate(story=story(2, "Compiler notes", points=90, comments=10))
 
     ai_items, hot_items = select_sections([], [second, first])
 
     assert ai_items == []
-    assert [item.story.hn_item_id for item in hot_items] == ["1"]
-    assert hot_items[0].why == "today's hottest non-AI story"
+    assert hot_items == []
+    assert first.selected is False
+    assert second.selected is False
+
+
+def test_exploration_ranking_and_selection_are_pure_threshold_operations():
+    highest_points = Candidate(story=story(1, "History", points=330, comments=12))
+    highest_comments = Candidate(story=story(2, "Biology", points=90, comments=180))
+    below_threshold = Candidate(story=story(3, "Other", points=90, comments=10))
+
+    ranked = rank_exploration_candidates(
+        [highest_comments, below_threshold, highest_points]
+    )
+    selected = select_exploration_candidates(ranked)
+
+    assert ranked == [highest_points, highest_comments]
+    assert selected == [highest_points, highest_comments]
+    assert all(item.section == "non_ai_hot" for item in selected)
+    assert all(
+        item.why == "HN-wide hot story outside core interests" for item in selected
+    )
+    assert below_threshold.selected is False
 
 
 def test_non_ai_hot_suppresses_transitive_duplicate_of_selected_ai():
     selected_ai = Candidate(
-        story=story(1, "AI agent", points=AI_MIN_POINTS, comments=10, url="https://example.com/ai"),
+        story=story(
+            1,
+            "AI agent",
+            points=AI_MIN_POINTS,
+            comments=10,
+            url="https://example.com/ai",
+        ),
         matched_keywords=[match("AI agent", "high", 4.0)],
         score=AI_MIN_SCORE + 2.0,
     )
     ai_bridge = Candidate(
-        story=story(1, "AI agent bridge", points=AI_MIN_POINTS - 1, comments=10, url="https://example.com/bridge"),
+        story=story(
+            1,
+            "AI agent bridge",
+            points=AI_MIN_POINTS - 1,
+            comments=10,
+            url="https://example.com/bridge",
+        ),
         matched_keywords=[match("AI agent", "high", 4.0)],
         score=AI_MIN_SCORE + 1.0,
     )
     transitive_hot = Candidate(
-        story=story(2, "Bridge duplicate hot story", points=320, comments=20, url="https://example.com/bridge")
+        story=story(
+            2,
+            "Bridge duplicate hot story",
+            points=320,
+            comments=20,
+            url="https://example.com/bridge",
+        )
     )
     fallback = Candidate(story=story(3, "Other hot story", points=250, comments=20))
 
-    ai_items, hot_items = select_sections([selected_ai, ai_bridge], [transitive_hot, fallback])
+    ai_items, hot_items = select_sections(
+        [selected_ai, ai_bridge], [transitive_hot, fallback]
+    )
 
     assert ai_items == [selected_ai]
     assert transitive_hot not in hot_items
@@ -351,7 +420,9 @@ def test_dedupe_prefers_ai_candidate_by_hn_item_id():
 def test_dedupe_prefers_ai_candidate_by_source_url_with_different_hn_item_ids():
     shared_url = "https://example.com/shared-story"
     ai_candidate = Candidate(story=story(1, "AI story", url=shared_url), section="ai")
-    hot_candidate = Candidate(story=story(2, "AI story duplicate", url=shared_url), section="non_ai_hot")
+    hot_candidate = Candidate(
+        story=story(2, "AI story duplicate", url=shared_url), section="non_ai_hot"
+    )
 
     deduped = dedupe_candidates([hot_candidate, ai_candidate])
 
@@ -362,7 +433,9 @@ def test_dedupe_prefers_ai_candidate_by_source_url_with_different_hn_item_ids():
 
 def test_dedupe_collapses_transitive_duplicate_chain_and_prefers_ai_candidate():
     shared_url = "https://example.com/transitive-story"
-    hn_duplicate = Candidate(story=story(1, "HN duplicate", url="https://example.com/hn"), score=20.0)
+    hn_duplicate = Candidate(
+        story=story(1, "HN duplicate", url="https://example.com/hn"), score=20.0
+    )
     bridge = Candidate(story=story(1, "Bridge duplicate", url=shared_url), score=30.0)
     ai_candidate = Candidate(
         story=story(2, "AI duplicate", url=shared_url),

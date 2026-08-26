@@ -208,6 +208,77 @@ def test_publish_rejects_empty_brief(tmp_path):
         )
 
 
+def test_publish_repeatedly_skips_no_content_marker_without_network_or_state(
+    tmp_path,
+):
+    brief_dir = tmp_path / "briefs"
+    brief_dir.mkdir()
+    (brief_dir / "2026-07-25.no-content").write_bytes(b"")
+    calls = []
+
+    first = publish_brief(
+        brief_dir,
+        tmp_path / "data",
+        date_label="2026-07-25",
+        endpoint="https://example.com",
+        token="x",
+        opener=lambda *_args, **_kwargs: calls.append(True),
+    )
+    second = publish_brief(
+        brief_dir,
+        tmp_path / "data",
+        date_label="2026-07-25",
+        endpoint="https://example.com",
+        token="x",
+        opener=lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    assert first == second
+    assert first.published == 0
+    assert first.skipped == 1
+    assert calls == []
+    assert not (tmp_path / "data/publish-state.json").exists()
+
+
+def test_existing_invalid_json_is_not_hidden_by_no_content_marker(tmp_path):
+    brief_dir = tmp_path / "briefs"
+    brief_dir.mkdir()
+    (brief_dir / "2026-07-25.json").write_text("not json", encoding="utf-8")
+    (brief_dir / "2026-07-25.no-content").write_bytes(b"")
+
+    with pytest.raises(PublishError, match="invalid brief JSON"):
+        publish_brief(
+            brief_dir,
+            tmp_path / "data",
+            date_label="2026-07-25",
+            endpoint="https://example.com",
+            token="x",
+            opener=lambda *_args, **_kwargs: pytest.fail(
+                "invalid JSON must not reach the network"
+            ),
+        )
+
+
+def test_valid_json_takes_precedence_over_stale_no_content_marker(tmp_path):
+    brief_dir = tmp_path / "briefs"
+    _write_brief(brief_dir)
+    (brief_dir / "2026-07-25.no-content").write_bytes(b"")
+    calls = []
+
+    result = publish_brief(
+        brief_dir,
+        tmp_path / "data",
+        date_label="2026-07-25",
+        endpoint="https://example.com",
+        token="x",
+        opener=lambda request, timeout: calls.append(request) or FakeResponse(),
+    )
+
+    assert result.published == 1
+    assert result.skipped == 0
+    assert len(calls) == 1
+
+
 def test_publish_rejects_schema_v1_before_network(tmp_path):
     brief_dir = tmp_path / "briefs"
     path = _write_brief(brief_dir)
@@ -239,11 +310,7 @@ def test_publish_rejects_schema_v1_before_network(tmp_path):
         ),
         (
             lambda item: item.update(
-                {
-                    "discussion_url": (
-                        "https://news.ycombinator.com/item?id=999"
-                    )
-                }
+                {"discussion_url": ("https://news.ycombinator.com/item?id=999")}
             ),
             "discussion_url must match hn_item_id",
         ),
@@ -273,9 +340,7 @@ def test_publish_rejects_invalid_item_contract_before_network(
 
 def test_publish_requires_endpoint_and_token(tmp_path):
     with pytest.raises(PublishError, match="DAILY_BRIEF_PUBLISH_URL"):
-        publish_brief(
-            tmp_path, tmp_path, "2026-07-25", endpoint="", token=""
-        )
+        publish_brief(tmp_path, tmp_path, "2026-07-25", endpoint="", token="")
 
     with pytest.raises(PublishError, match="DAILY_BRIEF_PUBLISH_TOKEN"):
         publish_brief(

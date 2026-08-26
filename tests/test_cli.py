@@ -138,6 +138,152 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
     ] == ["3"]
 
 
+def test_no_content_marker_and_public_json_replace_each_other_on_rerun(tmp_path):
+    output_dir = tmp_path / "briefs"
+    data_dir = tmp_path / "data"
+
+    empty = run_generate(
+        output_dir=output_dir,
+        data_dir=data_dir,
+        date_label="2026-07-08",
+        algolia_stories=[],
+        hot_stories=[],
+        summarizer=FakeSummarizer(),
+    )
+
+    assert empty.public_json_path is None
+    assert empty.no_content_marker_path == output_dir / "2026-07-08.no-content"
+    assert empty.no_content_marker_path.read_bytes() == b""
+    assert not (output_dir / "2026-07-08.json").exists()
+    assert "No publishable items selected today." in empty.brief_path.read_text(
+        encoding="utf-8"
+    )
+
+    populated = run_generate(
+        output_dir=output_dir,
+        data_dir=data_dir,
+        date_label="2026-07-08",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        summarizer=FakeSummarizer(),
+    )
+
+    assert populated.public_json_path == output_dir / "2026-07-08.json"
+    assert populated.public_json_path.exists()
+    assert populated.no_content_marker_path is None
+    assert not (output_dir / "2026-07-08.no-content").exists()
+
+    empty_again = run_generate(
+        output_dir=output_dir,
+        data_dir=data_dir,
+        date_label="2026-07-08",
+        algolia_stories=[],
+        hot_stories=[],
+        summarizer=FakeSummarizer(),
+    )
+
+    assert empty_again.public_json_path is None
+    assert empty_again.no_content_marker_path.exists()
+    assert not (output_dir / "2026-07-08.json").exists()
+
+
+def test_exploration_walk_selects_only_confirmed_outside_topics(tmp_path):
+    classifier = FakeClassifier(
+        {
+            "1": "ai",
+            "2": "core_non_ai",
+            "3": "uncertain",
+            "4": "outside",
+            "5": "outside",
+        }
+    )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[
+            story(str(item_id), f"Ambiguous hot story {item_id}", points=600 - item_id)
+            for item_id in range(1, 6)
+        ],
+        hot_stories=[],
+        classifier=classifier,
+        article_fetcher=lambda url: "Grounded article evidence.",
+        summarizer=FakeSummarizer(),
+    )
+
+    records = {
+        item["hn_item_id"]: item
+        for item in json.loads(result.data_path.read_text(encoding="utf-8"))
+    }
+    assert classifier.seen_ids == ["1", "2", "3", "4", "5"]
+    assert records["1"]["topic_route"] == "article_ai"
+    assert records["2"]["topic_route"] == "article_core_non_ai"
+    assert records["3"]["topic_route"] == "article_uncertain"
+    assert records["3"]["rejection_reason"] == "topic_uncertain"
+    assert records["4"]["topic_route"] == "article_outside"
+    assert records["5"]["topic_route"] == "article_outside"
+    assert [
+        item["hn_item_id"]
+        for item in json.loads(result.public_json_path.read_text(encoding="utf-8"))[
+            "sections"
+        ]["non_ai_hot"]["items"]
+    ] == ["4", "5"]
+
+
+def test_exploration_fetch_failure_is_unknown_and_does_not_block_backfill(tmp_path):
+    fetched_urls = []
+
+    def fetch(url):
+        fetched_urls.append(url)
+        if url.endswith("/1"):
+            raise ArticleFetchError(
+                "unavailable", error_code="request_failed", method="direct"
+            )
+        return "Grounded outside article evidence."
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[
+            story("1", "First hot story", points=500, comments=20),
+            story("2", "Second hot story", points=400, comments=20),
+        ],
+        hot_stories=[],
+        classifier=FakeClassifier(),
+        article_fetcher=fetch,
+        summarizer=FakeSummarizer(),
+    )
+
+    records = {
+        item["hn_item_id"]: item
+        for item in json.loads(result.data_path.read_text(encoding="utf-8"))
+    }
+    assert records["1"]["topic_route"] == "topic_unknown"
+    assert records["1"]["rejection_reason"] == "topic_unknown"
+    assert records["2"]["selected"] is True
+    assert fetched_urls == ["https://example.com/1", "https://example.com/2"]
+
+
+def test_selected_exploration_article_reuses_classification_fetch(tmp_path):
+    fetched_urls = []
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[story("1", "Outside hot story", points=500, comments=20)],
+        hot_stories=[],
+        classifier=FakeClassifier(),
+        article_fetcher=lambda url: fetched_urls.append(url) or "Outside evidence.",
+        summarizer=FakeSummarizer(),
+    )
+
+    assert fetched_urls == ["https://example.com/1"]
+    assert result.public_json_path is not None
+
+
 def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path, capsys):
     result = run_generate(
         output_dir=tmp_path / "briefs",
@@ -243,7 +389,7 @@ def test_run_generate_writes_files_when_hot_fetch_fails(tmp_path, monkeypatch):
     assert result.brief_path.exists()
     assert result.data_path.exists()
     assert "HN hot data source failed" in markdown
-    assert "Non-AI Hot" in markdown
+    assert "Beyond the Bubble" in markdown
     assert "AI coding agent with Claude" in markdown
 
 
@@ -269,10 +415,7 @@ def test_run_generate_logs_source_success_and_completion(tmp_path, monkeypatch, 
 
     assert "source=algolia status=success stories=1 duration=2.500s" in caplog.text
     assert "source=hn_official status=success stories=0 duration=3.000s" in caplog.text
-    assert (
-        "component=topic_classifier status=success candidates=0 ai_items=0 duration=1.250s"
-        in caplog.text
-    )
+    assert "component=exploration_router status=completed inspected=0" in caplog.text
     assert "status=completed ai_items=1 hot_items=0" in caplog.text
 
 
@@ -321,10 +464,10 @@ def test_run_generate_keeps_non_ai_algolia_story_out_of_ai_section(tmp_path):
 
     markdown = result.brief_path.read_text(encoding="utf-8")
     ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
-        "## Hacker News: Non-AI Hot", 1
+        "## Hacker News: Beyond the Bubble", 1
     )[0]
     assert "SQLite release notes" not in ai_section
-    assert "## Hacker News: Non-AI Hot" in markdown
+    assert "## Hacker News: Beyond the Bubble" in markdown
     assert "SQLite release notes" in markdown
 
 
@@ -361,7 +504,7 @@ def test_run_generate_treats_weak_only_matches_as_non_ai_hot_candidates(tmp_path
 
     markdown = result.brief_path.read_text(encoding="utf-8")
     ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
-        "## Hacker News: Non-AI Hot", 1
+        "## Hacker News: Beyond the Bubble", 1
     )[0]
     assert "Database model migration guide" not in ai_section
     assert "New workflow engine reaches stable release" not in ai_section
@@ -526,7 +669,7 @@ def test_main_evaluate_model_replays_captured_input(tmp_path):
     capture_model_evaluation_input(
         input_path,
         "2026-07-20",
-        [Candidate(story("1", "AI tool"))],
+        [[Candidate(story("1", "AI tool", story_text="Grounded facts."))]],
         [Candidate(story("1", "AI tool", story_text="Grounded facts."))],
     )
 
@@ -544,12 +687,14 @@ def test_main_evaluate_model_replays_captured_input(tmp_path):
     output_path = data_dir / "model-evaluations/2026-07-20-fake.json"
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["backend"] == "fake"
-    assert payload["classifier"]["status"] == "success"
+    assert payload["exploration_classifications"][0]["status"] == "success"
     assert payload["summaries"][0]["summary"] == "Summary for AI tool"
 
 
-def test_classifier_promotes_high_heat_unmatched_story_to_ai(tmp_path, caplog):
-    classifier = FakeClassifier({"1"})
+def test_article_ai_is_removed_from_exploration_without_changing_ai_ranking(
+    tmp_path, caplog
+):
+    classifier = FakeClassifier({"2": "ai"})
 
     with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
         result = run_generate(
@@ -557,11 +702,20 @@ def test_classifier_promotes_high_heat_unmatched_story_to_ai(tmp_path, caplog):
             data_dir=tmp_path / "data",
             date_label="2026-07-20",
             algolia_stories=[
-                story("1", "Unseen Neural Product", points=750, comments=500)
+                story("1", "Claude release", points=40, comments=8),
+                story(
+                    "2",
+                    "Everything I own, owned",
+                    points=1350,
+                    comments=335,
+                ),
             ],
             hot_stories=[],
             classifier=classifier,
-            article_fetcher=lambda url: "",
+            article_fetcher=lambda url: (
+                "The author used Claude for agent-driven firmware reverse "
+                "engineering and analyzed security risks."
+            ),
             summarizer=FakeSummarizer(),
             clock=iter([10.0, 12.5]).__next__,
         )
@@ -571,17 +725,14 @@ def test_classifier_promotes_high_heat_unmatched_story_to_ai(tmp_path, caplog):
         item["hn_item_id"]: item
         for item in json.loads(result.data_path.read_text(encoding="utf-8"))
     }
+    assert "Claude release" in markdown
+    assert "Everything I own, owned" not in markdown
+    assert classifier.seen_ids == ["2"]
+    assert records["2"]["topic_route"] == "article_ai"
+    assert records["2"]["rejection_reason"] == "core_topic_not_exploration"
+    assert records["2"]["article_retrieval"]["status"] == "success"
     assert (
-        "Unseen Neural Product"
-        in markdown.split("## Hacker News: AI", 1)[1].split(
-            "## Hacker News: Non-AI Hot", 1
-        )[0]
-    )
-    assert "Why: topic classifier: AI" in markdown
-    assert classifier.seen_ids == ["1"]
-    assert records["1"]["topic_route"] == "classifier_ai"
-    assert (
-        "component=topic_classifier status=success candidates=1 ai_items=1 duration=2.500s"
+        "component=topic_classifier status=success item_id=2 label=ai duration=2.500s"
         in caplog.text
     )
 
@@ -598,13 +749,13 @@ def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
             ],
             hot_stories=[],
             classifier=RaisingClassifier(),
-            article_fetcher=lambda url: "",
+            article_fetcher=lambda url: "Grounded article evidence.",
             summarizer=FakeSummarizer(),
         )
 
     markdown = result.brief_path.read_text(encoding="utf-8")
     ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
-        "## Hacker News: Non-AI Hot", 1
+        "## Hacker News: Beyond the Bubble", 1
     )[0]
     assert "Claude release" in ai_section
     assert "Unseen Neural Product" not in ai_section
@@ -617,11 +768,16 @@ def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
     assert records["2"]["topic_route"] == "classifier_failed"
 
 
-def test_classifier_receives_only_thirty_hottest_unmatched_candidates(tmp_path):
-    classifier = FakeClassifier()
+def test_classifier_inspects_at_most_five_hottest_candidates(tmp_path):
+    classifier = FakeClassifier(default_label="core_non_ai")
     candidates = [
-        story(str(item_id), f"Unmatched story {item_id}", points=item_id, comments=0)
-        for item_id in range(1, 36)
+        story(
+            str(item_id),
+            f"Unmatched story {item_id}",
+            points=300 + item_id,
+            comments=0,
+        )
+        for item_id in range(1, 7)
     ]
 
     result = run_generate(
@@ -631,37 +787,37 @@ def test_classifier_receives_only_thirty_hottest_unmatched_candidates(tmp_path):
         algolia_stories=candidates,
         hot_stories=[],
         classifier=classifier,
-        article_fetcher=lambda url: "",
+        article_fetcher=lambda url: "Grounded article evidence.",
         summarizer=FakeSummarizer(),
     )
 
-    assert classifier.seen_ids == [str(item_id) for item_id in range(35, 5, -1)]
+    assert classifier.seen_ids == ["6", "5", "4", "3", "2"]
     records = {
         item["hn_item_id"]: item
         for item in json.loads(result.data_path.read_text(encoding="utf-8"))
     }
-    assert records["35"]["topic_route"] == "classifier_non_ai"
-    assert records["5"]["topic_route"] == "not_evaluated"
+    assert records["6"]["topic_route"] == "article_core_non_ai"
+    assert records["1"]["topic_route"] == "not_evaluated"
 
 
-def test_classifier_orders_unmatched_candidates_by_combined_heat(tmp_path):
-    classifier = FakeClassifier()
+def test_exploration_classifier_orders_candidates_by_points_then_comments(tmp_path):
+    classifier = FakeClassifier(default_label="core_non_ai")
 
     run_generate(
         output_dir=tmp_path / "briefs",
         data_dir=tmp_path / "data",
         date_label="2026-07-20",
         algolia_stories=[
-            story("points", "Higher points", points=100, comments=0),
-            story("discussion", "Hot discussion", points=90, comments=1000),
+            story("points", "Higher points", points=301, comments=0),
+            story("discussion", "Hot discussion", points=300, comments=1000),
         ],
         hot_stories=[],
         classifier=classifier,
-        article_fetcher=lambda url: "",
+        article_fetcher=lambda url: "Grounded article evidence.",
         summarizer=FakeSummarizer(),
     )
 
-    assert classifier.seen_ids == ["discussion", "points"]
+    assert classifier.seen_ids == ["points", "discussion"]
 
 
 def test_recently_selected_story_is_excluded_and_recorded_in_snapshot(tmp_path):
@@ -971,8 +1127,7 @@ def test_empty_content_jina_success_is_summarized_and_persisted(tmp_path):
 def test_wayback_article_is_summarized_with_archived_copy_provenance(tmp_path):
     summarizer = FakeSummarizer()
     replay_url = (
-        "https://web.archive.org/web/20260822062417id_/"
-        "https://www.felonybench.com/"
+        "https://web.archive.org/web/20260822062417id_/https://www.felonybench.com/"
     )
     result = run_generate(
         output_dir=tmp_path / "briefs",
@@ -1115,7 +1270,7 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
                 comments=8,
                 url="https://example.com/selected",
             ),
-            story("2", "Database release", points=20, comments=3),
+            story("2", "History of typography", points=350, comments=30),
         ],
         hot_stories=[],
         classifier=FakeClassifier(),
@@ -1126,8 +1281,15 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
 
     assert result.model_input_path == data_dir / "model-eval-inputs/2026-07-20.json"
     payload = json.loads(result.model_input_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
-    assert [item["hn_item_id"] for item in payload["classifier_candidates"]] == ["2"]
+    assert payload["schema_version"] == 2
+    assert [
+        batch[0]["hn_item_id"]
+        for batch in payload["exploration_classification_batches"]
+    ] == ["2"]
+    assert (
+        payload["exploration_classification_batches"][0][0]["fetched_text"]
+        == "Grounded article facts."
+    )
     assert [item["hn_item_id"] for item in payload["summary_candidates"]] == [
         "1",
         "2",
@@ -1736,13 +1898,18 @@ class CapturingSummarizer:
 
 
 class FakeClassifier:
-    def __init__(self, selected_ids=None):
-        self.selected_ids = set(selected_ids or set())
+    def __init__(self, decisions=None, default_label="outside"):
+        self.decisions = dict(decisions or {})
+        self.default_label = default_label
         self.seen_ids = []
 
     def classify(self, candidates):
-        self.seen_ids = [candidate.story.hn_item_id for candidate in candidates]
-        return self.selected_ids
+        item_ids = [candidate.story.hn_item_id for candidate in candidates]
+        self.seen_ids.extend(item_ids)
+        return {
+            item_id: self.decisions.get(item_id, self.default_label)
+            for item_id in item_ids
+        }
 
 
 class FakeModelBackend(FakeSummarizer, FakeClassifier):

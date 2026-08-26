@@ -14,7 +14,12 @@ from .models import Candidate
 def dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:
     return _dedupe_candidates(
         candidates,
-        key=lambda candidate, index: (_priority(candidate), candidate.score, *_hn_heat(candidate), -index),
+        key=lambda candidate, index: (
+            _priority(candidate),
+            candidate.score,
+            *_hn_heat(candidate),
+            -index,
+        ),
     )
 
 
@@ -77,7 +82,9 @@ def _duplicate_groups(candidates: list[Candidate]) -> list[list[int]]:
     return list(groups.values())
 
 
-def select_sections(ai_candidates: list[Candidate], non_ai_candidates: list[Candidate]) -> tuple[list[Candidate], list[Candidate]]:
+def select_sections(
+    ai_candidates: list[Candidate], non_ai_candidates: list[Candidate]
+) -> tuple[list[Candidate], list[Candidate]]:
     ai_pool = _dedupe_ai_candidates(ai_candidates)
     retained_ai_ids = {id(candidate) for candidate in ai_pool}
     ai_items = _select_ai(ai_pool)
@@ -98,7 +105,58 @@ def select_sections(ai_candidates: list[Candidate], non_ai_candidates: list[Cand
     return ai_items, hot_items
 
 
-def _selected_ai_duplicate_group(ai_candidates: list[Candidate], ai_items: list[Candidate]) -> list[Candidate]:
+def select_ai_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    """Select the bounded AI section without consulting external services."""
+
+    ai_pool = _dedupe_ai_candidates(candidates)
+    retained_ai_ids = {id(candidate) for candidate in ai_pool}
+    selected = _select_ai(ai_pool)
+    for candidate in candidates:
+        if id(candidate) not in retained_ai_ids:
+            candidate.selected = False
+            candidate.section = ""
+            candidate.rejection_reason = "not_selected"
+    return selected
+
+
+def rank_exploration_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    """Rank candidates that meet the explicit HN-wide heat threshold."""
+
+    for candidate in candidates:
+        candidate.selected = False
+        candidate.section = ""
+        candidate.rejection_reason = "not_selected"
+    return [
+        candidate
+        for candidate in sorted(
+            candidates,
+            key=lambda item: (item.story.points, item.story.comments),
+            reverse=True,
+        )
+        if candidate.story.points >= NON_AI_POINTS_THRESHOLD
+        or candidate.story.comments >= NON_AI_COMMENTS_THRESHOLD
+    ]
+
+
+def select_exploration_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    """Select already-confirmed outside-core candidates in ranked order."""
+
+    selected = candidates[:NON_AI_MAX_ITEMS]
+    for candidate in selected:
+        candidate.selected = True
+        candidate.section = "non_ai_hot"
+        candidate.rejection_reason = ""
+        candidate.why = "HN-wide hot story outside core interests"
+    for candidate in candidates[NON_AI_MAX_ITEMS:]:
+        candidate.selected = False
+        candidate.section = ""
+        candidate.rejection_reason = "not_selected"
+    return selected
+
+
+def _selected_ai_duplicate_group(
+    ai_candidates: list[Candidate], ai_items: list[Candidate]
+) -> list[Candidate]:
     selected_ai_ids = {id(candidate) for candidate in ai_items}
     duplicate_group: list[Candidate] = []
     for group in _duplicate_groups(ai_candidates):
@@ -132,18 +190,23 @@ def _meets_ai_minimum(candidate: Candidate) -> bool:
 
 
 def _select_non_ai_hot(candidates: list[Candidate]) -> list[Candidate]:
-    sorted_candidates = sorted(candidates, key=lambda item: (item.story.points, item.story.comments), reverse=True)
+    sorted_candidates = sorted(
+        candidates,
+        key=lambda item: (item.story.points, item.story.comments),
+        reverse=True,
+    )
     over_threshold = [
         candidate
         for candidate in sorted_candidates
-        if candidate.story.points >= NON_AI_POINTS_THRESHOLD or candidate.story.comments >= NON_AI_COMMENTS_THRESHOLD
+        if candidate.story.points >= NON_AI_POINTS_THRESHOLD
+        or candidate.story.comments >= NON_AI_COMMENTS_THRESHOLD
     ]
-    selected = over_threshold[:NON_AI_MAX_ITEMS] if over_threshold else sorted_candidates[:1]
+    selected = over_threshold[:NON_AI_MAX_ITEMS]
     for candidate in selected:
         candidate.selected = True
         candidate.section = "non_ai_hot"
         candidate.rejection_reason = ""
-        candidate.why = "HN-wide hot story" if over_threshold else "today's hottest non-AI story"
+        candidate.why = "HN-wide hot story"
     for candidate in sorted_candidates:
         if candidate not in selected:
             candidate.selected = False
@@ -168,7 +231,10 @@ def _hn_heat(candidate: Candidate) -> tuple[int, int]:
 
 
 def _same_story(left: Candidate, right: Candidate) -> bool:
-    same_hn_item = bool(left.story.hn_item_id and right.story.hn_item_id) and left.story.hn_item_id == right.story.hn_item_id
+    same_hn_item = (
+        bool(left.story.hn_item_id and right.story.hn_item_id)
+        and left.story.hn_item_id == right.story.hn_item_id
+    )
     same_source_url = (
         bool(left.story.source_url and right.story.source_url)
         and left.story.source_url == right.story.source_url

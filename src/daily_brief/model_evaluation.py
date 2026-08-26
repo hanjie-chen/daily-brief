@@ -12,15 +12,15 @@ from pathlib import Path
 
 from .config import (
     AI_MAX_ITEMS,
+    EXPLORATION_CLASSIFIER_MAX_CANDIDATES,
     NON_AI_MAX_ITEMS,
     TIMEZONE,
-    TOPIC_CLASSIFIER_MAX_CANDIDATES,
 )
-from .model_backend import ModelBackend, ensure_selected_ids
+from .model_backend import ModelBackend, ensure_topic_decisions
 from .models import Candidate, Story
 from .summarizer import normalize_summary_text
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_SUMMARY_CANDIDATES = AI_MAX_ITEMS + NON_AI_MAX_ITEMS
 MAX_TEXT_LENGTH = 256 * 1024
 BACKEND_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -33,7 +33,7 @@ class ModelEvaluationInputError(ValueError):
 @dataclass(frozen=True)
 class ModelEvaluationInput:
     date_label: str
-    classifier_candidates: list[Candidate]
+    exploration_classification_batches: list[list[Candidate]]
     summary_candidates: list[Candidate]
 
 
@@ -46,14 +46,15 @@ class ModelEvaluationResult:
 def capture_model_evaluation_input(
     path: Path,
     date_label: str,
-    classifier_candidates: list[Candidate],
+    exploration_classification_batches: list[list[Candidate]],
     summary_candidates: list[Candidate],
 ) -> None:
     payload = {
         "schema_version": SCHEMA_VERSION,
         "date": date_label,
-        "classifier_candidates": [
-            _serialize_candidate(candidate) for candidate in classifier_candidates
+        "exploration_classification_batches": [
+            [_serialize_candidate(candidate) for candidate in batch]
+            for batch in exploration_classification_batches
         ],
         "summary_candidates": [
             _serialize_candidate(candidate) for candidate in summary_candidates
@@ -73,7 +74,7 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
     expected_keys = {
         "schema_version",
         "date",
-        "classifier_candidates",
+        "exploration_classification_batches",
         "summary_candidates",
     }
     if set(payload) != expected_keys or payload["schema_version"] != SCHEMA_VERSION:
@@ -86,14 +87,10 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
         if date.fromisoformat(date_label).isoformat() != date_label:
             raise ValueError
     except ValueError as exc:
-        raise ModelEvaluationInputError(
-            "evaluation date must use YYYY-MM-DD"
-        ) from exc
+        raise ModelEvaluationInputError("evaluation date must use YYYY-MM-DD") from exc
 
-    classifier_candidates = _parse_candidate_list(
-        payload["classifier_candidates"],
-        "classifier_candidates",
-        TOPIC_CLASSIFIER_MAX_CANDIDATES,
+    classification_batches = _parse_classification_batches(
+        payload["exploration_classification_batches"],
     )
     summary_candidates = _parse_candidate_list(
         payload["summary_candidates"],
@@ -102,7 +99,7 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
     )
     return ModelEvaluationInput(
         date_label=date_label,
-        classifier_candidates=classifier_candidates,
+        exploration_classification_batches=classification_batches,
         summary_candidates=summary_candidates,
     )
 
@@ -120,27 +117,35 @@ def run_model_evaluation(
 
     evaluation_input = load_model_evaluation_input(input_path)
     failures = 0
-    classifier_started = clock()
-    try:
-        selected_ids = ensure_selected_ids(
-            backend.classify(evaluation_input.classifier_candidates),
-            evaluation_input.classifier_candidates,
-        )
-    except Exception as exc:
-        failures += 1
-        classifier_result = {
-            "status": "failed",
-            "duration_seconds": round(clock() - classifier_started, 3),
-            "selected_ids": [],
-            "error": _error_text(exc),
-        }
-    else:
-        classifier_result = {
-            "status": "success",
-            "duration_seconds": round(clock() - classifier_started, 3),
-            "selected_ids": sorted(selected_ids),
-            "error": "",
-        }
+    classification_results = []
+    for batch in evaluation_input.exploration_classification_batches:
+        classifier_started = clock()
+        try:
+            decisions = ensure_topic_decisions(backend.classify(batch), batch)
+        except Exception as exc:
+            failures += 1
+            classification_results.append(
+                {
+                    "item_ids": [item.story.hn_item_id for item in batch],
+                    "status": "failed",
+                    "duration_seconds": round(clock() - classifier_started, 3),
+                    "decisions": [],
+                    "error": _error_text(exc),
+                }
+            )
+        else:
+            classification_results.append(
+                {
+                    "item_ids": [item.story.hn_item_id for item in batch],
+                    "status": "success",
+                    "duration_seconds": round(clock() - classifier_started, 3),
+                    "decisions": [
+                        {"id": item_id, "label": decisions[item_id]}
+                        for item_id in sorted(decisions)
+                    ],
+                    "error": "",
+                }
+            )
 
     summary_results = []
     for candidate in evaluation_input.summary_candidates:
@@ -180,7 +185,7 @@ def run_model_evaluation(
             "backend": backend.name,
             "evaluated_at": evaluated_at
             or datetime.now(TIMEZONE).isoformat(timespec="seconds"),
-            "classifier": classifier_result,
+            "exploration_classifications": classification_results,
             "summaries": summary_results,
         },
     )
@@ -215,6 +220,27 @@ def _parse_candidate_list(value, field_name: str, maximum: int) -> list[Candidat
     return candidates
 
 
+def _parse_classification_batches(value) -> list[list[Candidate]]:
+    field_name = "exploration_classification_batches"
+    if (
+        not isinstance(value, list)
+        or len(value) > EXPLORATION_CLASSIFIER_MAX_CANDIDATES
+    ):
+        raise ModelEvaluationInputError(
+            f"{field_name} must contain at most "
+            f"{EXPLORATION_CLASSIFIER_MAX_CANDIDATES} batches"
+        )
+    batches = [_parse_candidate_list(batch, field_name, 1) for batch in value]
+    if any(len(batch) != 1 for batch in batches):
+        raise ModelEvaluationInputError(
+            f"each {field_name} batch must contain exactly one item"
+        )
+    item_ids = [batch[0].story.hn_item_id for batch in batches]
+    if len(set(item_ids)) != len(item_ids):
+        raise ModelEvaluationInputError(f"{field_name} contains duplicate item IDs")
+    return batches
+
+
 def _parse_candidate(value, field_name: str) -> Candidate:
     expected_keys = {
         "source",
@@ -245,7 +271,9 @@ def _parse_candidate(value, field_name: str) -> Candidate:
         if not isinstance(value[key], str) or len(value[key]) > maximum:
             raise ModelEvaluationInputError(f"invalid {key} in {field_name}")
     if not value["hn_item_id"] or not value["title"]:
-        raise ModelEvaluationInputError(f"item ID and title are required in {field_name}")
+        raise ModelEvaluationInputError(
+            f"item ID and title are required in {field_name}"
+        )
     for key in ("points", "comments"):
         if (
             not isinstance(value[key], int)

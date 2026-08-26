@@ -71,7 +71,9 @@ class GeminiBackend:
         if timeout_seconds <= 0:
             raise GeminiConfigurationError("Gemini timeout must be positive")
         if max_retries < 0 or max_retries > 10:
-            raise GeminiConfigurationError("Gemini max retries must be between 0 and 10")
+            raise GeminiConfigurationError(
+                "Gemini max retries must be between 0 and 10"
+            )
         if retry_base_seconds < 0:
             raise GeminiConfigurationError("Gemini retry base must not be negative")
         self.timeout_seconds = timeout_seconds
@@ -97,9 +99,9 @@ class GeminiBackend:
             **kwargs,
         )
 
-    def classify(self, candidates: list[Candidate]) -> set[str]:
+    def classify(self, candidates: list[Candidate]) -> dict[str, str]:
         if not candidates:
-            return set()
+            return {}
         allowed_ids = [candidate.story.hn_item_id for candidate in candidates]
         output = self._interact(
             task="classify",
@@ -108,38 +110,65 @@ class GeminiBackend:
             prompt=build_topic_classifier_prompt(
                 candidates,
                 (
-                    "Return one JSON object with a selected_ids array. "
+                    "Return one JSON object with a decisions array. "
                     "Do not include Markdown or explanations."
                 ),
             ),
             schema={
                 "type": "object",
                 "properties": {
-                    "selected_ids": {
+                    "decisions": {
                         "type": "array",
-                        "description": "IDs of supplied items classified as AI-related.",
-                        "items": {"type": "string", "enum": allowed_ids},
+                        "description": "One topic decision for every supplied item.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "enum": allowed_ids},
+                                "label": {
+                                    "type": "string",
+                                    "enum": [
+                                        "ai",
+                                        "core_non_ai",
+                                        "outside",
+                                        "uncertain",
+                                    ],
+                                },
+                            },
+                            "required": ["id", "label"],
+                            "additionalProperties": False,
+                        },
+                        "minItems": len(allowed_ids),
                         "maxItems": len(allowed_ids),
                     }
                 },
-                "required": ["selected_ids"],
+                "required": ["decisions"],
                 "additionalProperties": False,
             },
             max_output_tokens=CLASSIFIER_MAX_OUTPUT_TOKENS,
         )
-        if set(output) != {"selected_ids"} or not isinstance(
-            output["selected_ids"], list
-        ):
+        if set(output) != {"decisions"} or not isinstance(output["decisions"], list):
             raise GeminiResponseError("Gemini classifier returned an invalid object")
-        selected_ids = output["selected_ids"]
-        if not all(isinstance(item, str) for item in selected_ids):
-            raise GeminiResponseError("Gemini classifier returned non-string IDs")
-        if len(set(selected_ids)) != len(selected_ids):
+        decisions = output["decisions"]
+        if not all(
+            isinstance(item, dict)
+            and set(item) == {"id", "label"}
+            and isinstance(item["id"], str)
+            and isinstance(item["label"], str)
+            for item in decisions
+        ):
+            raise GeminiResponseError("Gemini classifier returned invalid decisions")
+        decision_ids = [item["id"] for item in decisions]
+        if len(set(decision_ids)) != len(decision_ids):
             raise GeminiResponseError("Gemini classifier returned duplicate IDs")
-        unknown_ids = set(selected_ids) - set(allowed_ids)
+        unknown_ids = set(decision_ids) - set(allowed_ids)
         if unknown_ids:
             raise GeminiResponseError("Gemini classifier returned unknown IDs")
-        return set(selected_ids)
+        if set(decision_ids) != set(allowed_ids):
+            raise GeminiResponseError("Gemini classifier omitted item IDs")
+        allowed_labels = {"ai", "core_non_ai", "outside", "uncertain"}
+        if any(item["label"] not in allowed_labels for item in decisions):
+            raise GeminiResponseError("Gemini classifier returned unknown labels")
+        return {item["id"]: item["label"] for item in decisions}
 
     def summarize(self, candidate: Candidate) -> str:
         output = self._interact(
@@ -199,7 +228,9 @@ class GeminiBackend:
         try:
             output = json.loads(text)
         except (json.JSONDecodeError, TypeError) as exc:
-            raise GeminiResponseError("Gemini returned invalid structured JSON") from exc
+            raise GeminiResponseError(
+                "Gemini returned invalid structured JSON"
+            ) from exc
         if not isinstance(output, dict):
             raise GeminiResponseError("Gemini structured output must be an object")
         _log_usage(task, model, response.get("usage"))
@@ -224,13 +255,9 @@ class GeminiBackend:
             except HTTPError as exc:
                 error_body = exc.read(MAX_RESPONSE_BYTES + 1)
                 if _is_retryable_status(exc.code) and attempt < self.max_retries:
-                    self.sleeper(
-                        self._retry_delay(attempt, exc.headers, error_body)
-                    )
+                    self.sleeper(self._retry_delay(attempt, exc.headers, error_body))
                     continue
-                raise GeminiAPIError(
-                    _http_error_message(exc.code, error_body)
-                ) from exc
+                raise GeminiAPIError(_http_error_message(exc.code, error_body)) from exc
             except (TimeoutError, URLError) as exc:
                 if attempt < self.max_retries:
                     self.sleeper(self._retry_delay(attempt, None))
