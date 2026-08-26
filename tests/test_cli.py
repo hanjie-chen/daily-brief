@@ -284,6 +284,45 @@ def test_selected_exploration_article_reuses_classification_fetch(tmp_path):
     assert result.public_json_path is not None
 
 
+def test_exploration_self_post_uses_story_text_without_external_fetch(tmp_path):
+    discussion_url = "https://news.ycombinator.com/item?id=1"
+    classifier = FakeClassifier()
+
+    def fail_if_fetched(url):
+        raise AssertionError("self-post exploration must not trigger external fetch")
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[
+            story(
+                "1",
+                "A year restoring historic footpaths",
+                points=500,
+                comments=20,
+                story_text="A field report about rural history and public footpaths.",
+                url=discussion_url,
+            )
+        ],
+        hot_stories=[],
+        classifier=classifier,
+        article_fetcher=fail_if_fetched,
+        summarizer=FakeSummarizer(),
+    )
+
+    records = json.loads(result.data_path.read_text(encoding="utf-8"))
+    assert classifier.seen_ids == ["1"]
+    assert records[0]["selected"] is True
+    assert records[0]["topic_route"] == "article_outside"
+    retrieval = records[0]["article_retrieval"]
+    assert retrieval["status"] == "not_needed"
+    assert retrieval["method"] == "story_text"
+    assert retrieval["extractor"] == "plain_text"
+    assert retrieval["attempts"] == 0
+    assert records[0]["summary_basis"] == "story_text"
+
+
 def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path, capsys):
     result = run_generate(
         output_dir=tmp_path / "briefs",
