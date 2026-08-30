@@ -297,18 +297,26 @@ def test_select_ai_dedupe_prefers_eligible_duplicate_before_score():
     assert ineligible_high_score.rejection_reason == "not_selected"
 
 
-def test_exploration_ranking_and_selection_are_pure_threshold_operations():
-    highest_points = Candidate(story=story(1, "History", points=330, comments=12))
-    highest_comments = Candidate(story=story(2, "Biology", points=90, comments=180))
-    below_threshold = Candidate(story=story(3, "Other", points=90, comments=10))
-    overflow = Candidate(story=story(4, "Culture", points=80, comments=160))
+def test_exploration_ranking_uses_score_and_selection_uses_hn_heat():
+    highest_points = Candidate(
+        story=story(1, "History", points=330, comments=12), score=7.0
+    )
+    highest_comments = Candidate(
+        story=story(2, "Biology", points=90, comments=180), score=9.0
+    )
+    below_threshold = Candidate(
+        story=story(3, "Other", points=90, comments=10), score=10.0
+    )
+    overflow = Candidate(
+        story=story(4, "Culture", points=80, comments=160), score=8.0
+    )
 
     ranked = rank_exploration_candidates(
         [highest_comments, below_threshold, overflow, highest_points]
     )
     selected = select_exploration_candidates(ranked)
 
-    assert ranked == [highest_points, highest_comments, overflow]
+    assert ranked == [below_threshold, highest_comments, overflow, highest_points]
     assert selected == [highest_points, highest_comments]
     assert all(item.section == "non_ai_hot" for item in selected)
     assert all(

@@ -41,6 +41,7 @@
 
 - `GEMINI_API_KEY`：生成简报时必填；
 - `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL`、`DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`：可选的固定模型 ID；
+- `DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS`：Gemini 请求（含内部重试）之间的最小间隔，默认 6 秒；覆盖模型时需按对应 RPM 配额同步调整；
 - `TAVILY_API_KEY`：可选；未配置时 Reuters 同稿转载 fallback 会安全跳过；
 - `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：可选，但必须同时配置，启用 Adobe PDF-to-Markdown；
 - `DAILY_BRIEF_PUBLISH_URL`、`DAILY_BRIEF_PUBLISH_TOKEN`：仅发布时需要，必须同时配置。

@@ -9,6 +9,7 @@ import pytest
 from daily_brief.gemini_backend import (
     DEFAULT_CLASSIFIER_MODEL,
     DEFAULT_SUMMARIZER_MODEL,
+    DEFAULT_MIN_REQUEST_INTERVAL_SECONDS,
     GeminiAPIError,
     GeminiBackend,
     GeminiConfigurationError,
@@ -44,6 +45,19 @@ class RecordingOpener:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class FakeClock:
+    def __init__(self, now=0.0):
+        self.now = now
+        self.delays = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, delay):
+        self.delays.append(delay)
+        self.now += delay
 
 
 def candidate(
@@ -177,6 +191,59 @@ def test_default_models_use_flash_lite():
 
     assert backend.classifier_model == "gemini-3.5-flash-lite"
     assert backend.summarizer_model == "gemini-3.5-flash-lite"
+    assert (
+        backend.min_request_interval_seconds
+        == DEFAULT_MIN_REQUEST_INTERVAL_SECONDS
+    )
+
+
+def test_request_interval_is_shared_by_classifier_and_summarizer():
+    clock = FakeClock(100.0)
+    opener = RecordingOpener(
+        FakeResponse(
+            interaction({"decisions": [{"id": "1", "label": "core_non_ai"}]})
+        ),
+        FakeResponse(interaction({"summary": "摘要。"})),
+    )
+    backend = GeminiBackend(
+        api_key="secret-key",
+        opener=opener,
+        clock=clock,
+        sleeper=clock.sleep,
+        min_request_interval_seconds=6.0,
+    )
+
+    backend.classify([candidate("1", "Database")])
+    clock.now += 1.0
+    backend.summarize(candidate("1", "Database", fetched_text="Facts."))
+
+    assert clock.delays == [5.0]
+    assert len(opener.calls) == 2
+
+
+def test_request_interval_also_covers_backend_retry_attempts():
+    clock = FakeClock()
+    opener = RecordingOpener(
+        URLError("offline"),
+        FakeResponse(
+            interaction({"decisions": [{"id": "1", "label": "core_non_ai"}]})
+        ),
+    )
+    backend = GeminiBackend(
+        api_key="secret-key",
+        opener=opener,
+        clock=clock,
+        sleeper=clock.sleep,
+        jitter=lambda start, end: 0,
+        max_retries=1,
+        retry_base_seconds=1.0,
+        min_request_interval_seconds=6.0,
+    )
+
+    assert backend.classify([candidate("1", "Database")]) == {"1": "core_non_ai"}
+
+    assert clock.delays == [1.0, 5.0]
+    assert len(opener.calls) == 2
 
 
 def test_summarizer_uses_fetched_text_and_logs_usage(caplog):
@@ -224,6 +291,7 @@ def test_transient_http_errors_retry_with_retry_after_and_backoff():
         sleeper=delays.append,
         jitter=lambda start, end: 0.25,
         retry_base_seconds=1,
+        min_request_interval_seconds=0,
     )
 
     assert backend.classify([candidate("1", "Database")]) == {"1": "core_non_ai"}
@@ -242,6 +310,7 @@ def test_quota_error_retries_with_bounded_provider_retry_delay():
         api_key="secret-key",
         opener=opener,
         sleeper=delays.append,
+        min_request_interval_seconds=0,
     )
 
     assert backend.classify([candidate("1", "Database")]) == {"1": "core_non_ai"}
@@ -258,6 +327,7 @@ def test_network_error_retries_only_up_to_configured_limit():
         sleeper=delays.append,
         jitter=lambda start, end: 0,
         max_retries=1,
+        min_request_interval_seconds=0,
     )
 
     with pytest.raises(GeminiAPIError, match="after 2 attempts"):
@@ -342,6 +412,7 @@ def test_from_environment_uses_explicit_model_overrides():
             "GEMINI_API_KEY": "key-from-env",
             "DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL": "gemini-classifier-stable",
             "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL": "gemini-summary-stable",
+            "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS": "12.5",
         },
         opener=RecordingOpener(),
     )
@@ -349,6 +420,17 @@ def test_from_environment_uses_explicit_model_overrides():
     assert backend.api_key == "key-from-env"
     assert backend.classifier_model == "gemini-classifier-stable"
     assert backend.summarizer_model == "gemini-summary-stable"
+    assert backend.min_request_interval_seconds == 12.5
+
+
+def test_from_environment_rejects_non_numeric_request_interval():
+    with pytest.raises(GeminiConfigurationError, match="must be numeric"):
+        GeminiBackend.from_environment(
+            {
+                "GEMINI_API_KEY": "key-from-env",
+                "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS": "fast",
+            }
+        )
 
 
 @pytest.mark.parametrize(
@@ -359,6 +441,8 @@ def test_from_environment_uses_explicit_model_overrides():
         {"api_key": "key", "timeout_seconds": 0},
         {"api_key": "key", "max_retries": -1},
         {"api_key": "key", "retry_base_seconds": -1},
+        {"api_key": "key", "min_request_interval_seconds": -1},
+        {"api_key": "key", "min_request_interval_seconds": float("inf")},
     ],
 )
 def test_invalid_configuration_is_rejected(kwargs):

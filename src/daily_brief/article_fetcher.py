@@ -41,6 +41,7 @@ from .youtube_captions import (
 )
 
 DEFAULT_TIMEOUT_SECONDS = 15
+CLASSIFICATION_HTTP_TIMEOUT_SECONDS = 8
 DIRECT_MAX_ATTEMPTS = 2
 DIRECT_RETRY_DELAY_SECONDS = 1
 DEFAULT_MAX_EXTRACTED_BYTES = 256 * 1024
@@ -48,6 +49,7 @@ DEFAULT_MAX_HTML_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_PDF_BYTES = 20 * 1024 * 1024
 DEFAULT_MAX_PDF_PAGES = 100
 DEFAULT_PDF_PARSE_TIMEOUT_SECONDS = 60
+CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS = 10
 DEFAULT_PDF_ADDRESS_SPACE_BYTES = 512 * 1024 * 1024
 DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS = 300
 # Kept as a compatibility name for direct helper callers and tests.
@@ -104,6 +106,25 @@ class ArticleFetchError(RuntimeError):
         self.fallback_attempted = fallback_attempted
         self.fallback_reason = fallback_reason
         self.attempts = attempts
+
+
+@dataclass(frozen=True)
+class ArticleFetchPolicy:
+    direct_max_attempts: int = DIRECT_MAX_ATTEMPTS
+    jina_enabled: bool = True
+    wayback_enabled: bool = True
+    youtube_enabled: bool = True
+    adobe_pdf_enabled: bool = True
+
+
+SUMMARY_FETCH_POLICY = ArticleFetchPolicy()
+CLASSIFICATION_FETCH_POLICY = ArticleFetchPolicy(
+    direct_max_attempts=1,
+    jina_enabled=False,
+    wayback_enabled=False,
+    youtube_enabled=False,
+    adobe_pdf_enabled=False,
+)
 
 
 @dataclass(frozen=True)
@@ -287,6 +308,7 @@ def fetch_article_text(
     wayback_not_before: datetime | None = None,
     wayback_not_after: datetime | None = None,
     sleeper=time.sleep,
+    policy: ArticleFetchPolicy = SUMMARY_FETCH_POLICY,
 ) -> str:
     """Fetch article text while preserving the original string-returning API."""
     return fetch_article(
@@ -304,6 +326,7 @@ def fetch_article_text(
         wayback_not_before=wayback_not_before,
         wayback_not_after=wayback_not_after,
         sleeper=sleeper,
+        policy=policy,
     ).text
 
 
@@ -323,6 +346,7 @@ def fetch_article(
     wayback_not_before: datetime | None = None,
     wayback_not_after: datetime | None = None,
     sleeper=time.sleep,
+    policy: ArticleFetchPolicy = SUMMARY_FETCH_POLICY,
 ) -> ArticleFetchResult:
     """Fetch an article and report transport and extraction provenance."""
     if max_bytes is not None:
@@ -332,6 +356,14 @@ def fetch_article(
 
     _validate_public_http_url(url, resolver)
     if youtube_video_id(url) is not None:
+        if not policy.youtube_enabled:
+            raise ArticleFetchError(
+                "YouTube is skipped during classification retrieval",
+                error_code="youtube_skipped_in_classification",
+                method="youtube_caption",
+                extractor="yt_dlp",
+                attempts=0,
+            )
         try:
             caption = fetch_youtube_caption(
                 url,
@@ -394,6 +426,7 @@ def fetch_article(
             pdf_max_pages=pdf_max_pages,
             pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
             pdf_address_space_bytes=pdf_address_space_bytes,
+            adobe_pdf_enabled=policy.adobe_pdf_enabled,
         )
 
     direct_request = Request(
@@ -405,7 +438,7 @@ def fetch_article(
     )
     open_request = opener or _build_safe_opener(resolver).open
 
-    for attempt in range(1, DIRECT_MAX_ATTEMPTS + 1):
+    for attempt in range(1, policy.direct_max_attempts + 1):
         try:
             result = _fetch_direct_response(
                 direct_request,
@@ -418,9 +451,16 @@ def fetch_article(
                 pdf_max_pages=pdf_max_pages,
                 pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
                 pdf_address_space_bytes=pdf_address_space_bytes,
+                adobe_pdf_enabled=policy.adobe_pdf_enabled,
             )
         except HTTPError as exc:
             if _is_vercel_challenge(exc):
+                if not policy.jina_enabled:
+                    raise _direct_policy_failure(
+                        "vercel challenge",
+                        "vercel_challenge",
+                        attempt,
+                    ) from exc
                 LOGGER.warning(
                     "component=article_fetch method=direct status=vercel_challenge "
                     "fallback=jina"
@@ -434,7 +474,7 @@ def fetch_article(
                     timeout_seconds=timeout_seconds,
                     max_bytes=extracted_max_bytes,
                     direct_attempts=attempt,
-                    wayback_enabled=True,
+                    wayback_enabled=policy.wayback_enabled,
                     wayback_not_before=wayback_not_before,
                     wayback_not_after=wayback_not_after,
                     html_max_bytes=html_max_bytes,
@@ -444,6 +484,12 @@ def fetch_article(
                     pdf_address_space_bytes=pdf_address_space_bytes,
                 )
             if _is_datadome_challenge(exc):
+                if not policy.jina_enabled:
+                    raise _direct_policy_failure(
+                        "DataDome challenge",
+                        "datadome_challenge",
+                        attempt,
+                    ) from exc
                 LOGGER.warning(
                     "component=article_fetch method=direct status=datadome_challenge "
                     "fallback=jina"
@@ -465,6 +511,12 @@ def fetch_article(
                     method="direct",
                     attempts=attempt,
                 ) from exc
+            if not policy.jina_enabled:
+                raise _direct_policy_failure(
+                    "Cloudflare challenge",
+                    "cloudflare_challenge",
+                    attempt,
+                ) from exc
             LOGGER.warning(
                 "component=article_fetch method=direct status=cloudflare_challenge "
                 "fallback=jina"
@@ -481,6 +533,13 @@ def fetch_article(
             )
         except ArticleFetchError as exc:
             if exc.error_code == "vercel_challenge":
+                if not policy.jina_enabled:
+                    raise _direct_policy_failure(
+                        "vercel challenge",
+                        exc.error_code,
+                        attempt,
+                        extractor=exc.extractor,
+                    ) from exc
                 LOGGER.warning(
                     "component=article_fetch method=direct status=vercel_challenge "
                     "fallback=jina"
@@ -494,7 +553,7 @@ def fetch_article(
                     timeout_seconds=timeout_seconds,
                     max_bytes=extracted_max_bytes,
                     direct_attempts=attempt,
-                    wayback_enabled=True,
+                    wayback_enabled=policy.wayback_enabled,
                     wayback_not_before=wayback_not_before,
                     wayback_not_after=wayback_not_after,
                     html_max_bytes=html_max_bytes,
@@ -504,6 +563,13 @@ def fetch_article(
                     pdf_address_space_bytes=pdf_address_space_bytes,
                 )
             if exc.error_code == "challenge_page":
+                if not policy.jina_enabled:
+                    raise _direct_policy_failure(
+                        "browser verification challenge page",
+                        exc.error_code,
+                        attempt,
+                        extractor=exc.extractor,
+                    ) from exc
                 LOGGER.warning(
                     "component=article_fetch method=direct status=challenge_page "
                     "fallback=jina"
@@ -519,6 +585,13 @@ def fetch_article(
                     direct_attempts=attempt,
                 )
             if exc.error_code == "empty_content" and exc.extractor == "trafilatura":
+                if not policy.jina_enabled:
+                    raise _direct_policy_failure(
+                        "trafilatura empty_content",
+                        exc.error_code,
+                        attempt,
+                        extractor=exc.extractor,
+                    ) from exc
                 LOGGER.warning(
                     "component=article_fetch method=direct extractor=trafilatura "
                     "status=empty_content fallback=jina"
@@ -544,6 +617,12 @@ def fetch_article(
             ) from exc
         except (URLError, TimeoutError) as exc:
             if _is_tls_issuer_unavailable(exc):
+                if not policy.jina_enabled:
+                    raise _direct_policy_failure(
+                        "TLS issuer unavailable",
+                        "tls_issuer_unavailable",
+                        attempt,
+                    ) from exc
                 LOGGER.warning(
                     "component=article_fetch method=direct "
                     "status=tls_issuer_unavailable fallback=jina"
@@ -559,21 +638,27 @@ def fetch_article(
                     direct_attempts=attempt,
                 )
             if _is_network_timeout(exc):
-                if attempt < DIRECT_MAX_ATTEMPTS:
+                if attempt < policy.direct_max_attempts:
                     LOGGER.warning(
                         "component=article_fetch method=direct status=network_timeout "
                         "attempt=%d/%d retry_in=%ss",
                         attempt,
-                        DIRECT_MAX_ATTEMPTS,
+                        policy.direct_max_attempts,
                         DIRECT_RETRY_DELAY_SECONDS,
                     )
                     sleeper(DIRECT_RETRY_DELAY_SECONDS)
                     continue
+                if not policy.jina_enabled:
+                    raise _direct_policy_failure(
+                        f"network timeout after {attempt} attempts: {exc}",
+                        "network_timeout",
+                        attempt,
+                    ) from exc
                 LOGGER.warning(
                     "component=article_fetch method=direct status=network_timeout "
                     "attempt=%d/%d fallback=jina",
                     attempt,
-                    DIRECT_MAX_ATTEMPTS,
+                    policy.direct_max_attempts,
                 )
                 return _fetch_jina_fallback(
                     url,
@@ -615,6 +700,22 @@ def fetch_article(
         )
 
     raise AssertionError("direct article retry loop ended unexpectedly")
+
+
+def _direct_policy_failure(
+    message: str,
+    error_code: str,
+    attempts: int,
+    *,
+    extractor: str = "",
+) -> ArticleFetchError:
+    return ArticleFetchError(
+        f"direct article retrieval failed: {message}",
+        error_code=error_code,
+        method="direct",
+        extractor=extractor,
+        attempts=attempts,
+    )
 
 
 def _fetch_jina_fallback(
@@ -1182,6 +1283,7 @@ def fetch_github_blob(
     pdf_max_pages: int = DEFAULT_MAX_PDF_PAGES,
     pdf_parse_timeout_seconds: int = DEFAULT_PDF_PARSE_TIMEOUT_SECONDS,
     pdf_address_space_bytes: int = DEFAULT_PDF_ADDRESS_SPACE_BYTES,
+    adobe_pdf_enabled: bool = True,
 ) -> ArticleFetchResult:
     """Fetch the exact file behind a standard public GitHub blob URL."""
     raw_url = _github_raw_url(owner, repository, ref, path)
@@ -1234,6 +1336,7 @@ def fetch_github_blob(
             pdf_max_pages=pdf_max_pages,
             pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
             pdf_address_space_bytes=pdf_address_space_bytes,
+            adobe_pdf_enabled=adobe_pdf_enabled,
             expects_pdf=expects_pdf,
             allow_octet_stream_pdf=True,
         )
@@ -1419,6 +1522,7 @@ def _fetch_direct_response(
     pdf_max_pages: int,
     pdf_parse_timeout_seconds: int,
     pdf_address_space_bytes: int,
+    adobe_pdf_enabled: bool = True,
     require_identity_encoding: bool = False,
 ) -> ArticleFetchResult:
     expects_pdf = urlparse(request.full_url).path.lower().endswith(".pdf")
@@ -1468,6 +1572,7 @@ def _fetch_direct_response(
         pdf_max_pages=pdf_max_pages,
         pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
         pdf_address_space_bytes=pdf_address_space_bytes,
+        adobe_pdf_enabled=adobe_pdf_enabled,
         expects_pdf=expects_pdf,
         allow_octet_stream_pdf=True,
     )
@@ -1499,6 +1604,7 @@ def _extract_response_payload(
     pdf_address_space_bytes: int,
     expects_pdf: bool = False,
     allow_octet_stream_pdf: bool = False,
+    adobe_pdf_enabled: bool = True,
 ) -> ArticleFetchResult:
     has_pdf_magic = payload.startswith(b"%PDF-")
     is_pdf_type = content_type == "application/pdf" or (
@@ -1524,6 +1630,7 @@ def _extract_response_payload(
             max_text_bytes=extracted_max_bytes,
             pypdf_timeout_seconds=pdf_parse_timeout_seconds,
             address_space_bytes=pdf_address_space_bytes,
+            adobe_pdf_enabled=adobe_pdf_enabled,
         )
         return ArticleFetchResult(
             text=text,
@@ -1580,8 +1687,11 @@ def _extract_pdf_payload(
     max_text_bytes: int,
     pypdf_timeout_seconds: int,
     address_space_bytes: int,
+    adobe_pdf_enabled: bool = True,
 ) -> tuple[str, str, str]:
-    credential_state = adobe_credentials_status(os.environ)
+    credential_state = (
+        adobe_credentials_status(os.environ) if adobe_pdf_enabled else "disabled"
+    )
     fallback_reason = ""
     if credential_state == "configured":
         try:

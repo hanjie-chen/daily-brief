@@ -97,38 +97,41 @@ def select_ai_candidates(candidates: list[Candidate]) -> list[Candidate]:
 
 
 def rank_exploration_candidates(candidates: list[Candidate]) -> list[Candidate]:
-    """Rank candidates that meet the explicit HN-wide heat threshold."""
+    """Rank every unmatched candidate by the same score used for selection."""
 
     for candidate in candidates:
         candidate.selected = False
         candidate.section = ""
         candidate.rejection_reason = "not_selected"
-    return [
-        candidate
-        for candidate in sorted(
-            candidates,
-            key=lambda item: (item.story.points, item.story.comments),
-            reverse=True,
-        )
-        if candidate.story.points >= NON_AI_POINTS_THRESHOLD
-        or candidate.story.comments >= NON_AI_COMMENTS_THRESHOLD
-    ]
+    return sorted(candidates, key=lambda item: item.score, reverse=True)
 
 
 def select_exploration_candidates(candidates: list[Candidate]) -> list[Candidate]:
-    """Select already-confirmed outside-core candidates in ranked order."""
+    """Select the hottest confirmed outside-core candidates."""
 
-    selected = candidates[:NON_AI_MAX_ITEMS]
+    ranked = sorted(
+        candidates,
+        key=lambda item: (item.story.points, item.story.comments),
+        reverse=True,
+    )
+    selected = ranked[:NON_AI_MAX_ITEMS]
     for candidate in selected:
         candidate.selected = True
         candidate.section = "non_ai_hot"
         candidate.rejection_reason = ""
         candidate.why = "HN-wide hot story outside core interests"
-    for candidate in candidates[NON_AI_MAX_ITEMS:]:
+    for candidate in ranked[NON_AI_MAX_ITEMS:]:
         candidate.selected = False
         candidate.section = ""
         candidate.rejection_reason = "not_selected"
     return selected
+
+
+def meets_exploration_minimum(candidate: Candidate) -> bool:
+    return (
+        candidate.story.points >= NON_AI_POINTS_THRESHOLD
+        or candidate.story.comments >= NON_AI_COMMENTS_THRESHOLD
+    )
 
 
 def _select_ai(candidates: list[Candidate]) -> list[Candidate]:
@@ -137,12 +140,20 @@ def _select_ai(candidates: list[Candidate]) -> list[Candidate]:
         if not _meets_ai_minimum(candidate):
             candidate.selected = False
             candidate.section = ""
-            candidate.rejection_reason = "below_ai_minimum"
+            candidate.rejection_reason = (
+                "below_core_minimum"
+                if candidate.topic_route in {"article_ai", "article_core_non_ai"}
+                else "below_ai_minimum"
+            )
             continue
         if len(selected) == AI_MAX_ITEMS:
             candidate.selected = False
             candidate.section = ""
-            candidate.rejection_reason = "not_selected"
+            candidate.rejection_reason = (
+                "core_not_selected"
+                if candidate.topic_route in {"article_ai", "article_core_non_ai"}
+                else "not_selected"
+            )
             continue
         candidate.selected = True
         candidate.section = "ai"

@@ -13,8 +13,15 @@ from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 
-from .article_fetcher import ArticleFetchError, ArticleFetchResult, fetch_article
-from .config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES, NON_AI_MAX_ITEMS, TIMEZONE
+from .article_fetcher import (
+    CLASSIFICATION_FETCH_POLICY,
+    CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
+    CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS,
+    ArticleFetchError,
+    ArticleFetchResult,
+    fetch_article,
+)
+from .config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES, TIMEZONE
 from .gemini_backend import GeminiBackend
 from .history import load_history, recent_ids, save_history
 from .hn_client import fetch_algolia_stories, fetch_hot_stories
@@ -35,9 +42,10 @@ from .models import (
 from .publisher import PublishError, publish_brief
 from .public_schema import EmptyPublicBriefError, validate_public_brief
 from .render import render_candidates_json, render_markdown, render_public_brief_json
-from .scoring import score_candidate
+from .scoring import apply_article_evidence_bonus, score_candidate
 from .selection import (
     dedupe_candidates,
+    meets_exploration_minimum,
     rank_exploration_candidates,
     select_ai_candidates,
     select_exploration_candidates,
@@ -62,6 +70,8 @@ from .syndicated_copy import (
 from .time_window import daily_window
 
 LOGGER = logging.getLogger(__name__)
+RETRIEVAL_MODE_CLASSIFICATION = "classification"
+RETRIEVAL_MODE_SUMMARY = "summary"
 
 
 @dataclass(frozen=True)
@@ -254,12 +264,12 @@ def run_generate(
         else:
             eligible_candidates.append(candidate)
 
-    known_ai_candidates = [
+    known_core_candidates = [
         candidate
         for candidate in eligible_candidates
         if _has_non_weak_keyword_match(candidate)
     ]
-    for candidate in known_ai_candidates:
+    for candidate in known_core_candidates:
         candidate.topic_route = "keyword"
     unmatched_candidates = [
         candidate
@@ -270,20 +280,19 @@ def run_generate(
     if classifier is None or summarizer is None:
         backend = backend or GeminiBackend.from_environment()
     topic_classifier = classifier or backend
-    ai_items = select_ai_candidates(known_ai_candidates)
+    core_candidates = list(known_core_candidates)
     ranked_exploration = rank_exploration_candidates(unmatched_candidates)
     outside_candidates: list[Candidate] = []
     classification_batches: list[list[Candidate]] = []
     inspected_exploration = 0
     for candidate in ranked_exploration[:EXPLORATION_CLASSIFIER_MAX_CANDIDATES]:
-        if len(outside_candidates) == NON_AI_MAX_ITEMS:
-            break
         inspected_exploration += 1
         if not _prepare_candidate_material(
             candidate,
             article_fetcher,
             syndicated_finder,
             window,
+            retrieval_mode=RETRIEVAL_MODE_CLASSIFICATION,
         ):
             candidate.topic_route = "topic_unknown"
             candidate.rejection_reason = "topic_unknown"
@@ -305,7 +314,7 @@ def run_generate(
         except Exception as exc:
             classification_duration = clock() - classification_started
             candidate.topic_route = "classifier_failed"
-            candidate.rejection_reason = "topic_unknown"
+            candidate.rejection_reason = "classifier_failed"
             LOGGER.error(
                 "component=topic_classifier status=failed item_id=%s "
                 "duration=%.3fs error=%s message=%s",
@@ -326,19 +335,24 @@ def run_generate(
             classification_duration,
         )
         if label_decision == "outside":
-            outside_candidates.append(candidate)
+            if meets_exploration_minimum(candidate):
+                outside_candidates.append(candidate)
+            else:
+                candidate.rejection_reason = "below_exploration_minimum"
         elif label_decision == "uncertain":
             candidate.rejection_reason = "topic_uncertain"
         else:
-            candidate.rejection_reason = "core_topic_not_exploration"
-            if label_decision == "ai":
-                LOGGER.info(
-                    "component=exploration_router item_id=%s status=article_ai "
-                    "score=%.4f",
-                    candidate.story.hn_item_id,
-                    candidate.score,
-                )
+            apply_article_evidence_bonus(candidate)
+            core_candidates.append(candidate)
+            LOGGER.info(
+                "component=exploration_router item_id=%s status=article_%s "
+                "score=%.4f",
+                candidate.story.hn_item_id,
+                label_decision,
+                candidate.score,
+            )
 
+    ai_items = select_ai_candidates(core_candidates)
     selected_hot_items = select_exploration_candidates(outside_candidates)
     LOGGER.info(
         "component=exploration_router status=completed inspected=%d outside=%d "
@@ -359,6 +373,7 @@ def run_generate(
                 article_fetcher,
                 syndicated_finder,
                 window,
+                retrieval_mode=RETRIEVAL_MODE_SUMMARY,
             )
         ):
             continue
@@ -464,19 +479,38 @@ def _prepare_candidate_material(
     article_fetcher_fn,
     syndicated_finder: SyndicatedCopyFinder | None,
     window,
+    *,
+    retrieval_mode: str = RETRIEVAL_MODE_SUMMARY,
 ) -> bool:
     if (
         candidate.story.source_url
         and candidate.story.source_url != candidate.story.hn_discussion_url
     ):
-        article_client = article_fetcher_fn or partial(
-            fetch_article,
-            wayback_not_before=_wayback_not_before(
-                candidate.story.created_at,
-                window.start,
-            ),
-            wayback_not_after=window.end,
-        )
+        if retrieval_mode not in {
+            RETRIEVAL_MODE_CLASSIFICATION,
+            RETRIEVAL_MODE_SUMMARY,
+        }:
+            raise ValueError(f"unknown retrieval mode: {retrieval_mode}")
+        if article_fetcher_fn is not None:
+            article_client = article_fetcher_fn
+        elif retrieval_mode == RETRIEVAL_MODE_CLASSIFICATION:
+            article_client = partial(
+                fetch_article,
+                timeout_seconds=CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
+                pdf_parse_timeout_seconds=(
+                    CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
+                ),
+                policy=CLASSIFICATION_FETCH_POLICY,
+            )
+        else:
+            article_client = partial(
+                fetch_article,
+                wayback_not_before=_wayback_not_before(
+                    candidate.story.created_at,
+                    window.start,
+                ),
+                wayback_not_after=window.end,
+            )
         try:
             material = _coerce_fetched_material(
                 article_client(candidate.story.source_url),
@@ -488,7 +522,10 @@ def _prepare_candidate_material(
                 material=None,
                 audit=SyndicatedRecovery(),
             )
-            if _should_attempt_reuters_recovery(candidate, original_failure):
+            if (
+                retrieval_mode == RETRIEVAL_MODE_SUMMARY
+                and _should_attempt_reuters_recovery(candidate, original_failure)
+            ):
                 recovery = _attempt_syndicated_recovery(
                     candidate,
                     article_client,

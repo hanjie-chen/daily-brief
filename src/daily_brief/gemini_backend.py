@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -23,6 +24,7 @@ LOGGER = logging.getLogger(__name__)
 INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 DEFAULT_CLASSIFIER_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_SUMMARIZER_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_MIN_REQUEST_INTERVAL_SECONDS = 6.0
 MODEL_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 RETRYABLE_HTTP_STATUSES = {408, 429}
 MAX_RESPONSE_BYTES = 256 * 1024
@@ -59,8 +61,10 @@ class GeminiBackend:
         timeout_seconds: int = 90,
         max_retries: int = 3,
         retry_base_seconds: float = 1.0,
+        min_request_interval_seconds: float = DEFAULT_MIN_REQUEST_INTERVAL_SECONDS,
         opener: Callable[..., HTTPResponse] = urlopen,
         sleeper: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
         jitter: Callable[[float, float], float] = random.uniform,
     ) -> None:
         self.api_key = api_key.strip()
@@ -76,18 +80,43 @@ class GeminiBackend:
             )
         if retry_base_seconds < 0:
             raise GeminiConfigurationError("Gemini retry base must not be negative")
+        if (
+            not math.isfinite(min_request_interval_seconds)
+            or min_request_interval_seconds < 0
+        ):
+            raise GeminiConfigurationError(
+                "Gemini minimum request interval must not be negative"
+            )
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.retry_base_seconds = retry_base_seconds
+        self.min_request_interval_seconds = min_request_interval_seconds
         self.opener = opener
         self.sleeper = sleeper
+        self.clock = clock
         self.jitter = jitter
+        self._last_request_started: float | None = None
 
     @classmethod
     def from_environment(
         cls, env: Mapping[str, str] | None = None, **kwargs
     ) -> GeminiBackend:
         environment = os.environ if env is None else env
+        if "min_request_interval_seconds" in kwargs:
+            min_request_interval_seconds = kwargs.pop(
+                "min_request_interval_seconds"
+            )
+        else:
+            interval_value = environment.get(
+                "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS",
+                str(DEFAULT_MIN_REQUEST_INTERVAL_SECONDS),
+            )
+            try:
+                min_request_interval_seconds = float(interval_value)
+            except ValueError as exc:
+                raise GeminiConfigurationError(
+                    "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS must be numeric"
+                ) from exc
         return cls(
             api_key=environment.get("GEMINI_API_KEY", ""),
             classifier_model=environment.get(
@@ -96,6 +125,7 @@ class GeminiBackend:
             summarizer_model=environment.get(
                 "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL", DEFAULT_SUMMARIZER_MODEL
             ),
+            min_request_interval_seconds=min_request_interval_seconds,
             **kwargs,
         )
 
@@ -239,6 +269,7 @@ class GeminiBackend:
     def _post_json(self, payload: dict) -> dict:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         for attempt in range(self.max_retries + 1):
+            self._wait_for_request_slot()
             request = Request(
                 INTERACTIONS_URL,
                 data=body,
@@ -276,6 +307,17 @@ class GeminiBackend:
                 raise GeminiResponseError("Gemini API response must be an object")
             return decoded
         raise AssertionError("Gemini retry loop ended unexpectedly")
+
+    def _wait_for_request_slot(self) -> None:
+        now = self.clock()
+        if self._last_request_started is not None:
+            remaining = self.min_request_interval_seconds - (
+                now - self._last_request_started
+            )
+            if remaining > 0:
+                self.sleeper(remaining)
+                now = self.clock()
+        self._last_request_started = now
 
     def _retry_delay(
         self, attempt: int, headers, error_body: bytes | None = None

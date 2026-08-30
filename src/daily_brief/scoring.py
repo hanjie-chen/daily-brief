@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 from .config import (
+    ARTICLE_EVIDENCE_BONUS,
     HIGH_WEIGHT_BONUS_CAP,
     KEYWORD_BONUS_CAP,
     LOW_WEIGHT_BONUS_CAP,
@@ -12,6 +13,8 @@ from .config import (
     TOPIC_KEYWORDS,
 )
 from .models import Candidate
+
+ARTICLE_CORE_WHY = "正文确认属于计算与软件领域；按 HN 热度入选"
 
 LAYER_CAPS = {
     "high": HIGH_WEIGHT_BONUS_CAP,
@@ -27,6 +30,14 @@ def score_candidate(candidate: Candidate) -> Candidate:
     topic_bonus = _topic_bonus(candidate)
     candidate.score = heat + keyword_bonus + topic_bonus
     candidate.why = _why(candidate)
+    return candidate
+
+
+def apply_article_evidence_bonus(candidate: Candidate) -> Candidate:
+    """Give an unmatched, article-confirmed core candidate its fixed bonus."""
+
+    candidate.score += ARTICLE_EVIDENCE_BONUS
+    candidate.why = ARTICLE_CORE_WHY
     return candidate
 
 

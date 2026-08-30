@@ -13,6 +13,7 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from daily_brief import article_fetcher
 from daily_brief.article_fetcher import (
+    CLASSIFICATION_FETCH_POLICY,
     ArticleFetchError,
     _create_public_connection,
     _validate_public_http_url,
@@ -431,6 +432,70 @@ def test_fetch_article_routes_target_youtube_video_to_caption_extractor(monkeypa
             {"max_text_bytes": 256 * 1024},
         )
     ]
+
+
+def test_classification_policy_skips_youtube_without_attempting_captions(monkeypatch):
+    monkeypatch.setattr(
+        article_fetcher,
+        "fetch_youtube_caption",
+        lambda *args, **kwargs: pytest.fail("classification must skip YouTube"),
+    )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            "https://www.youtube.com/watch?v=68X8yEatepQ",
+            resolver=resolver_for({"www.youtube.com": PUBLIC_ADDRESS}),
+            policy=CLASSIFICATION_FETCH_POLICY,
+        )
+
+    assert caught.value.error_code == "youtube_skipped_in_classification"
+    assert caught.value.attempts == 0
+    assert caught.value.method == "youtube_caption"
+
+
+def test_classification_policy_does_not_retry_or_use_jina_after_timeout():
+    requests = []
+    delays = []
+
+    def time_out(request, timeout):
+        requests.append(request.full_url)
+        raise TimeoutError("timed out")
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            "https://example.com/article",
+            opener=time_out,
+            resolver=resolver_for({"example.com": PUBLIC_ADDRESS}),
+            sleeper=delays.append,
+            policy=CLASSIFICATION_FETCH_POLICY,
+        )
+
+    assert requests == ["https://example.com/article"]
+    assert delays == []
+    assert caught.value.error_code == "network_timeout"
+    assert caught.value.method == "direct"
+    assert caught.value.attempts == 1
+
+
+def test_classification_policy_does_not_use_jina_for_challenge_response():
+    requests = []
+
+    def challenge(request, timeout):
+        requests.append(request.full_url)
+        raise http_error(request.full_url, 403, cf_mitigated="challenge")
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            "https://example.com/article",
+            opener=challenge,
+            resolver=resolver_for({"example.com": PUBLIC_ADDRESS}),
+            policy=CLASSIFICATION_FETCH_POLICY,
+        )
+
+    assert requests == ["https://example.com/article"]
+    assert caught.value.error_code == "cloudflare_challenge"
+    assert caught.value.method == "direct"
+    assert caught.value.fallback_attempted is False
 
 
 def test_html_larger_than_old_limit_is_extracted_with_separate_raw_limit():
@@ -1036,6 +1101,33 @@ def test_direct_pdf_uses_adobe_markdown_when_configured(monkeypatch):
     assert result.text == "# Report\n\nClean Adobe paragraph."
     assert result.method == "direct"
     assert result.extractor == "adobe_pdf_to_markdown"
+
+
+def test_classification_policy_disables_adobe_and_uses_local_pdf(monkeypatch):
+    monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "client-id")
+    monkeypatch.setenv("PDF_SERVICES_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(
+        article_fetcher,
+        "_extract_pdf_with_adobe_in_subprocess",
+        lambda *args, **kwargs: pytest.fail("classification must not call Adobe"),
+    )
+    response = FakeResponse(
+        make_pdf("Local PDF facts."),
+        content_type="application/pdf",
+        final_url="https://example.com/report.pdf",
+    )
+
+    result = fetch_article(
+        "https://example.com/report.pdf",
+        opener=lambda request, timeout: response,
+        resolver=resolver_for({}),
+        policy=CLASSIFICATION_FETCH_POLICY,
+        pdf_parse_timeout_seconds=10,
+    )
+
+    assert "Local PDF facts" in result.text
+    assert result.extractor == "pypdf"
+    assert result.fallback_reason == ""
     assert result.fallback_reason == ""
 
 

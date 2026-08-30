@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from daily_brief import article_fetcher as article_fetcher_module
 from daily_brief import cli
 from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
 from daily_brief.cli import build_parser, main, run_generate
@@ -232,6 +233,64 @@ def test_exploration_walk_selects_only_confirmed_outside_topics(tmp_path):
     ] == ["4", "5"]
 
 
+def test_exploration_walk_continues_after_two_outside_and_reranks_by_hn_heat(
+    tmp_path,
+):
+    classifier = FakeClassifier(default_label="outside")
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[
+            story("1", "Discussion-heavy", points=300, comments=1000),
+            story("2", "Most points", points=500, comments=0),
+            story("3", "Second-most points", points=400, comments=0),
+            story("4", "Third-most points", points=350, comments=0),
+        ],
+        hot_stories=[],
+        classifier=classifier,
+        article_fetcher=lambda url: "Grounded outside evidence.",
+        summarizer=FakeSummarizer(),
+    )
+
+    assert classifier.seen_ids == ["1", "2", "3", "4"]
+    public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    assert [
+        item["hn_item_id"]
+        for item in public_payload["sections"]["non_ai_hot"]["items"]
+    ] == ["2", "3"]
+
+
+def test_article_core_uses_bonus_while_low_heat_outside_is_rejected(tmp_path):
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[
+            story("1", "Unmatched technical article", points=150, comments=20),
+            story("2", "Unmatched outside article", points=150, comments=20),
+        ],
+        hot_stories=[],
+        classifier=FakeClassifier({"1": "core_non_ai", "2": "outside"}),
+        article_fetcher=lambda url: "Grounded article evidence.",
+        summarizer=FakeSummarizer(),
+    )
+
+    records = {
+        item["hn_item_id"]: item
+        for item in json.loads(result.data_path.read_text(encoding="utf-8"))
+    }
+    public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    core_item = public_payload["sections"]["ai"]["items"][0]
+    assert core_item["hn_item_id"] == "1"
+    assert core_item["why"] == "正文确认属于计算与软件领域；按 HN 热度入选"
+    assert records["1"]["topic_route"] == "article_core_non_ai"
+    assert records["1"]["score"] > records["2"]["score"]
+    assert records["2"]["rejection_reason"] == "below_exploration_minimum"
+    assert public_payload["sections"]["non_ai_hot"]["items"] == []
+
+
 def test_exploration_fetch_failure_is_unknown_and_does_not_block_backfill(tmp_path):
     fetched_urls = []
 
@@ -283,6 +342,110 @@ def test_selected_exploration_article_reuses_classification_fetch(tmp_path):
 
     assert fetched_urls == ["https://example.com/1"]
     assert result.public_json_path is not None
+
+
+def test_default_classification_fetch_uses_bounded_policy(tmp_path, monkeypatch):
+    calls = []
+
+    def fetch(url, **kwargs):
+        calls.append((url, kwargs))
+        return "Grounded outside evidence."
+
+    monkeypatch.setattr(cli, "fetch_article", fetch)
+
+    run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[story("1", "Outside hot story", points=500, comments=20)],
+        hot_stories=[],
+        classifier=FakeClassifier(),
+        summarizer=FakeSummarizer(),
+    )
+
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["timeout_seconds"] == cli.CLASSIFICATION_HTTP_TIMEOUT_SECONDS
+    assert (
+        kwargs["pdf_parse_timeout_seconds"]
+        == cli.CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
+    )
+    assert kwargs["policy"] is cli.CLASSIFICATION_FETCH_POLICY
+
+
+def test_classification_retrieval_does_not_attempt_reuters_recovery(tmp_path):
+    finder = FakeSyndicatedFinder(
+        [SyndicatedCandidate(title="copy", url=yahoo_story_url())]
+    )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[
+            story(
+                "1",
+                "A market structure update",
+                points=500,
+                comments=20,
+                url=reuters_story_url(),
+            )
+        ],
+        hot_stories=[],
+        classifier=FakeClassifier(),
+        article_fetcher=lambda url: (_ for _ in ()).throw(datadome_jina_failure()),
+        syndicated_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+
+    records = json.loads(result.data_path.read_text(encoding="utf-8"))
+    assert finder.calls == []
+    assert records[0]["topic_route"] == "topic_unknown"
+    assert records[0]["article_retrieval"]["syndicated_recovery"]["status"] == (
+        "not_attempted"
+    )
+
+
+def test_classification_youtube_skip_is_audited_with_zero_attempts(
+    tmp_path, monkeypatch
+):
+    def fetch(url, **kwargs):
+        return article_fetcher_module.fetch_article(
+            url,
+            resolver=lambda host, port, type: [
+                (2, type, 6, "", ("93.184.216.34", port))
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(cli, "fetch_article", fetch)
+    classifier = FakeClassifier()
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[
+            story(
+                "1",
+                "A recorded lecture",
+                points=500,
+                comments=20,
+                url="https://www.youtube.com/watch?v=68X8yEatepQ",
+            )
+        ],
+        hot_stories=[],
+        classifier=classifier,
+        summarizer=FakeSummarizer(),
+    )
+
+    record = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    assert classifier.seen_ids == []
+    assert record["topic_route"] == "topic_unknown"
+    assert record["article_retrieval"]["error_code"] == (
+        "youtube_skipped_in_classification"
+    )
+    assert record["article_retrieval"]["attempts"] == 0
 
 
 def test_exploration_self_post_uses_story_text_without_external_fetch(tmp_path):
@@ -729,9 +892,7 @@ def test_main_evaluate_model_replays_captured_input(tmp_path):
     assert payload["summaries"][0]["summary"] == "Summary for AI tool"
 
 
-def test_article_ai_is_removed_from_exploration_without_changing_ai_ranking(
-    tmp_path, caplog
-):
+def test_article_ai_enters_core_pool_with_article_evidence_bonus(tmp_path, caplog):
     classifier = FakeClassifier({"2": "ai"})
 
     with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
@@ -764,10 +925,12 @@ def test_article_ai_is_removed_from_exploration_without_changing_ai_ranking(
         for item in json.loads(result.data_path.read_text(encoding="utf-8"))
     }
     assert "Claude release" in markdown
-    assert "Everything I own, owned" not in markdown
+    assert "Everything I own, owned" in markdown
     assert classifier.seen_ids == ["2"]
     assert records["2"]["topic_route"] == "article_ai"
-    assert records["2"]["rejection_reason"] == "core_topic_not_exploration"
+    assert records["2"]["selected"] is True
+    assert records["2"]["section"] == "ai"
+    assert records["2"]["score"] == pytest.approx(14.1172)
     assert records["2"]["article_retrieval"]["status"] == "success"
     assert (
         "component=topic_classifier status=success item_id=2 label=ai duration=2.500s"
@@ -804,9 +967,10 @@ def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
     }
     assert records["1"]["topic_route"] == "keyword"
     assert records["2"]["topic_route"] == "classifier_failed"
+    assert records["2"]["rejection_reason"] == "classifier_failed"
 
 
-def test_classifier_inspects_at_most_five_hottest_candidates(tmp_path):
+def test_classifier_inspects_at_most_twenty_five_highest_scoring_candidates(tmp_path):
     classifier = FakeClassifier(default_label="core_non_ai")
     candidates = [
         story(
@@ -815,7 +979,7 @@ def test_classifier_inspects_at_most_five_hottest_candidates(tmp_path):
             points=300 + item_id,
             comments=0,
         )
-        for item_id in range(1, 7)
+        for item_id in range(1, 27)
     ]
 
     result = run_generate(
@@ -829,16 +993,18 @@ def test_classifier_inspects_at_most_five_hottest_candidates(tmp_path):
         summarizer=FakeSummarizer(),
     )
 
-    assert classifier.seen_ids == ["6", "5", "4", "3", "2"]
+    assert classifier.seen_ids == [str(item_id) for item_id in range(26, 1, -1)]
     records = {
         item["hn_item_id"]: item
         for item in json.loads(result.data_path.read_text(encoding="utf-8"))
     }
-    assert records["6"]["topic_route"] == "article_core_non_ai"
+    assert records["26"]["topic_route"] == "article_core_non_ai"
+    assert records["21"]["rejection_reason"] == "core_not_selected"
+    assert records["21"]["section"] == ""
     assert records["1"]["topic_route"] == "not_evaluated"
 
 
-def test_exploration_classifier_orders_candidates_by_points_then_comments(tmp_path):
+def test_exploration_classifier_orders_candidates_by_score(tmp_path):
     classifier = FakeClassifier(default_label="core_non_ai")
 
     run_generate(
@@ -846,8 +1012,8 @@ def test_exploration_classifier_orders_candidates_by_points_then_comments(tmp_pa
         data_dir=tmp_path / "data",
         date_label="2026-07-20",
         algolia_stories=[
-            story("points", "Higher points", points=301, comments=0),
-            story("discussion", "Hot discussion", points=300, comments=1000),
+            story("1", "Higher points", points=301, comments=0),
+            story("2", "Hot discussion", points=300, comments=1000),
         ],
         hot_stories=[],
         classifier=classifier,
@@ -855,7 +1021,7 @@ def test_exploration_classifier_orders_candidates_by_points_then_comments(tmp_pa
         summarizer=FakeSummarizer(),
     )
 
-    assert classifier.seen_ids == ["points", "discussion"]
+    assert classifier.seen_ids == ["2", "1"]
 
 
 def test_recently_selected_story_is_excluded_and_recorded_in_snapshot(tmp_path):
