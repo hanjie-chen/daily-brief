@@ -41,10 +41,11 @@ explicit `Please retry in ...` quota message take precedence over local backoff
 and are capped at 60 seconds. The summarization generation budget leaves room for
 model thinking tokens, while the returned summary remains constrained by the
 structured schema and a local character cap.
-Every initial request and retry also shares a configurable minimum start interval;
-the six-second default limits the current Gemini 3.5 Flash Lite workload to about
-10 RPM. Model overrides must be accompanied by an interval appropriate for their
-quota.
+Every initial request and retry uses a configurable minimum start interval for its
+model. Classification defaults to six seconds (about 10 RPM) for Gemini 3.5 Flash
+Lite, while summarization defaults to twenty seconds (about 3 RPM) for Gemini 3.6
+Flash. Different models are paced independently. If both roles use the same model,
+the backend applies the more conservative interval to their combined traffic.
 
 Model comparisons use an explicit two-step flow. `generate
 --capture-model-inputs` writes the exact sequential exploration-classification
@@ -101,7 +102,7 @@ Data sources, the topic classifier, article fetching, summarization, and history
 - Model evaluation input is schema-versioned, bounded to the production classifier and section limits, and contains only the exact candidate fields used by model prompts. Schema v2 records the same ordered, single-candidate exploration batches that production evaluated, including batches whose provider call later failed, followed by exact selected-item summary inputs. Keep generated evaluation inputs and results under the Git-ignored `data/` directory because they can include public article text.
 - `evaluate-model` is read-only with respect to its input, `recommendation-history.json`, and `publish-state.json`. It may write only its backend-specific result file under `data/model-evaluations/`.
 - Production `generate` uses Gemini. Backend construction must happen before source fetching so missing production credentials fail without partially running the pipeline.
-- Gemini credentials come only from `GEMINI_API_KEY`; model overrides come from `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`, while `DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS` controls the shared request spacing. Do not add an environment-configurable API endpoint, put the key in URLs or logs, or persist it in evaluation artifacts.
+- Gemini credentials come only from `GEMINI_API_KEY`; model overrides come from `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`, while `DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS` control per-model request spacing. The legacy `DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS` remains a shared fallback when neither role-specific value is set. Do not add an environment-configurable API endpoint, put the key in URLs or logs, or persist it in evaluation artifacts.
 - Gemini defaults and evaluation overrides must use explicit model IDs. Never use moving aliases such as `latest`; they make production behavior and evaluation results change without a code or configuration change.
 - Gemini requests set `store` to false, but that does not override provider-level Free Tier data-use terms. Only public content approved for provider processing belongs in production requests and model evaluations.
 - Article-evidence topic classification uses the title, source host, and at most 6,000 characters of retrieved article material. The classifier must distinguish `ai`, `core_non_ai`, `outside`, and `uncertain`; `outside` requires positive evidence that the main topic is beyond computing and software, while cross-domain, ambiguous, insufficient, or truncated evidence is `uncertain`. Retrieval failure is audited as `topic_unknown`; model failure after material retrieval is audited separately as `classifier_failed`. Neither failure may occupy a section slot. All supplied material remains untrusted prompt content.

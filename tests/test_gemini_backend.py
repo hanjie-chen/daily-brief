@@ -7,9 +7,10 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from daily_brief.gemini_backend import (
+    DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS,
     DEFAULT_CLASSIFIER_MODEL,
+    DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS,
     DEFAULT_SUMMARIZER_MODEL,
-    DEFAULT_MIN_REQUEST_INTERVAL_SECONDS,
     GeminiAPIError,
     GeminiBackend,
     GeminiConfigurationError,
@@ -186,18 +187,52 @@ def test_classifier_skips_api_for_empty_input():
     assert opener.calls == []
 
 
-def test_default_models_use_flash_lite():
+def test_default_models_and_request_intervals_are_role_specific():
     backend = GeminiBackend(api_key="secret-key", opener=RecordingOpener())
 
     assert backend.classifier_model == "gemini-3.5-flash-lite"
-    assert backend.summarizer_model == "gemini-3.5-flash-lite"
+    assert backend.summarizer_model == "gemini-3.6-flash"
     assert (
-        backend.min_request_interval_seconds
-        == DEFAULT_MIN_REQUEST_INTERVAL_SECONDS
+        backend.classifier_min_request_interval_seconds
+        == DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS
+    )
+    assert (
+        backend.summarizer_min_request_interval_seconds
+        == DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS
     )
 
 
-def test_request_interval_is_shared_by_classifier_and_summarizer():
+def test_request_intervals_are_independent_for_different_models():
+    clock = FakeClock(100.0)
+    opener = RecordingOpener(
+        FakeResponse(
+            interaction({"decisions": [{"id": "1", "label": "core_non_ai"}]})
+        ),
+        FakeResponse(interaction({"summary": "摘要。"})),
+        FakeResponse(
+            interaction({"decisions": [{"id": "2", "label": "core_non_ai"}]})
+        ),
+    )
+    backend = GeminiBackend(
+        api_key="secret-key",
+        opener=opener,
+        clock=clock,
+        sleeper=clock.sleep,
+        classifier_min_request_interval_seconds=6.0,
+        summarizer_min_request_interval_seconds=20.0,
+    )
+
+    backend.classify([candidate("1", "Database")])
+    clock.now += 1.0
+    backend.summarize(candidate("1", "Database", fetched_text="Facts."))
+    clock.now += 1.0
+    backend.classify([candidate("2", "Compiler")])
+
+    assert clock.delays == [4.0]
+    assert len(opener.calls) == 3
+
+
+def test_same_model_uses_more_conservative_request_interval():
     clock = FakeClock(100.0)
     opener = RecordingOpener(
         FakeResponse(
@@ -207,18 +242,20 @@ def test_request_interval_is_shared_by_classifier_and_summarizer():
     )
     backend = GeminiBackend(
         api_key="secret-key",
+        classifier_model="shared-model",
+        summarizer_model="shared-model",
         opener=opener,
         clock=clock,
         sleeper=clock.sleep,
-        min_request_interval_seconds=6.0,
+        classifier_min_request_interval_seconds=6.0,
+        summarizer_min_request_interval_seconds=20.0,
     )
 
     backend.classify([candidate("1", "Database")])
     clock.now += 1.0
     backend.summarize(candidate("1", "Database", fetched_text="Facts."))
 
-    assert clock.delays == [5.0]
-    assert len(opener.calls) == 2
+    assert clock.delays == [19.0]
 
 
 def test_request_interval_also_covers_backend_retry_attempts():
@@ -237,7 +274,7 @@ def test_request_interval_also_covers_backend_retry_attempts():
         jitter=lambda start, end: 0,
         max_retries=1,
         retry_base_seconds=1.0,
-        min_request_interval_seconds=6.0,
+        classifier_min_request_interval_seconds=6.0,
     )
 
     assert backend.classify([candidate("1", "Database")]) == {"1": "core_non_ai"}
@@ -412,7 +449,8 @@ def test_from_environment_uses_explicit_model_overrides():
             "GEMINI_API_KEY": "key-from-env",
             "DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL": "gemini-classifier-stable",
             "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL": "gemini-summary-stable",
-            "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS": "12.5",
+            "DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS": "6.5",
+            "DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS": "20.5",
         },
         opener=RecordingOpener(),
     )
@@ -420,15 +458,37 @@ def test_from_environment_uses_explicit_model_overrides():
     assert backend.api_key == "key-from-env"
     assert backend.classifier_model == "gemini-classifier-stable"
     assert backend.summarizer_model == "gemini-summary-stable"
-    assert backend.min_request_interval_seconds == 12.5
+    assert backend.classifier_min_request_interval_seconds == 6.5
+    assert backend.summarizer_min_request_interval_seconds == 20.5
 
 
-def test_from_environment_rejects_non_numeric_request_interval():
+def test_from_environment_uses_legacy_shared_interval_as_fallback():
+    backend = GeminiBackend.from_environment(
+        {
+            "GEMINI_API_KEY": "key-from-env",
+            "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS": "12.5",
+        },
+        opener=RecordingOpener(),
+    )
+
+    assert backend.classifier_min_request_interval_seconds == 12.5
+    assert backend.summarizer_min_request_interval_seconds == 12.5
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS",
+        "DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS",
+        "DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS",
+    ],
+)
+def test_from_environment_rejects_non_numeric_request_interval(name):
     with pytest.raises(GeminiConfigurationError, match="must be numeric"):
         GeminiBackend.from_environment(
             {
                 "GEMINI_API_KEY": "key-from-env",
-                "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS": "fast",
+                name: "fast",
             }
         )
 
@@ -441,6 +501,8 @@ def test_from_environment_rejects_non_numeric_request_interval():
         {"api_key": "key", "timeout_seconds": 0},
         {"api_key": "key", "max_retries": -1},
         {"api_key": "key", "retry_base_seconds": -1},
+        {"api_key": "key", "classifier_min_request_interval_seconds": -1},
+        {"api_key": "key", "summarizer_min_request_interval_seconds": -1},
         {"api_key": "key", "min_request_interval_seconds": -1},
         {"api_key": "key", "min_request_interval_seconds": float("inf")},
     ],

@@ -23,8 +23,9 @@ LOGGER = logging.getLogger(__name__)
 
 INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 DEFAULT_CLASSIFIER_MODEL = "gemini-3.5-flash-lite"
-DEFAULT_SUMMARIZER_MODEL = "gemini-3.5-flash-lite"
-DEFAULT_MIN_REQUEST_INTERVAL_SECONDS = 6.0
+DEFAULT_SUMMARIZER_MODEL = "gemini-3.6-flash"
+DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS = 6.0
+DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS = 20.0
 MODEL_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 RETRYABLE_HTTP_STATUSES = {408, 429}
 MAX_RESPONSE_BYTES = 256 * 1024
@@ -61,7 +62,13 @@ class GeminiBackend:
         timeout_seconds: int = 90,
         max_retries: int = 3,
         retry_base_seconds: float = 1.0,
-        min_request_interval_seconds: float = DEFAULT_MIN_REQUEST_INTERVAL_SECONDS,
+        classifier_min_request_interval_seconds: float = (
+            DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS
+        ),
+        summarizer_min_request_interval_seconds: float = (
+            DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS
+        ),
+        min_request_interval_seconds: float | None = None,
         opener: Callable[..., HTTPResponse] = urlopen,
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
@@ -80,43 +87,71 @@ class GeminiBackend:
             )
         if retry_base_seconds < 0:
             raise GeminiConfigurationError("Gemini retry base must not be negative")
-        if (
-            not math.isfinite(min_request_interval_seconds)
-            or min_request_interval_seconds < 0
-        ):
-            raise GeminiConfigurationError(
-                "Gemini minimum request interval must not be negative"
-            )
+        if min_request_interval_seconds is not None:
+            classifier_min_request_interval_seconds = min_request_interval_seconds
+            summarizer_min_request_interval_seconds = min_request_interval_seconds
+        _validate_request_interval(
+            classifier_min_request_interval_seconds,
+            "Gemini classifier minimum request interval",
+        )
+        _validate_request_interval(
+            summarizer_min_request_interval_seconds,
+            "Gemini summarizer minimum request interval",
+        )
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.retry_base_seconds = retry_base_seconds
-        self.min_request_interval_seconds = min_request_interval_seconds
+        self.classifier_min_request_interval_seconds = (
+            classifier_min_request_interval_seconds
+        )
+        self.summarizer_min_request_interval_seconds = (
+            summarizer_min_request_interval_seconds
+        )
+        self._model_request_intervals: dict[str, float] = {}
+        for model, interval in (
+            (self.classifier_model, classifier_min_request_interval_seconds),
+            (self.summarizer_model, summarizer_min_request_interval_seconds),
+        ):
+            self._model_request_intervals[model] = max(
+                interval,
+                self._model_request_intervals.get(model, 0.0),
+            )
         self.opener = opener
         self.sleeper = sleeper
         self.clock = clock
         self.jitter = jitter
-        self._last_request_started: float | None = None
+        self._last_request_started_by_model: dict[str, float] = {}
 
     @classmethod
     def from_environment(
         cls, env: Mapping[str, str] | None = None, **kwargs
     ) -> GeminiBackend:
         environment = os.environ if env is None else env
-        if "min_request_interval_seconds" in kwargs:
-            min_request_interval_seconds = kwargs.pop(
-                "min_request_interval_seconds"
+        shared_interval = environment.get(
+            "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS"
+        )
+        if "classifier_min_request_interval_seconds" in kwargs:
+            classifier_interval = kwargs.pop(
+                "classifier_min_request_interval_seconds"
             )
         else:
-            interval_value = environment.get(
-                "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS",
-                str(DEFAULT_MIN_REQUEST_INTERVAL_SECONDS),
+            classifier_interval = _environment_request_interval(
+                environment,
+                "DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS",
+                shared_interval,
+                DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS,
             )
-            try:
-                min_request_interval_seconds = float(interval_value)
-            except ValueError as exc:
-                raise GeminiConfigurationError(
-                    "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS must be numeric"
-                ) from exc
+        if "summarizer_min_request_interval_seconds" in kwargs:
+            summarizer_interval = kwargs.pop(
+                "summarizer_min_request_interval_seconds"
+            )
+        else:
+            summarizer_interval = _environment_request_interval(
+                environment,
+                "DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS",
+                shared_interval,
+                DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS,
+            )
         return cls(
             api_key=environment.get("GEMINI_API_KEY", ""),
             classifier_model=environment.get(
@@ -125,7 +160,8 @@ class GeminiBackend:
             summarizer_model=environment.get(
                 "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL", DEFAULT_SUMMARIZER_MODEL
             ),
-            min_request_interval_seconds=min_request_interval_seconds,
+            classifier_min_request_interval_seconds=classifier_interval,
+            summarizer_min_request_interval_seconds=summarizer_interval,
             **kwargs,
         )
 
@@ -250,7 +286,8 @@ class GeminiBackend:
                 },
                 "generation_config": {"max_output_tokens": max_output_tokens},
                 "store": False,
-            }
+            },
+            model=model,
         )
         if response.get("status") != "completed":
             raise GeminiResponseError("Gemini interaction did not complete")
@@ -266,10 +303,10 @@ class GeminiBackend:
         _log_usage(task, model, response.get("usage"))
         return output
 
-    def _post_json(self, payload: dict) -> dict:
+    def _post_json(self, payload: dict, *, model: str) -> dict:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         for attempt in range(self.max_retries + 1):
-            self._wait_for_request_slot()
+            self._wait_for_request_slot(model)
             request = Request(
                 INTERACTIONS_URL,
                 data=body,
@@ -308,16 +345,17 @@ class GeminiBackend:
             return decoded
         raise AssertionError("Gemini retry loop ended unexpectedly")
 
-    def _wait_for_request_slot(self) -> None:
+    def _wait_for_request_slot(self, model: str) -> None:
         now = self.clock()
-        if self._last_request_started is not None:
-            remaining = self.min_request_interval_seconds - (
-                now - self._last_request_started
+        last_request_started = self._last_request_started_by_model.get(model)
+        if last_request_started is not None:
+            remaining = self._model_request_intervals[model] - (
+                now - last_request_started
             )
             if remaining > 0:
                 self.sleeper(remaining)
                 now = self.clock()
-        self._last_request_started = now
+        self._last_request_started_by_model[model] = now
 
     def _retry_delay(
         self, attempt: int, headers, error_body: bytes | None = None
@@ -340,6 +378,30 @@ def _validate_model(model: str) -> str:
     if not MODEL_PATTERN.fullmatch(normalized):
         raise GeminiConfigurationError("Gemini model ID is invalid")
     return normalized
+
+
+def _validate_request_interval(value: float, label: str) -> None:
+    if not math.isfinite(value) or value < 0:
+        raise GeminiConfigurationError(f"{label} must not be negative")
+
+
+def _environment_request_interval(
+    environment: Mapping[str, str],
+    name: str,
+    shared_value: str | None,
+    default: float,
+) -> float:
+    fallback = shared_value if shared_value is not None else str(default)
+    value = environment.get(name, fallback)
+    try:
+        return float(value)
+    except ValueError as exc:
+        source_name = (
+            name
+            if name in environment
+            else "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS"
+        )
+        raise GeminiConfigurationError(f"{source_name} must be numeric") from exc
 
 
 def _is_retryable_status(status: int) -> bool:

@@ -40,8 +40,8 @@
 请参考 `.env.example` 设置变量和 key：
 
 - `GEMINI_API_KEY`：生成简报时必填；
-- `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL`、`DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`：可选的固定模型 ID；
-- `DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS`：Gemini 请求（含内部重试）之间的最小间隔，默认 6 秒；覆盖模型时需按对应 RPM 配额同步调整；
+- `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL`、`DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`：可选的固定模型 ID；默认分别使用 `gemini-3.5-flash-lite` 和 `gemini-3.6-flash`；
+- `DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS`、`DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS`：分类与摘要请求（含内部重试）的独立最小间隔，默认分别为 6 秒和 20 秒；若两个角色使用同一模型，应用会采用两者中更保守的间隔；
 - `TAVILY_API_KEY`：可选；未配置时 Reuters 同稿转载 fallback 会安全跳过；
 - `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：可选，但必须同时配置，启用 Adobe PDF-to-Markdown；
 - `DAILY_BRIEF_PUBLISH_URL`、`DAILY_BRIEF_PUBLISH_TOKEN`：仅发布时需要，必须同时配置。
