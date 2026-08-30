@@ -17,6 +17,7 @@ from .article_fetcher import (
     CLASSIFICATION_FETCH_POLICY,
     CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
     CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS,
+    SUMMARY_FETCH_POLICY,
     ArticleFetchError,
     ArticleFetchResult,
     fetch_article,
@@ -491,11 +492,14 @@ def _prepare_candidate_material(
             RETRIEVAL_MODE_SUMMARY,
         }:
             raise ValueError(f"unknown retrieval mode: {retrieval_mode}")
-        if article_fetcher_fn is not None:
-            article_client = article_fetcher_fn
-        elif retrieval_mode == RETRIEVAL_MODE_CLASSIFICATION:
+        active_fetcher = (
+            article_fetcher_fn
+            if article_fetcher_fn is not None
+            else fetch_article
+        )
+        if retrieval_mode == RETRIEVAL_MODE_CLASSIFICATION:
             article_client = partial(
-                fetch_article,
+                active_fetcher,
                 timeout_seconds=CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
                 pdf_parse_timeout_seconds=(
                     CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
@@ -504,7 +508,8 @@ def _prepare_candidate_material(
             )
         else:
             article_client = partial(
-                fetch_article,
+                active_fetcher,
+                policy=SUMMARY_FETCH_POLICY,
                 wayback_not_before=_wayback_not_before(
                     candidate.story.created_at,
                     window.start,
