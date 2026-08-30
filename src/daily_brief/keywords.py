@@ -22,7 +22,7 @@ WEIGHT_BONUS = {
     "weak": 0.0,
 }
 
-VERSIONED_KEYWORDS = {"GPT", "Qwen", "Grok"}
+VERSIONED_KEYWORDS = {"GPT", "Qwen", "Grok", "C++"}
 
 
 def match_keywords(title: str, story_text: str, url: str) -> list[KeywordMatch]:
@@ -64,11 +64,20 @@ def _match_primary_text(text: str) -> list[KeywordMatch]:
 
 
 def _iter_keyword_matches(text: str, keyword: str):
+    if keyword in VERSIONED_KEYWORDS:
+        escaped_keyword = re.escape(keyword)
+        suffix = rf"(?:s(?![A-Za-z0-9])|[-.]?\d+(?:\.\d+)*(?![A-Za-z0-9.])|(?![A-Za-z0-9]))"
+        pattern = rf"(?<![A-Za-z0-9]){escaped_keyword}{suffix}"
+        flags = (
+            0
+            if keyword in ABBREVIATIONS or keyword in CASE_SENSITIVE_KEYWORDS
+            else re.IGNORECASE
+        )
+        return re.finditer(pattern, text, flags)
+
     if keyword in ABBREVIATIONS or keyword in CASE_SENSITIVE_KEYWORDS:
         escaped_keyword = re.escape(keyword)
-        if keyword in VERSIONED_KEYWORDS:
-            suffix = rf"(?:s(?![A-Za-z0-9])|[-.]?\d+(?:\.\d+)*(?![A-Za-z0-9.])|(?![A-Za-z0-9]))"
-        elif keyword in ABBREVIATIONS:
+        if keyword in ABBREVIATIONS:
             suffix = r"(?:s)?(?![A-Za-z0-9])"
         else:
             suffix = r"(?![A-Za-z0-9])"

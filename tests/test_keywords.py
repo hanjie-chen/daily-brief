@@ -40,6 +40,10 @@ def test_abbreviations_accept_plural_suffixes():
         ("Qwen", "Qwen2.5 release"),
         ("Qwen", "Qwen3.8 Max is out"),
         ("Grok", "Grok3 is available"),
+        ("C++", "C++17 features"),
+        ("C++", "C++20 coroutines"),
+        ("C++", "What is new in C++23"),
+        ("C++", "modern c++20 guide"),
     ],
 )
 def test_versioned_keywords_accept_version_and_plural_suffixes(keyword, title):
@@ -54,10 +58,11 @@ def test_versioned_keywords_accept_version_and_plural_suffixes(keyword, title):
         "GPT5.6preview release",
         "Qwensomething release",
         "Grokking algorithms",
+        "C++something",
     ],
 )
 def test_variant_suffixes_do_not_relax_letter_boundaries(title):
-    assert not {"AI", "GPT", "Qwen", "Grok"} & set(
+    assert not {"AI", "GPT", "Qwen", "Grok", "C++"} & set(
         names(match_keywords(title=title, story_text="", url=""))
     )
 
