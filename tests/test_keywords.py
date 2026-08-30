@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import pytest
 
+from daily_brief.config import CORE_TOPIC_HIGH_WEIGHT_KEYWORDS
 from daily_brief.keywords import match_keywords
 
 
@@ -102,3 +105,95 @@ def test_ambiguous_product_names_are_case_sensitive():
     )
 
     assert not {"Moonshot", "Fable", "Grok"} & set(names(matches))
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Rust never sleeps: preventing rust on garden tools",
+        "Here we go again with another framework",
+        "C is fine, actually",
+        "A kernel of truth in the popcorn industry",
+        "Shell announces new offshore project",
+        "Taylor Swift ticket pricing analysis",
+        "A python ate my chickens",
+        "Docker workers begin strike at port",
+        "The compiler of a folk-song anthology wins an award",
+        "Elixir sales rise at the wellness expo",
+        "Cassandra predicts another difficult year",
+        "Terraform Mars in this new board game",
+        "A court interpreter describes the trial",
+        "The city expands garbage collection",
+        "A Taylor Swift package includes four vinyl records",
+        "GCC leaders meet to discuss regional trade",
+        "Clang went the bells throughout the night",
+        "Learn to zig when your opponent expects a zag",
+        "The neighborhood Bash returns this weekend",
+    ],
+)
+def test_ambiguous_core_topic_terms_do_not_match(title):
+    matches = match_keywords(title=title, story_text="", url="")
+
+    assert not any(match.weight == "high" for match in matches)
+
+
+@pytest.mark.parametrize("keyword", CORE_TOPIC_HIGH_WEIGHT_KEYWORDS)
+def test_approved_core_topic_keywords_are_high_weight(keyword):
+    matches = match_keywords(
+        title=f"Technical notes on {keyword}",
+        story_text="",
+        url="",
+    )
+
+    assert any(
+        match.keyword == keyword and match.weight == "high"
+        for match in matches
+    )
+
+
+def test_runtime_core_topic_keywords_match_approved_manifest():
+    manifest_path = (
+        Path(__file__).parents[1] / "docs" / "keyword-entry-manifest.md"
+    )
+    rows = []
+    for line in manifest_path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.split("|")[1:-1]]
+        rows.append(
+            {
+                "keyword": cells[0].removeprefix("`").removesuffix("`"),
+                "tier": cells[1],
+                "hits": int(cells[2]),
+                "decision": cells[3],
+                "reason": cells[4],
+            }
+        )
+
+    assert [row["keyword"] for row in rows] == CORE_TOPIC_HIGH_WEIGHT_KEYWORDS
+    assert len(rows) == 99
+    assert all(row["tier"] in {"A", "B"} for row in rows)
+    assert all(row["decision"] == "批准" for row in rows)
+    assert all(row["reason"] for row in rows)
+
+    zero_hit_plural_keywords = {
+        "GCC compilers",
+        "Clang compilers",
+        "Linux kernels",
+        "bytecode interpreters",
+        "type systems",
+        "borrow checkers",
+        "goroutines",
+        "kernel panics",
+        "kernel modules",
+        "POSIX shells",
+        "Bash scripts",
+        "JDKs",
+        "compiler optimizations",
+    }
+    uniform_reason = "单数已过关，复数误命中风险不高于单数。"
+    assert {
+        row["keyword"]
+        for row in rows
+        if row["hits"] == 0 and row["reason"] == uniform_reason
+    } == zero_hit_plural_keywords

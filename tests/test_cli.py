@@ -114,13 +114,13 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
     assert by_id["2"]["selected"] is False
     assert by_id["2"]["rejection_reason"] == "below_ai_minimum"
     assert by_id["3"]["selected"] is True
-    assert by_id["3"]["section"] == "non_ai_hot"
+    assert by_id["3"]["section"] == "ai"
     assert by_id["4"]["selected"] is True
     assert by_id["4"]["section"] == "ai"
     assert summarizer.titles == [
         "OpenAI launches a model",
-        "AI coding agent with Claude",
         "SQLite release notes",
+        "AI coding agent with Claude",
     ]
 
     public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
@@ -131,11 +131,12 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
         item["hn_item_id"] for item in public_payload["sections"]["ai"]["items"]
     ] == [
         "4",
+        "3",
         "1",
     ]
     assert [
         item["hn_item_id"] for item in public_payload["sections"]["non_ai_hot"]["items"]
-    ] == ["3"]
+    ] == []
 
 
 def test_no_content_marker_and_public_json_replace_each_other_on_rerun(tmp_path):
@@ -483,7 +484,7 @@ def test_run_generate_logs_terminal_source_failure(tmp_path, monkeypatch, caplog
     assert "AI data source failed" in result.brief_path.read_text(encoding="utf-8")
 
 
-def test_run_generate_keeps_non_ai_algolia_story_out_of_ai_section(tmp_path):
+def test_run_generate_routes_approved_core_keyword_to_ai_schema_section(tmp_path):
     result = run_generate(
         output_dir=tmp_path / "briefs",
         data_dir=tmp_path / "data",
@@ -497,17 +498,15 @@ def test_run_generate_keeps_non_ai_algolia_story_out_of_ai_section(tmp_path):
 
     candidate_data = json.loads(result.data_path.read_text(encoding="utf-8"))
     by_id = {item["hn_item_id"]: item for item in candidate_data}
-    assert by_id["1"]["matched_keywords"] == []
+    assert by_id["1"]["matched_keywords"] == ["SQLite"]
     assert by_id["1"]["selected"] is True
-    assert by_id["1"]["section"] == "non_ai_hot"
+    assert by_id["1"]["section"] == "ai"
 
     markdown = result.brief_path.read_text(encoding="utf-8")
     ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
         "## Hacker News: Beyond the Bubble", 1
     )[0]
-    assert "SQLite release notes" not in ai_section
-    assert "## Hacker News: Beyond the Bubble" in markdown
-    assert "SQLite release notes" in markdown
+    assert "SQLite release notes" in ai_section
 
 
 def test_run_generate_treats_weak_only_matches_as_non_ai_hot_candidates(tmp_path):
@@ -587,7 +586,7 @@ def test_run_generate_dedupes_hot_candidates_before_writing_json(tmp_path):
     assert duplicate_records[0]["hn_item_id"] == "2"
     assert duplicate_records[0]["title"] == "Popular SQLite discussion"
     assert duplicate_records[0]["selected"] is True
-    assert duplicate_records[0]["section"] == "non_ai_hot"
+    assert duplicate_records[0]["section"] == "ai"
 
     markdown = result.brief_path.read_text(encoding="utf-8")
     assert duplicate_records[0]["title"] in markdown
