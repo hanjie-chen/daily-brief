@@ -83,7 +83,7 @@ def _duplicate_groups(candidates: list[Candidate]) -> list[list[int]]:
 
 
 def select_ai_candidates(candidates: list[Candidate]) -> list[Candidate]:
-    """Select the bounded AI section without consulting external services."""
+    """Select the bounded core section without consulting external services."""
 
     ai_pool = _dedupe_ai_candidates(candidates)
     retained_ai_ids = {id(candidate) for candidate in ai_pool}

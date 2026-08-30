@@ -236,7 +236,7 @@ def run_generate(
         algolia_items, ai_note = _fetch_source(
             "algolia",
             lambda: fetch_algolia_stories(window),
-            "Today's AI data source failed: Algolia request failed",
+            "Today's Tech picks data source failed: Algolia request failed",
             clock,
         )
 
@@ -414,7 +414,7 @@ def run_generate(
         generated_at or datetime.now(TIMEZONE).isoformat(timespec="seconds"),
         ai_items,
         selected_hot_items,
-        ai_note=("AI 数据源本次不可用，当前栏目可能不完整。" if ai_note else ""),
+        ai_note=("技术精选数据源本次不可用，当前栏目可能不完整。" if ai_note else ""),
         hot_note=("HN 热门数据源本次不可用，当前栏目可能不完整。" if hot_note else ""),
     )
     public_payload = json.loads(public_json_text)

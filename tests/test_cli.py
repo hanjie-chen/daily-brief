@@ -608,12 +608,12 @@ def test_run_generate_writes_files_when_algolia_fetch_fails(tmp_path, monkeypatc
 
     assert result.brief_path.exists()
     assert result.data_path.exists()
-    assert "AI data source failed" in markdown
+    assert "Tech picks data source failed" in markdown
     assert "Algolia" in markdown
     assert "SQLite release notes" in markdown
     public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
     assert public_payload["sections"]["ai"]["note"] == (
-        "AI 数据源本次不可用，当前栏目可能不完整。"
+        "技术精选数据源本次不可用，当前栏目可能不完整。"
     )
     assert "algolia unavailable" not in result.public_json_path.read_text(
         encoding="utf-8"
@@ -696,7 +696,9 @@ def test_run_generate_logs_terminal_source_failure(tmp_path, monkeypatch, caplog
         in caplog.text
     )
     assert "source=hn_official status=success stories=0 duration=1.000s" in caplog.text
-    assert "AI data source failed" in result.brief_path.read_text(encoding="utf-8")
+    assert "Tech picks data source failed" in result.brief_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_run_generate_routes_approved_core_keyword_to_ai_schema_section(tmp_path):
@@ -718,7 +720,7 @@ def test_run_generate_routes_approved_core_keyword_to_ai_schema_section(tmp_path
     assert by_id["1"]["section"] == "ai"
 
     markdown = result.brief_path.read_text(encoding="utf-8")
-    ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
+    ai_section = markdown.split("## Hacker News: Tech picks", 1)[1].split(
         "## Hacker News: Beyond the Bubble", 1
     )[0]
     assert "SQLite release notes" in ai_section
@@ -756,7 +758,7 @@ def test_run_generate_treats_weak_only_matches_as_non_ai_hot_candidates(tmp_path
     assert by_id["2"]["section"] == "non_ai_hot"
 
     markdown = result.brief_path.read_text(encoding="utf-8")
-    ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
+    ai_section = markdown.split("## Hacker News: Tech picks", 1)[1].split(
         "## Hacker News: Beyond the Bubble", 1
     )[0]
     assert "Database model migration guide" not in ai_section
@@ -1007,7 +1009,7 @@ def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
         )
 
     markdown = result.brief_path.read_text(encoding="utf-8")
-    ai_section = markdown.split("## Hacker News: AI", 1)[1].split(
+    ai_section = markdown.split("## Hacker News: Tech picks", 1)[1].split(
         "## Hacker News: Beyond the Bubble", 1
     )[0]
     assert "Claude release" in ai_section

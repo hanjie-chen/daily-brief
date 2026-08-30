@@ -34,7 +34,7 @@ def test_render_markdown_contains_required_fields():
     markdown = render_markdown("2026-07-08", [candidate()], [])
 
     assert "# Daily Brief - 2026-07-08" in markdown
-    assert "## Hacker News: AI" in markdown
+    assert "## Hacker News: Tech picks" in markdown
     assert "### AI coding agent" in markdown
     assert "Summary: 这是一个 AI coding agent 项目。" in markdown
     assert "Why: keywords: AI coding" in markdown
@@ -46,10 +46,10 @@ def test_render_markdown_contains_required_fields():
     assert markdown.endswith("\n")
 
 
-def test_render_markdown_shows_empty_ai_section():
+def test_render_markdown_shows_empty_core_section():
     markdown = render_markdown("2026-07-08", [], [candidate(section="non_ai_hot")])
 
-    assert "## Hacker News: AI\n\nNo items selected." in markdown
+    assert "## Hacker News: Tech picks\n\nNo items selected." in markdown
     assert "## Hacker News: Beyond the Bubble" in markdown
 
 
