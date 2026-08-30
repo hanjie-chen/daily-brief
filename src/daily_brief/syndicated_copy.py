@@ -22,7 +22,10 @@ MAX_RESULT_TITLE_CHARS = 500
 MAX_RESULT_URL_CHARS = 2048
 MIN_SYNDICATED_BODY_CHARS = 800
 REUTERS_HOSTS = {"reuters.com", "www.reuters.com"}
-SYNDICATED_HOST_ALLOWLIST = {"finance.yahoo.com"}
+SYNDICATED_HOST_ALLOWLIST = {
+    "ca.finance.yahoo.com",
+    "finance.yahoo.com",
+}
 
 _DATE_IN_URL = re.compile(r"(20\d{2})-(\d{2})-(\d{2})(?:/|$)")
 _REUTERS_MARKER = re.compile(

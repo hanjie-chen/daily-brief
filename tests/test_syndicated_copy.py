@@ -24,6 +24,10 @@ YAHOO_URL = (
     "https://finance.yahoo.com/technology/ai/articles/"
     "nvidia-scales-back-250-billion-234356524.html"
 )
+CA_YAHOO_URL = (
+    "https://ca.finance.yahoo.com/news/"
+    "nvidia-scales-back-250-billion-234356524.html"
+)
 
 
 class FakeResponse:
@@ -118,7 +122,7 @@ def test_tavily_adapter_sends_bounded_discovery_request_and_ignores_content():
         "include_answer": False,
         "include_raw_content": False,
         "include_images": False,
-        "include_domains": ["finance.yahoo.com"],
+        "include_domains": ["ca.finance.yahoo.com", "finance.yahoo.com"],
         "auto_parameters": False,
         "exact_match": True,
     }
@@ -172,6 +176,7 @@ def test_tavily_adapter_limits_results_and_rejects_oversized_response():
         "https://user:pass@finance.yahoo.com/article",
         "https://finance.yahoo.com:8443/article",
         "https://finance.yahoo.com.evil.example/article",
+        "https://ca.finance.yahoo.com.evil.example/article",
         "not a url",
     ],
 )
@@ -179,8 +184,9 @@ def test_candidate_url_filter_rejects_unsafe_or_non_allowlisted_urls(url):
     assert normalize_allowed_candidate_url(url) is None
 
 
-def test_candidate_url_filter_normalizes_fragment_on_allowlisted_url():
-    assert normalize_allowed_candidate_url(f"{YAHOO_URL}#comments") == YAHOO_URL
+@pytest.mark.parametrize("url", [YAHOO_URL, CA_YAHOO_URL])
+def test_candidate_url_filter_normalizes_fragment_on_allowlisted_url(url):
+    assert normalize_allowed_candidate_url(f"{url}#comments") == url
 
 
 def test_validator_accepts_rewritten_hn_title_using_combined_signals():
