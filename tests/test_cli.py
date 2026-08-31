@@ -2336,7 +2336,7 @@ def test_alternate_reporting_conflict_fails_closed(tmp_path):
         ]
     )
     first_body = (
-        "Aug 28 (Reuters) - A judge reviewed the Pentagon blacklisting of "
+        "Aug 28 (Reuters) - A judge ruled on the Pentagon blacklisting of "
         "Anthropic. "
         + ("Grounded report detail. " * 18)
         + "(Reporting by First Reporter)"

@@ -1,6 +1,8 @@
+import hashlib
 import json
 from dataclasses import replace
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +27,10 @@ NYTIMES_URL = (
 YAHOO_URL = (
     "https://ca.finance.yahoo.com/news/"
     "us-judge-rules-pentagon-blacklisting-012047911.html"
+)
+MANIFEST_PATH = (
+    Path(__file__).parent
+    / "fixtures/alternate_reporting/anthropic_yahoo_manifest.json"
 )
 
 
@@ -165,7 +171,7 @@ def test_candidate_url_filter_rejects_unsafe_or_non_allowlisted_urls(url):
     assert normalize_allowed_candidate_url(url) is None
 
 
-def test_validator_accepts_real_production_metadata_and_short_complete_copy():
+def test_validator_accepts_production_metadata_and_synthetic_complete_copy():
     body = alternate_body()
     assert len(body) == 644
 
@@ -184,6 +190,50 @@ def test_validator_accepts_real_production_metadata_and_short_complete_copy():
     assert {"anthropic", "blacklist", "government", "judge"}.issubset(
         result.matched_anchors
     )
+
+
+def test_real_body_manifest_replays_body_only_validation_when_fixture_exists():
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 1
+    assert manifest["fixture_id"] == "hn-49473522-yahoo-reuters"
+    assert manifest["body"]["chars"] == 644
+    assert len(manifest["body"]["sha256"]) == 64
+    assert manifest["expected_validation"]["accepted"] is True
+    assert "body_only_same_event_signals" in manifest["required_evidence"]
+
+    project_root = Path(__file__).parents[1]
+    body_path = project_root / manifest["body_path"]
+    if not body_path.exists():
+        pytest.skip("ignored real-body fixture is not present in this checkout")
+
+    body = body_path.read_text(encoding="utf-8").strip()
+    assert len(body) == manifest["body"]["chars"]
+    assert hashlib.sha256(body.encode()).hexdigest() == manifest["body"]["sha256"]
+
+    source = manifest["source"]
+    candidate = source_candidate(
+        url=source["url"],
+        created_at=source["created_at"],
+    )
+    candidate.story = replace(
+        candidate.story,
+        hn_item_id=source["hn_item_id"],
+        title=source["title"],
+    )
+    alternate = manifest["alternate"]
+    result = validate_alternate_reporting(
+        candidate,
+        AlternateReportingCandidate(
+            title="Unrelated result title",
+            url=alternate["url"],
+        ),
+        body,
+    )
+    expected = manifest["expected_validation"]
+    assert result.accepted is expected["accepted"]
+    assert result.reason == expected["reason"]
+    assert result.reporting_date.isoformat() == expected["reporting_date"]
+    assert list(result.matched_anchors) == expected["matched_anchors"]
 
 
 @pytest.mark.parametrize(
@@ -229,7 +279,27 @@ def test_validator_rejects_same_day_unrelated_anthropic_matx_report():
     assert result.reason == "insufficient_event_signals"
 
 
-def test_validator_requires_distinctive_source_number_signals():
+def test_search_result_title_cannot_make_unrelated_body_pass():
+    beginning = (
+        "Aug 28 (Reuters) - Anthropic is in talks with chip startup MatX to "
+        "accelerate chip design, according to people familiar with the matter. "
+    )
+    body = beginning + ("Unrelated semiconductor reporting. " * 12) + (
+        "(Reporting by Example Reporter)"
+    )
+    result = validate_alternate_reporting(
+        source_candidate(),
+        AlternateReportingCandidate(
+            "Pentagon's blacklisting of Anthropic was unlawful, US judge rules",
+            YAHOO_URL,
+        ),
+        body,
+    )
+    assert result.accepted is False
+    assert result.reason == "insufficient_event_signals"
+
+
+def test_validator_requires_distinctive_magnitude_signals():
     candidate = source_candidate()
     candidate.story = replace(
         candidate.story,
@@ -246,6 +316,22 @@ def test_validator_requires_distinctive_source_number_signals():
     )
     assert result.accepted is False
     assert result.reason == "insufficient_event_signals"
+
+
+def test_validator_does_not_require_bare_source_numbers():
+    candidate = source_candidate()
+    candidate.story = replace(
+        candidate.story,
+        title=(
+            "Judge rules on 3 counts in illegal Anthropic blacklisting case"
+        ),
+    )
+    result = validate_alternate_reporting(
+        candidate,
+        AlternateReportingCandidate("Untrusted search result title", YAHOO_URL),
+        alternate_body(),
+    )
+    assert result.accepted is True
 
 
 def test_validator_uses_created_at_when_source_url_has_no_date():

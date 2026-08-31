@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "hn-49473522-yahoo-reuters",
+  "body_path": "data/alternate-reporting-fixtures/49473522-yahoo.txt",
+  "source": {
+    "hn_item_id": "49473522",
+    "title": "Judge rules Trump administration’s blacklisting of Anthropic was illegal",
+    "url": "https://www.nytimes.com/2026/08/27/technology/anthropic-government-blacklisting-ruling.html",
+    "created_at": "2026-08-28T01:00:00Z"
+  },
+  "alternate": {
+    "title": "Pentagon's blacklisting of Anthropic was unlawful, US judge rules",
+    "url": "https://ca.finance.yahoo.com/news/us-judge-rules-pentagon-blacklisting-012047911.html"
+  },
+  "body": {
+    "chars": 644,
+    "sha256": "0fc59135524e5f9f199eb433aa712fd69fb95b18af1c0f23ca5a2503f889c41b"
+  },
+  "expected_validation": {
+    "accepted": true,
+    "reason": "verified",
+    "reporting_date": "2026-08-27",
+    "matched_anchors": [
+      "judge",
+      "rule",
+      "blacklist",
+      "anthropic"
+    ]
+  },
+  "required_evidence": [
+    "early_reuters_marker",
+    "terminal_reporting_by_footer",
+    "nearby_reporting_date",
+    "body_only_same_event_signals"
+  ]
+}

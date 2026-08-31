@@ -27,7 +27,8 @@ ALTERNATE_REPORTING_HOST_ALLOWLIST = REUTERS_HOSTS | YAHOO_HOSTS
 
 _WORD = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 _NUMBER_SIGNAL = re.compile(
-    r"\b\d+(?:\.\d+)?(?:\s+(?:million|billion|trillion|percent))?\b",
+    r"(?:\b\d+(?:\.\d+)?\s+(?:million|billion|trillion|percent)\b|"
+    r"(?<!\w)\d+(?:\.\d+)?%(?!\w))",
     re.IGNORECASE,
 )
 _NYTIMES_DATE = re.compile(r"/(20\d{2})/(\d{2})/(\d{2})(?:/|$)")
@@ -70,7 +71,6 @@ _STOP_WORDS = {
     "under",
     "with",
     "without",
-    "rules",
     "story",
     "technology",
 }
@@ -292,13 +292,13 @@ def validate_alternate_reporting(
     source_anchors = _event_anchors(source)
     identity_words = {
         _canonical_token(word)
-        for word in _WORD.findall(f"{alternate.title}\n{text}")
+        for word in _WORD.findall(text)
     }
     matched = tuple(anchor for anchor in source_anchors if anchor in identity_words)
     required = min(5, max(3, (len(source_anchors) + 1) // 2))
     if len(source_anchors) < 3 or len(matched) < required:
         return AlternateReportingValidation(False, "insufficient_event_signals")
-    identity_numbers = set(_number_signals(f"{alternate.title}\n{text}"))
+    identity_numbers = set(_number_signals(text))
     if any(
         signal not in identity_numbers for signal in _source_number_signals(source)
     ):
@@ -411,9 +411,6 @@ def _distinctive_search_terms(words: list[str]) -> list[str]:
 def _canonical_token(word: str) -> str:
     lowered = word.lower()
     aliases = {
-        "administration": "government",
-        "pentagon": "government",
-        "unlawful": "illegal",
         "illegality": "illegal",
         "blacklisted": "blacklist",
         "blacklisting": "blacklist",

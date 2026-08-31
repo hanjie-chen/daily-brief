@@ -82,8 +82,12 @@
 
 # 2026-08-31: 高置信来源阻止后允许有标注的 Reuters 同事件报道
 
-决定:仅在最终摘要模式中,非 Reuters 原始来源的 retrieval chain 已终止、确实尝试过 fallback,且原因属于`challenge_page`、`cloudflare_challenge`、`datadome_challenge`或`vercel_challenge`时,允许通过一次独立 Tavily 搜索发现 Reuters 或 Yahoo Finance 上的 Reuters-authored 同事件报道。候选必须由既有 article fetcher 完整抓取,初始 URL、redirect 和 effective URL 都限制在精确 allowlist 中,并独立验证 early Reuters marker、terminal `Reporting by`、非 teaser、至少 400 字符、接近的报道日期和足够的同事件信号。Yahoo 合格候选优先;同组多个合格候选取正文最长者,同长度按 URL 稳定排序,事件身份冲突时整体 fail closed。
+决定:仅在最终摘要模式中,非 Reuters 原始来源的 retrieval chain 已终止、确实尝试过 fallback,且原因属于`challenge_page`、`cloudflare_challenge`、`datadome_challenge`或`vercel_challenge`时,允许通过一次独立 Tavily 搜索发现 Reuters 或 Yahoo Finance 上的 Reuters-authored 同事件报道。候选必须由既有 article fetcher 完整抓取,初始 URL、redirect 和 effective URL 都限制在精确 allowlist 中,并独立验证 early Reuters marker、terminal `Reporting by`、非 teaser、至少 400 字符、接近的报道日期和足够的同事件信号。同事件 token 与强数字信号必须来自实际抓取正文,Tavily 返回的候选标题不能为正文补足验证证据;词形规范化只合并确定性的 inflection/derivation,不加入针对单条事件的语义同义词。只有 million、billion、trillion、percent 和百分号形式属于强数字信号,裸数字不作为硬性要求。Yahoo 合格候选优先;同组多个合格候选取正文最长者,同长度按 URL 稳定排序,事件身份冲突时整体 fail closed。
 
 理由:这条 fallback 的目标是在原文及精确副本均无法无人值守取得时,继续自动节省阅读时间,同时明确改变了摘要依据。Reuters 作者身份可以通过正文 marker 与署名尾确定性验证;项目也已有 Yahoo 精确 allowlist、SSRF/redirect/content-size 边界和 Reuters 同稿恢复经验。来源限制本身不能证明事件相同,因此日期与事件信号验证不可省略。Reuters 也发布分析和特稿,不能把来源身份写成“天然只报道单一事件”。
 
-边界:新 finder、query 和 validator 位于独立的`alternate_reporting.py`,不复用或改变已有`syndicated_copy.py`的同稿语义、800 字符门槛和`exact_match=True`请求。搜索供应商的 answer、snippet、content 与 raw content 不进入验证、摘要或 audit。候选抓取失败不会递归发现。成功时 public source URL 仍指向原始来源,public schema v2 不新增字段,代码在模型摘要成功后固定添加`据 Reuters 对同一事件的报道：`前缀;模型失败时沿用原有 fallback summary 且不添加前缀。candidate audit 使用`material_origin=alternate_reporting`,记录实际材料 URL、原始失败链和独立 recovery 结果。任何 discovery、抓取、验证或摘要失败都沿用既有诚实失败状态。
+边界:新 finder、query 和 validator 位于独立的`alternate_reporting.py`,不复用或改变已有`syndicated_copy.py`的同稿语义、800 字符门槛和`exact_match=True`请求。搜索供应商的 answer、snippet、content 与 raw content 不进入验证、摘要或 audit;候选 title 只保留为 discovery metadata,不构成同事件证据。候选抓取失败不会递归发现。成功时 public source URL 仍指向原始来源,public schema v2 不新增字段,代码在模型摘要成功后固定添加`据 Reuters 对同一事件的报道：`前缀;模型失败时沿用原有 fallback summary 且不添加前缀。candidate audit 使用`material_origin=alternate_reporting`,记录实际材料 URL、原始失败链和独立 recovery 结果。任何 discovery、抓取、验证或摘要失败都沿用既有诚实失败状态。
+
+验证:HN 49473522 对应的 Yahoo Canada Reuters 正文由 production fetcher 抽取为 644 字符,正文 SHA-256 为`0fc59135524e5f9f199eb433aa712fd69fb95b18af1c0f23ca5a2503f889c41b`;不使用候选标题时,正文独立命中`judge`、`rule`、`blacklist`和`anthropic`并通过验证。第三方正文保留在 Git ignored `data/`,tracked manifest 只保存来源 metadata、hash、长度和预期验证结果。
+
+已知 follow-up:既有`syndicated_copy.py`同稿 validator 仍把 discovery title 与抓取正文合并计算 story anchors、数字和 title entities,存在同类的 provider-title evidence 风险。本次继续遵守隔离约束,不改变该稳定路径的语义;后续应使用真实 Reuters/Yahoo 同稿样本单独收紧,不能在 alternate-reporting 修复中顺带泛化。
