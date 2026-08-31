@@ -79,3 +79,11 @@
 走查队列不设热度或分数准入门槛。预算和 score 排序已经有界;取消门槛避免“先决定是否读正文、读完才取得资格加分”的循环定义。冷清日期可能因此发生少量注定落选的抓取,这是每天最多 25 条的可接受成本。圈外门槛仍在分类完成后的路由处独立检查;走查不会因凑满两个圈外名额而提前停止,全部合格 `outside` 候选最终按 points/comments 重排并取前二。
 
 直接入口词形必须先通过可回放的 A.0 数据关卡,在 tracked manifest 中逐词获批,并保留确定性同形词负例。无法可靠消歧的裸词继续交给正文分类,不以直接入口换取有污染风险的召回。
+
+# 2026-08-31: 高置信来源阻止后允许有标注的 Reuters 同事件报道
+
+决定:仅在最终摘要模式中,非 Reuters 原始来源的 retrieval chain 已终止、确实尝试过 fallback,且原因属于`challenge_page`、`cloudflare_challenge`、`datadome_challenge`或`vercel_challenge`时,允许通过一次独立 Tavily 搜索发现 Reuters 或 Yahoo Finance 上的 Reuters-authored 同事件报道。候选必须由既有 article fetcher 完整抓取,初始 URL、redirect 和 effective URL 都限制在精确 allowlist 中,并独立验证 early Reuters marker、terminal `Reporting by`、非 teaser、至少 400 字符、接近的报道日期和足够的同事件信号。Yahoo 合格候选优先;同组多个合格候选取正文最长者,同长度按 URL 稳定排序,事件身份冲突时整体 fail closed。
+
+理由:这条 fallback 的目标是在原文及精确副本均无法无人值守取得时,继续自动节省阅读时间,同时明确改变了摘要依据。Reuters 作者身份可以通过正文 marker 与署名尾确定性验证;项目也已有 Yahoo 精确 allowlist、SSRF/redirect/content-size 边界和 Reuters 同稿恢复经验。来源限制本身不能证明事件相同,因此日期与事件信号验证不可省略。Reuters 也发布分析和特稿,不能把来源身份写成“天然只报道单一事件”。
+
+边界:新 finder、query 和 validator 位于独立的`alternate_reporting.py`,不复用或改变已有`syndicated_copy.py`的同稿语义、800 字符门槛和`exact_match=True`请求。搜索供应商的 answer、snippet、content 与 raw content 不进入验证、摘要或 audit。候选抓取失败不会递归发现。成功时 public source URL 仍指向原始来源,public schema v2 不新增字段,代码在模型摘要成功后固定添加`据 Reuters 对同一事件的报道：`前缀;模型失败时沿用原有 fallback summary 且不添加前缀。candidate audit 使用`material_origin=alternate_reporting`,记录实际材料 URL、原始失败链和独立 recovery 结果。任何 discovery、抓取、验证或摘要失败都沿用既有诚实失败状态。

@@ -13,6 +13,18 @@ from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 
+from .alternate_reporting import (
+    MAX_ALTERNATE_REPORTING_CANDIDATES,
+    AlternateReportingCandidate,
+    AlternateReportingFinder,
+    AlternateReportingFinderError,
+    AlternateReportingValidation,
+    TavilyAlternateReportingFinder,
+    is_yahoo_url,
+    normalize_allowed_candidate_url as normalize_alternate_reporting_url,
+    validate_alternate_reporting,
+    validations_conflict,
+)
 from .article_fetcher import (
     CLASSIFICATION_FETCH_POLICY,
     CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
@@ -34,11 +46,13 @@ from .model_evaluation import (
     run_model_evaluation,
 )
 from .models import (
+    AlternateReportingRecovery,
     ArticleRetrieval,
     Candidate,
     RetrievalFailure,
     Story,
     SyndicatedRecovery,
+    is_origin_block_reason,
 )
 from .publisher import PublishError, publish_brief
 from .public_schema import EmptyPublicBriefError, validate_public_brief
@@ -73,6 +87,7 @@ from .time_window import daily_window
 LOGGER = logging.getLogger(__name__)
 RETRIEVAL_MODE_CLASSIFICATION = "classification"
 RETRIEVAL_MODE_SUMMARY = "summary"
+ALTERNATE_REPORTING_SUMMARY_PREFIX = "据 Reuters 对同一事件的报道："
 
 
 @dataclass(frozen=True)
@@ -99,6 +114,18 @@ class _FetchedMaterial:
 class _SyndicatedOutcome:
     material: _FetchedMaterial | None
     audit: SyndicatedRecovery
+
+
+@dataclass(frozen=True)
+class _AlternateReportingOutcome:
+    material: _FetchedMaterial | None
+    audit: AlternateReportingRecovery
+
+
+@dataclass(frozen=True)
+class _ValidatedAlternateReporting:
+    material: _FetchedMaterial
+    validation: AlternateReportingValidation
 
 
 def _fetch_source(
@@ -221,6 +248,7 @@ def run_generate(
     classifier=None,
     article_fetcher=None,
     syndicated_finder: SyndicatedCopyFinder | None = None,
+    alternate_reporting_finder: AlternateReportingFinder | None = None,
     clock: Callable[[], float] = time.monotonic,
     generated_at: str | None = None,
     model_backend: ModelBackend | None = None,
@@ -292,6 +320,7 @@ def run_generate(
             candidate,
             article_fetcher,
             syndicated_finder,
+            alternate_reporting_finder,
             window,
             retrieval_mode=RETRIEVAL_MODE_CLASSIFICATION,
         ):
@@ -373,6 +402,7 @@ def run_generate(
                 candidate,
                 article_fetcher,
                 syndicated_finder,
+                alternate_reporting_finder,
                 window,
                 retrieval_mode=RETRIEVAL_MODE_SUMMARY,
             )
@@ -391,6 +421,10 @@ def run_generate(
             candidate.summary = normalize_summary_text(
                 summary_client.summarize(candidate)
             )
+            if candidate.article_retrieval.material_origin == "alternate_reporting":
+                candidate.summary = (
+                    ALTERNATE_REPORTING_SUMMARY_PREFIX + candidate.summary
+                )
             candidate.summary_status = "success"
         except Exception as exc:
             print(f"Summary failed for {candidate.story.title}: {exc}", file=sys.stderr)
@@ -479,6 +513,7 @@ def _prepare_candidate_material(
     candidate: Candidate,
     article_fetcher_fn,
     syndicated_finder: SyndicatedCopyFinder | None,
+    alternate_reporting_finder: AlternateReportingFinder | None,
     window,
     *,
     retrieval_mode: str = RETRIEVAL_MODE_SUMMARY,
@@ -527,6 +562,11 @@ def _prepare_candidate_material(
                 material=None,
                 audit=SyndicatedRecovery(),
             )
+            alternate_recovery = _AlternateReportingOutcome(
+                material=None,
+                audit=AlternateReportingRecovery(),
+            )
+            material_origin = ""
             if (
                 retrieval_mode == RETRIEVAL_MODE_SUMMARY
                 and _should_attempt_reuters_recovery(candidate, original_failure)
@@ -536,7 +576,21 @@ def _prepare_candidate_material(
                     article_client,
                     syndicated_finder,
                 )
-            if recovery.material is None:
+                material_origin = "syndicated_copy"
+            elif (
+                retrieval_mode == RETRIEVAL_MODE_SUMMARY
+                and _should_attempt_alternate_reporting(
+                    candidate, original_failure
+                )
+            ):
+                alternate_recovery = _attempt_alternate_reporting_recovery(
+                    candidate,
+                    article_client,
+                    alternate_reporting_finder,
+                )
+                material_origin = "alternate_reporting"
+            recovered_material = recovery.material or alternate_recovery.material
+            if recovered_material is None:
                 candidate.article_retrieval = ArticleRetrieval(
                     status="failed",
                     method=original_failure.method,
@@ -548,6 +602,7 @@ def _prepare_candidate_material(
                     error_code=original_failure.error_code,
                     error_message=original_failure.error_message,
                     syndicated_recovery=recovery.audit,
+                    alternate_reporting_recovery=alternate_recovery.audit,
                 )
                 candidate.summary = article_fetch_failure_summary(candidate)
                 candidate.summary_basis = "none"
@@ -565,7 +620,7 @@ def _prepare_candidate_material(
                 )
                 return False
 
-            material = recovery.material
+            material = recovered_material
             candidate.story = replace(candidate.story, fetched_text=material.text)
             candidate.article_retrieval = ArticleRetrieval(
                 status="success",
@@ -575,16 +630,18 @@ def _prepare_candidate_material(
                 fallback_attempted=bool(material.fallback_reason),
                 fallback_reason=material.fallback_reason,
                 retrieved_url=material.retrieved_url,
-                material_origin="syndicated_copy",
+                material_origin=material_origin,
                 origin_failure=original_failure,
                 syndicated_recovery=recovery.audit,
+                alternate_reporting_recovery=alternate_recovery.audit,
             )
             candidate.summary_basis = "fetched_article"
             LOGGER.info(
                 "component=article_fetch item_id=%s status=success "
-                "material_origin=syndicated_copy method=%s extractor=%s "
+                "material_origin=%s method=%s extractor=%s "
                 "fallback_reason=%s attempts=%d",
                 candidate.story.hn_item_id,
+                material_origin,
                 material.method,
                 material.extractor or "none",
                 material.fallback_reason or "none",
@@ -750,6 +807,188 @@ def _should_attempt_reuters_recovery(
         and failure.method == "jina"
         and failure.fallback_attempted
         and failure.fallback_reason == "datadome_challenge"
+    )
+
+
+def _should_attempt_alternate_reporting(
+    candidate: Candidate,
+    failure: RetrievalFailure,
+) -> bool:
+    return (
+        not is_reuters_url(candidate.story.source_url)
+        and failure.fallback_attempted is True
+        and is_origin_block_reason(failure.fallback_reason)
+    )
+
+
+def _attempt_alternate_reporting_recovery(
+    candidate: Candidate,
+    article_client,
+    finder: AlternateReportingFinder | None,
+) -> _AlternateReportingOutcome:
+    active_finder = finder
+    if active_finder is None:
+        active_finder = TavilyAlternateReportingFinder.from_environment()
+    provider = getattr(active_finder, "provider", "unknown")
+    try:
+        discovered = active_finder.find(candidate)
+    except Exception as exc:
+        error_code = (
+            exc.error_code
+            if isinstance(exc, AlternateReportingFinderError)
+            else "finder_failed"
+        )
+        LOGGER.warning(
+            "component=alternate_reporting_recovery item_id=%s provider=%s "
+            "status=finder_failed code=%s",
+            candidate.story.hn_item_id,
+            provider,
+            error_code,
+        )
+        return _AlternateReportingOutcome(
+            material=None,
+            audit=AlternateReportingRecovery(
+                status="finder_failed",
+                provider=provider,
+                error_code=error_code,
+            ),
+        )
+
+    if not isinstance(discovered, list):
+        return _AlternateReportingOutcome(
+            material=None,
+            audit=AlternateReportingRecovery(
+                status="finder_failed",
+                provider=provider,
+                error_code="malformed_results",
+            ),
+        )
+
+    rejection_reasons: list[str] = []
+    seen_urls: set[str] = set()
+    yahoo_candidates: list[tuple[AlternateReportingCandidate, str]] = []
+    reuters_candidates: list[tuple[AlternateReportingCandidate, str]] = []
+    for alternate in discovered[:MAX_ALTERNATE_REPORTING_CANDIDATES]:
+        if not isinstance(alternate, AlternateReportingCandidate):
+            rejection_reasons.append("malformed_candidate")
+            continue
+        normalized_url = normalize_alternate_reporting_url(alternate.url)
+        if normalized_url is None:
+            rejection_reasons.append("unsupported_url")
+            continue
+        if normalized_url in seen_urls:
+            rejection_reasons.append("duplicate_url")
+            continue
+        seen_urls.add(normalized_url)
+        target = (
+            yahoo_candidates
+            if is_yahoo_url(normalized_url)
+            else reuters_candidates
+        )
+        target.append((alternate, normalized_url))
+
+    attempted = 0
+
+    def validate_group(
+        group: list[tuple[AlternateReportingCandidate, str]],
+    ) -> list[_ValidatedAlternateReporting]:
+        nonlocal attempted
+        accepted: list[_ValidatedAlternateReporting] = []
+        for alternate, normalized_url in group:
+            attempted += 1
+            try:
+                material = _coerce_fetched_material(
+                    article_client(normalized_url),
+                    normalized_url,
+                )
+            except Exception as exc:
+                rejection_reasons.append("fetch_failed")
+                LOGGER.warning(
+                    "component=alternate_reporting_recovery item_id=%s "
+                    "provider=%s status=candidate_fetch_failed code=%s",
+                    candidate.story.hn_item_id,
+                    provider,
+                    getattr(exc, "error_code", "fetch_failed"),
+                )
+                continue
+            effective_url = normalize_alternate_reporting_url(
+                material.retrieved_url
+            )
+            if effective_url is None:
+                rejection_reasons.append("redirected_to_unsupported_url")
+                continue
+            material = replace(material, retrieved_url=effective_url)
+            validation = validate_alternate_reporting(
+                candidate,
+                alternate,
+                material.text,
+            )
+            if not validation.accepted:
+                rejection_reasons.append(validation.reason)
+                continue
+            accepted.append(
+                _ValidatedAlternateReporting(
+                    material=material,
+                    validation=validation,
+                )
+            )
+        return accepted
+
+    accepted = validate_group(yahoo_candidates)
+    if not accepted:
+        accepted = validate_group(reuters_candidates)
+
+    if accepted and validations_conflict(
+        [item.validation for item in accepted]
+    ):
+        rejection_reasons.append("event_identity_conflict")
+        return _AlternateReportingOutcome(
+            material=None,
+            audit=AlternateReportingRecovery(
+                status="conflict",
+                provider=provider,
+                discovered_candidates=len(discovered),
+                attempted_candidates=attempted,
+                rejection_reasons=rejection_reasons,
+                error_code="event_identity_conflict",
+            ),
+        )
+
+    if accepted:
+        selected = min(
+            accepted,
+            key=lambda item: (
+                -len(item.material.text),
+                item.material.retrieved_url,
+            ),
+        )
+        audit = AlternateReportingRecovery(
+            status="success",
+            provider=provider,
+            discovered_candidates=len(discovered),
+            attempted_candidates=attempted,
+            rejection_reasons=rejection_reasons,
+        )
+        LOGGER.info(
+            "component=alternate_reporting_recovery item_id=%s provider=%s "
+            "status=success discovered=%d attempted=%d",
+            candidate.story.hn_item_id,
+            provider,
+            len(discovered),
+            attempted,
+        )
+        return _AlternateReportingOutcome(material=selected.material, audit=audit)
+
+    status = "not_found" if not discovered else "exhausted"
+    return _AlternateReportingOutcome(
+        material=None,
+        audit=AlternateReportingRecovery(
+            status=status,
+            provider=provider,
+            discovered_candidates=len(discovered),
+            attempted_candidates=attempted,
+            rejection_reasons=rejection_reasons,
+        ),
     )
 
 

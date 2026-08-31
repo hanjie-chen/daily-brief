@@ -3,6 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+ORIGIN_BLOCK_FALLBACK_REASONS = frozenset(
+    {
+        "challenge_page",
+        "cloudflare_challenge",
+        "datadome_challenge",
+        "vercel_challenge",
+    }
+)
+
+
+def is_origin_block_reason(reason: str) -> bool:
+    return reason in ORIGIN_BLOCK_FALLBACK_REASONS
+
+
 @dataclass(frozen=True)
 class Story:
     source: str
@@ -50,6 +64,16 @@ class SyndicatedRecovery:
 
 
 @dataclass
+class AlternateReportingRecovery:
+    status: str = "not_attempted"
+    provider: str = ""
+    discovered_candidates: int = 0
+    attempted_candidates: int = 0
+    rejection_reasons: list[str] = field(default_factory=list)
+    error_code: str = ""
+
+
+@dataclass
 class ArticleRetrieval:
     status: str = "not_attempted"
     method: str = ""
@@ -64,15 +88,13 @@ class ArticleRetrieval:
     material_origin: str = ""
     origin_failure: RetrievalFailure | None = None
     syndicated_recovery: SyndicatedRecovery = field(default_factory=SyndicatedRecovery)
+    alternate_reporting_recovery: AlternateReportingRecovery = field(
+        default_factory=AlternateReportingRecovery
+    )
 
     @property
     def origin_blocked(self) -> bool:
-        return self.fallback_reason in {
-            "challenge_page",
-            "cloudflare_challenge",
-            "datadome_challenge",
-            "vercel_challenge",
-        }
+        return is_origin_block_reason(self.fallback_reason)
 
 
 @dataclass

@@ -6,6 +6,7 @@ import pytest
 
 from daily_brief import article_fetcher as article_fetcher_module
 from daily_brief import cli
+from daily_brief.alternate_reporting import AlternateReportingCandidate
 from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
 from daily_brief.cli import build_parser, main, run_generate
 from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
@@ -1611,6 +1612,14 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
             "rejection_reasons": [],
             "error_code": "",
         },
+        "alternate_reporting_recovery": {
+            "status": "not_attempted",
+            "provider": "",
+            "discovered_candidates": 0,
+            "attempted_candidates": 0,
+            "rejection_reasons": [],
+            "error_code": "",
+        },
     }
     assert failed["summary_basis"] == "none"
     assert failed["summary_status"] == "skipped"
@@ -2125,6 +2134,381 @@ def test_missing_tavily_key_fails_closed_without_live_search(tmp_path, monkeypat
     assert retrieval["syndicated_recovery"]["error_code"] == "not_configured"
 
 
+def test_origin_block_recovers_verified_alternate_reporting_with_prefix(tmp_path):
+    original_url = nytimes_anthropic_url()
+    alternate_url = yahoo_anthropic_url()
+    finder = FakeAlternateReportingFinder(
+        [
+            AlternateReportingCandidate(
+                "US judge rules Pentagon blacklisting of Anthropic unlawful",
+                alternate_url,
+            )
+        ]
+    )
+
+    def fetch(url, **kwargs):
+        if url == original_url:
+            raise origin_block_failure("datadome_challenge", method="jina")
+        return ArticleFetchResult(
+            alternate_reporting_body(),
+            method="direct",
+            extractor="trafilatura",
+            retrieved_url=alternate_url,
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-29",
+        algolia_stories=[anthropic_nytimes_story()],
+        hot_stories=[],
+        article_fetcher=fetch,
+        alternate_reporting_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+
+    assert finder.calls == ["49473522"]
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    retrieval = candidate_payload["article_retrieval"]
+    assert retrieval["status"] == "success"
+    assert retrieval["retrieved_url"] == alternate_url
+    assert retrieval["material_origin"] == "alternate_reporting"
+    assert retrieval["origin_failure"]["fallback_reason"] == "datadome_challenge"
+    assert retrieval["alternate_reporting_recovery"] == {
+        "status": "success",
+        "provider": "fake-alternate",
+        "discovered_candidates": 1,
+        "attempted_candidates": 1,
+        "rejection_reasons": [],
+        "error_code": "",
+    }
+    assert candidate_payload["summary_basis"] == "fetched_article"
+    assert candidate_payload["summary_status"] == "success"
+
+    public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    public_item = public_payload["sections"]["ai"]["items"][0]
+    assert public_payload["schema_version"] == 2
+    assert public_item["summary"].startswith(
+        "据 Reuters 对同一事件的报道：Summary for"
+    )
+    assert public_item["source_url"] == original_url
+    assert public_item["content_status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("fallback_reason", "method"),
+    [
+        ("challenge_page", "jina"),
+        ("cloudflare_challenge", "jina"),
+        ("datadome_challenge", "jina"),
+        ("vercel_challenge", "wayback"),
+    ],
+)
+def test_alternate_reporting_trigger_uses_shared_origin_block_contract(
+    tmp_path, fallback_reason, method
+):
+    finder = FakeAlternateReportingFinder([])
+
+    run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-29",
+        algolia_stories=[anthropic_nytimes_story()],
+        hot_stories=[],
+        article_fetcher=lambda url, **kwargs: (_ for _ in ()).throw(
+            origin_block_failure(fallback_reason, method=method)
+        ),
+        alternate_reporting_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+
+    assert finder.calls == ["49473522"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ArticleFetchError("not found", error_code="http_404", method="direct"),
+        ArticleFetchError(
+            "empty",
+            error_code="empty_content",
+            method="jina",
+            fallback_attempted=True,
+            fallback_reason="empty_content",
+        ),
+        ArticleFetchError(
+            "unconfirmed block",
+            error_code="http_403",
+            method="jina",
+            fallback_attempted=False,
+            fallback_reason="datadome_challenge",
+        ),
+    ],
+)
+def test_alternate_reporting_finder_is_not_called_for_other_failures(
+    tmp_path, failure
+):
+    finder = FakeAlternateReportingFinder([])
+    run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-29",
+        algolia_stories=[anthropic_nytimes_story()],
+        hot_stories=[],
+        article_fetcher=lambda url, **kwargs: (_ for _ in ()).throw(failure),
+        alternate_reporting_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+    assert finder.calls == []
+
+
+def test_alternate_reporting_prefers_yahoo_and_selects_longest_verified_body(
+    tmp_path,
+):
+    original_url = nytimes_anthropic_url()
+    shorter_url = "https://finance.yahoo.com/news/anthropic-ruling-short.html"
+    tied_long_url = "https://finance.yahoo.com/news/z-anthropic-ruling-long.html"
+    longer_url = yahoo_anthropic_url()
+    reuters_url = (
+        "https://www.reuters.com/legal/government/"
+        "us-judge-blocks-pentagons-anthropic-blacklisting-2026-08-28/"
+    )
+    finder = FakeAlternateReportingFinder(
+        [
+            AlternateReportingCandidate("Reuters candidate", reuters_url),
+            AlternateReportingCandidate("Anthropic blacklisting ruling", shorter_url),
+            AlternateReportingCandidate("Anthropic blacklisting ruling", tied_long_url),
+            AlternateReportingCandidate("Anthropic blacklisting ruling", longer_url),
+        ]
+    )
+    fetched_urls = []
+    summarizer = CapturingSummarizer()
+
+    def fetch(url, **kwargs):
+        fetched_urls.append(url)
+        if url == original_url:
+            raise origin_block_failure("datadome_challenge")
+        filler = 250 if url in {tied_long_url, longer_url} else 20
+        return ArticleFetchResult(
+            alternate_reporting_body(extra_filler=filler),
+            method="direct",
+            extractor="trafilatura",
+            retrieved_url=url,
+        )
+
+    run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-29",
+        algolia_stories=[anthropic_nytimes_story()],
+        hot_stories=[],
+        article_fetcher=fetch,
+        alternate_reporting_finder=finder,
+        summarizer=summarizer,
+    )
+
+    assert fetched_urls == [original_url, shorter_url, tied_long_url, longer_url]
+    assert summarizer.fetched_texts == [
+        alternate_reporting_body(extra_filler=250)
+    ]
+    payload = json.loads(
+        (tmp_path / "data/2026-08-29-hn-candidates.json").read_text(
+            encoding="utf-8"
+        )
+    )[0]
+    assert payload["article_retrieval"]["retrieved_url"] == longer_url
+
+
+def test_alternate_reporting_conflict_fails_closed(tmp_path):
+    original_url = nytimes_anthropic_url()
+    first_url = "https://finance.yahoo.com/news/first-event-identity.html"
+    second_url = "https://ca.finance.yahoo.com/news/second-event-identity.html"
+    finder = FakeAlternateReportingFinder(
+        [
+            AlternateReportingCandidate(
+                "Judge Pentagon blacklisting Anthropic",
+                first_url,
+            ),
+            AlternateReportingCandidate(
+                "Trump administration ruling was illegal",
+                second_url,
+            ),
+        ]
+    )
+    first_body = (
+        "Aug 28 (Reuters) - A judge reviewed the Pentagon blacklisting of "
+        "Anthropic. "
+        + ("Grounded report detail. " * 18)
+        + "(Reporting by First Reporter)"
+    )
+    second_body = (
+        "Aug 28 (Reuters) - The Trump administration received a ruling that "
+        "the government action was illegal. "
+        + ("Grounded report detail. " * 18)
+        + "(Reporting by Second Reporter)"
+    )
+    summarizer = FakeSummarizer()
+
+    def fetch(url, **kwargs):
+        if url == original_url:
+            raise origin_block_failure("datadome_challenge")
+        return ArticleFetchResult(
+            first_body if url == first_url else second_body,
+            method="direct",
+            extractor="trafilatura",
+            retrieved_url=url,
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-29",
+        algolia_stories=[anthropic_nytimes_story()],
+        hot_stories=[],
+        article_fetcher=fetch,
+        alternate_reporting_finder=finder,
+        summarizer=summarizer,
+    )
+
+    payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    recovery = payload["article_retrieval"]["alternate_reporting_recovery"]
+    assert recovery["status"] == "conflict"
+    assert recovery["error_code"] == "event_identity_conflict"
+    assert payload["summary_status"] == "skipped"
+    assert summarizer.titles == []
+
+
+def test_alternate_reporting_is_disabled_for_classification_and_reuters_origins(
+    tmp_path,
+):
+    alternate_finder = FakeAlternateReportingFinder([])
+    block = origin_block_failure("datadome_challenge")
+
+    run_generate(
+        output_dir=tmp_path / "classification-briefs",
+        data_dir=tmp_path / "classification-data",
+        date_label="2026-08-29",
+        algolia_stories=[
+            Story(
+                source="algolia",
+                hn_item_id="outside",
+                title="Court decision involving a private company",
+                source_url=nytimes_anthropic_url(),
+                hn_discussion_url="https://news.ycombinator.com/item?id=outside",
+                created_at="2026-08-28T02:00:00Z",
+                points=500,
+                comments=300,
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=lambda url, **kwargs: (_ for _ in ()).throw(block),
+        alternate_reporting_finder=alternate_finder,
+        classifier=FakeClassifier(),
+        summarizer=FakeSummarizer(),
+    )
+    assert alternate_finder.calls == []
+
+    reuters_finder = FakeAlternateReportingFinder([])
+    run_generate(
+        output_dir=tmp_path / "reuters-briefs",
+        data_dir=tmp_path / "reuters-data",
+        date_label="2026-08-29",
+        algolia_stories=[
+            story(
+                "49473523",
+                "Anthropic court ruling",
+                points=500,
+                comments=300,
+                url=(
+                    "https://www.reuters.com/legal/government/"
+                    "anthropic-ruling-2026-08-28/"
+                ),
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=lambda url, **kwargs: (_ for _ in ()).throw(block),
+        syndicated_finder=FakeSyndicatedFinder([]),
+        alternate_reporting_finder=reuters_finder,
+        summarizer=FakeSummarizer(),
+    )
+    assert reuters_finder.calls == []
+
+
+def test_alternate_reporting_rejects_cross_host_redirect_and_keeps_origin_failure(
+    tmp_path,
+):
+    original_url = nytimes_anthropic_url()
+    alternate_url = yahoo_anthropic_url()
+
+    def fetch(url, **kwargs):
+        if url == original_url:
+            raise origin_block_failure("datadome_challenge")
+        return ArticleFetchResult(
+            alternate_reporting_body(),
+            method="direct",
+            extractor="trafilatura",
+            retrieved_url="https://evil.example/redirected",
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-29",
+        algolia_stories=[anthropic_nytimes_story()],
+        hot_stories=[],
+        article_fetcher=fetch,
+        alternate_reporting_finder=FakeAlternateReportingFinder(
+            [AlternateReportingCandidate("Anthropic blacklisting ruling", alternate_url)]
+        ),
+        summarizer=FakeSummarizer(),
+    )
+
+    payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    retrieval = payload["article_retrieval"]
+    assert retrieval["status"] == "failed"
+    assert retrieval["fallback_reason"] == "datadome_challenge"
+    assert retrieval["origin_failure"] is None
+    assert retrieval["alternate_reporting_recovery"]["status"] == "exhausted"
+    assert retrieval["alternate_reporting_recovery"]["rejection_reasons"] == [
+        "redirected_to_unsupported_url"
+    ]
+    assert payload["summary_status"] == "skipped"
+
+
+def test_alternate_reporting_prefix_is_not_used_when_summary_fails(tmp_path):
+    original_url = nytimes_anthropic_url()
+    alternate_url = yahoo_anthropic_url()
+
+    def fetch(url, **kwargs):
+        if url == original_url:
+            raise origin_block_failure("datadome_challenge")
+        return ArticleFetchResult(
+            alternate_reporting_body(),
+            method="direct",
+            extractor="trafilatura",
+            retrieved_url=alternate_url,
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-29",
+        algolia_stories=[anthropic_nytimes_story()],
+        hot_stories=[],
+        article_fetcher=fetch,
+        alternate_reporting_finder=FakeAlternateReportingFinder(
+            [AlternateReportingCandidate("Anthropic blacklisting ruling", alternate_url)]
+        ),
+        summarizer=RaisingSummarizer(),
+    )
+
+    public_item = json.loads(result.public_json_path.read_text(encoding="utf-8"))[
+        "sections"
+    ]["ai"]["items"][0]
+    assert not public_item["summary"].startswith("据 Reuters")
+    assert public_item["content_status"] == "summary_failed"
+
+
 class FakeSummarizer:
     def __init__(self):
         self.titles = []
@@ -2209,6 +2593,72 @@ class RaisingSyndicatedFinder:
             "provider unavailable",
             error_code="provider_request_failed",
         )
+
+
+class FakeAlternateReportingFinder:
+    provider = "fake-alternate"
+
+    def __init__(self, results):
+        self.results = results
+        self.calls = []
+
+    def find(self, candidate):
+        self.calls.append(candidate.story.hn_item_id)
+        return self.results
+
+
+def nytimes_anthropic_url():
+    return (
+        "https://www.nytimes.com/2026/08/27/technology/"
+        "anthropic-government-blacklisting-ruling.html"
+    )
+
+
+def yahoo_anthropic_url():
+    return (
+        "https://ca.finance.yahoo.com/news/"
+        "us-judge-rules-pentagon-blacklisting-012047911.html"
+    )
+
+
+def anthropic_nytimes_story():
+    return Story(
+        source="algolia",
+        hn_item_id="49473522",
+        title=(
+            "Judge rules Trump administration’s blacklisting of Anthropic "
+            "was illegal"
+        ),
+        source_url=nytimes_anthropic_url(),
+        hn_discussion_url="https://news.ycombinator.com/item?id=49473522",
+        created_at="2026-08-28T02:00:00Z",
+        points=500,
+        comments=300,
+    )
+
+
+def origin_block_failure(fallback_reason, *, method="jina"):
+    return ArticleFetchError(
+        "origin blocked; retrieval fallbacks failed",
+        error_code="http_403",
+        method=method,
+        extractor=method,
+        fallback_attempted=True,
+        fallback_reason=fallback_reason,
+        attempts=3,
+    )
+
+
+def alternate_reporting_body(*, extra_filler=0):
+    beginning = (
+        "Aug 28 (Reuters) - A U.S. judge ruled that the Pentagon's blacklisting "
+        "of Anthropic was unlawful. The court found the government action "
+        "violated the First Amendment as illegal retaliation and denied the "
+        "company required Fifth Amendment process. "
+    )
+    details = "Additional grounded reporting detail. " * 8
+    footer = "(Reporting by Christian Martinez and Jasper Ward)"
+    return beginning + details + ("x" * extra_filler) + footer
 
 
 def reuters_story_url():

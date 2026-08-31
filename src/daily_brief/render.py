@@ -25,6 +25,9 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
     payload = []
     for candidate in candidates:
         story = candidate.story
+        alternate_recovery = (
+            candidate.article_retrieval.alternate_reporting_recovery
+        )
         payload.append(
             {
                 "source": story.source,
@@ -86,6 +89,16 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                         "error_code": (
                             candidate.article_retrieval.syndicated_recovery.error_code
                         ),
+                    },
+                    "alternate_reporting_recovery": {
+                        "status": alternate_recovery.status,
+                        "provider": alternate_recovery.provider,
+                        "discovered_candidates": (
+                            alternate_recovery.discovered_candidates
+                        ),
+                        "attempted_candidates": alternate_recovery.attempted_candidates,
+                        "rejection_reasons": alternate_recovery.rejection_reasons,
+                        "error_code": alternate_recovery.error_code,
                     },
                 },
                 "summary_basis": candidate.summary_basis,
