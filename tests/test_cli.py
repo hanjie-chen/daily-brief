@@ -9,6 +9,7 @@ from daily_brief import cli
 from daily_brief.alternate_reporting import AlternateReportingCandidate
 from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
 from daily_brief.cli import build_parser, main, run_generate
+from daily_brief.gemini_backend import GeminiAPIError
 from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
 from daily_brief.model_evaluation import capture_model_evaluation_input
 from daily_brief.models import Candidate, Story
@@ -53,6 +54,13 @@ def test_bounded_error_message_is_single_line_and_limited():
     assert message.startswith("first ")
     assert "\n" not in message
     assert len(message) == 500
+
+
+def test_summary_diagnostics_use_safe_defaults_for_generic_exceptions():
+    error = RuntimeError("boom")
+
+    assert cli._summary_error_code(error) == "unexpected_error"
+    assert cli._summary_http_status(error) is None
 
 
 def test_run_generate_writes_markdown_and_json(tmp_path):
@@ -119,6 +127,16 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
     assert by_id["3"]["section"] == "ai"
     assert by_id["4"]["selected"] is True
     assert by_id["4"]["section"] == "ai"
+    assert by_id["1"]["summary_generation"] == {
+        "status": "success",
+        "provider": "FakeSummarizer",
+        "model": "",
+        "attempts": 1,
+        "error_type": "",
+        "error_code": "",
+        "http_status": None,
+        "error_message": "",
+    }
     assert summarizer.titles == [
         "OpenAI launches a model",
         "SQLite release notes",
@@ -540,24 +558,49 @@ def test_exploration_self_post_uses_story_text_without_external_fetch(tmp_path):
     assert records[0]["summary_basis"] == "story_text"
 
 
-def test_run_generate_uses_fallback_summary_when_summarizer_raises(tmp_path, capsys):
-    result = run_generate(
-        output_dir=tmp_path / "briefs",
-        data_dir=tmp_path / "data",
-        date_label="2026-07-08",
-        algolia_stories=[
-            story("1", "AI coding agent with Claude", points=40, comments=8)
-        ],
-        hot_stories=[],
-        summarizer=RaisingSummarizer(),
-    )
+def test_run_generate_records_summary_failure_diagnostics(tmp_path, caplog):
+    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+        result = run_generate(
+            output_dir=tmp_path / "briefs",
+            data_dir=tmp_path / "data",
+            date_label="2026-07-08",
+            algolia_stories=[
+                story("1", "AI coding agent with Claude", points=40, comments=8)
+            ],
+            hot_stories=[],
+            summarizer=RaisingSummarizer(),
+        )
 
     markdown = result.brief_path.read_text(encoding="utf-8")
-    assert "未能生成可靠摘要，请查看原文或讨论。" in markdown
+    assert "原文已抓取，但摘要生成失败；请查看原文或讨论。" in markdown
     assert (
-        "Summary failed for AI coding agent with Claude: boom"
-        in capsys.readouterr().err
+        "- Content: Error — 原文已抓取，但摘要生成失败"
+        "（quota_exceeded）。" in markdown
     )
+    assert (
+        "component=summary_generation item_id=1 status=failed "
+        "provider=test-provider model=test-summary-model attempts=4 "
+        "error=GeminiAPIError code=quota_exceeded http_status=429 message=quota reached"
+        in caplog.text
+    )
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    assert candidate_payload["article_retrieval"]["status"] == "success"
+    assert candidate_payload["summary_generation"] == {
+        "status": "failed",
+        "provider": "test-provider",
+        "model": "test-summary-model",
+        "attempts": 4,
+        "error_type": "GeminiAPIError",
+        "error_code": "quota_exceeded",
+        "http_status": 429,
+        "error_message": "quota reached",
+    }
+    public_item = json.loads(result.public_json_path.read_text(encoding="utf-8"))[
+        "sections"
+    ]["ai"]["items"][0]
+    assert public_item["content_status"] == "summary_failed"
+    assert "summary_generation" not in public_item
 
 
 def test_run_generate_normalizes_summary_before_writing_outputs(tmp_path):
@@ -1623,6 +1666,8 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
     }
     assert failed["summary_basis"] == "none"
     assert failed["summary_status"] == "skipped"
+    assert failed["summary_generation"]["status"] == "skipped"
+    assert failed["summary_generation"]["attempts"] == 0
 
     public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
     public_item = public_payload["sections"]["ai"]["items"][0]
@@ -2519,8 +2564,16 @@ class FakeSummarizer:
 
 
 class RaisingSummarizer:
+    name = "test-provider"
+    summarizer_model = "test-summary-model"
+    last_summary_attempts = 4
+
     def summarize(self, candidate):
-        raise RuntimeError("boom")
+        raise GeminiAPIError(
+            "quota reached",
+            error_code="quota_exceeded",
+            http_status=429,
+        )
 
 
 class MixedScriptSummarizer:

@@ -43,11 +43,21 @@ class GeminiConfigurationError(ValueError):
 
 
 class GeminiAPIError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "provider_error",
+        http_status: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.http_status = http_status
 
 
 class GeminiResponseError(GeminiAPIError):
-    pass
+    def __init__(self, message: str, *, error_code: str = "invalid_response") -> None:
+        super().__init__(message, error_code=error_code)
 
 
 class GeminiBackend:
@@ -121,6 +131,11 @@ class GeminiBackend:
         self.clock = clock
         self.jitter = jitter
         self._last_request_started_by_model: dict[str, float] = {}
+        self._last_request_attempts_by_model: dict[str, int] = {}
+
+    @property
+    def last_summary_attempts(self) -> int:
+        return self._last_request_attempts_by_model.get(self.summarizer_model, 0)
 
     @classmethod
     def from_environment(
@@ -237,6 +252,7 @@ class GeminiBackend:
         return {item["id"]: item["label"] for item in decisions}
 
     def summarize(self, candidate: Candidate) -> str:
+        self._last_request_attempts_by_model[self.summarizer_model] = 0
         output = self._interact(
             task="summarize",
             model=self.summarizer_model,
@@ -307,6 +323,7 @@ class GeminiBackend:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         for attempt in range(self.max_retries + 1):
             self._wait_for_request_slot(model)
+            self._last_request_attempts_by_model[model] = attempt + 1
             request = Request(
                 INTERACTIONS_URL,
                 data=body,
@@ -325,13 +342,26 @@ class GeminiBackend:
                 if _is_retryable_status(exc.code) and attempt < self.max_retries:
                     self.sleeper(self._retry_delay(attempt, exc.headers, error_body))
                     continue
-                raise GeminiAPIError(_http_error_message(exc.code, error_body)) from exc
-            except (TimeoutError, URLError) as exc:
+                raise GeminiAPIError(
+                    _http_error_message(exc.code, error_body),
+                    error_code=_http_error_code(exc.code),
+                    http_status=exc.code,
+                ) from exc
+            except TimeoutError as exc:
                 if attempt < self.max_retries:
                     self.sleeper(self._retry_delay(attempt, None))
                     continue
                 raise GeminiAPIError(
-                    f"Gemini API request failed after {attempt + 1} attempts"
+                    f"Gemini API request failed after {attempt + 1} attempts",
+                    error_code="timeout",
+                ) from exc
+            except URLError as exc:
+                if attempt < self.max_retries:
+                    self.sleeper(self._retry_delay(attempt, None))
+                    continue
+                raise GeminiAPIError(
+                    f"Gemini API request failed after {attempt + 1} attempts",
+                    error_code="network_error",
                 ) from exc
 
             if len(response_body) > MAX_RESPONSE_BYTES:
@@ -406,6 +436,16 @@ def _environment_request_interval(
 
 def _is_retryable_status(status: int) -> bool:
     return status in RETRYABLE_HTTP_STATUSES or 500 <= status <= 599
+
+
+def _http_error_code(status: int) -> str:
+    if status == 429:
+        return "quota_exceeded"
+    if status == 408:
+        return "timeout"
+    if 500 <= status <= 599:
+        return "provider_unavailable"
+    return f"http_{status}"
 
 
 def _http_error_message(status: int, body: bytes) -> str:

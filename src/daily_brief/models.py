@@ -98,6 +98,18 @@ class ArticleRetrieval:
 
 
 @dataclass
+class SummaryGeneration:
+    status: str = "not_attempted"
+    provider: str = ""
+    model: str = ""
+    attempts: int = 0
+    error_type: str = ""
+    error_code: str = ""
+    http_status: int | None = None
+    error_message: str = ""
+
+
+@dataclass
 class Candidate:
     story: Story
     matched_keywords: list[KeywordMatch] = field(default_factory=list)
@@ -116,3 +128,4 @@ class Candidate:
     article_retrieval: ArticleRetrieval = field(default_factory=ArticleRetrieval)
     summary_basis: str = "not_generated"
     summary_status: str = "not_generated"
+    summary_generation: SummaryGeneration = field(default_factory=SummaryGeneration)

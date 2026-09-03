@@ -97,7 +97,7 @@ def candidate(
 def test_fallback_summary_reports_that_reliable_summary_is_unavailable():
     text = fallback_summary(candidate())
 
-    assert text == "未能生成可靠摘要，请查看原文或讨论。"
+    assert text == "原文已抓取，但摘要生成失败；请查看原文或讨论。"
 
 
 @pytest.mark.parametrize(

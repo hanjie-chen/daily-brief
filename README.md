@@ -17,13 +17,15 @@
 
 若入选条目的原文抓取失败，简报会明确显示错误并跳过模型摘要；
 
+若原文已经抓取、但模型摘要仍因配额、网络或响应校验问题失败，简报会明确显示“原文已抓取，但摘要生成失败”，避免与 retrieval failure 混淆。候选审计会记录摘要 provider、model、请求次数、HTTP 状态、稳定错误码和有界错误信息，公开 JSON 仍只暴露稳定的 `summary_failed` 状态；
+
 若最终摘要抓取因明确的站点防护失败，系统可以有界搜索并验证 Reuters 对同一事件的报道作为替代材料。成功时摘要会固定以 `据 Reuters 对同一事件的报道：` 开头，原文链接仍保留 Hacker News 条目指向的来源；找不到合格报道时仍按抓取失败处理。
 
 有内容时每次运行写出三类文件：
 
 - `briefs/YYYY-MM-DD.md` — 用于阅读的 Markdown；
 - `briefs/YYYY-MM-DD.json` — 用于网站发布的 schema 结构化数据；
-- `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文 transport、正文 extractor 与错误、摘要依据，用于复盘和 debug。
+- `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文 transport、正文 extractor 与错误、摘要依据及摘要生成诊断，用于复盘和 debug。
 
 如果当天没有任何可发布条目，仍写 Markdown 和 candidate audit，但不写无效的 public JSON；改为写出 `briefs/YYYY-MM-DD.no-content`。之后运行 `publish` 会把该 marker 视为正常的 no-content 状态并幂等跳过。
 

@@ -98,6 +98,7 @@ def test_render_candidates_json_uses_snake_case_fields():
         "article_retrieval",
         "summary_basis",
         "summary_status",
+        "summary_generation",
     }
     assert data[0]["source"] == "algolia"
     assert data[0]["hn_item_id"] == "1"
@@ -152,6 +153,16 @@ def test_render_candidates_json_uses_snake_case_fields():
     }
     assert data[0]["summary_basis"] == "not_generated"
     assert data[0]["summary_status"] == "not_generated"
+    assert data[0]["summary_generation"] == {
+        "status": "not_attempted",
+        "provider": "",
+        "model": "",
+        "attempts": 0,
+        "error_type": "",
+        "error_code": "",
+        "http_status": None,
+        "error_message": "",
+    }
 
 
 def test_render_candidates_json_records_research_context_without_exposing_text():
@@ -324,3 +335,35 @@ def test_public_content_status_distinguishes_title_only_and_summary_failure():
         "title_only",
         "summary_failed",
     ]
+
+
+def test_render_marks_summary_failure_as_distinct_from_fetch_failure():
+    item = candidate(title="Summary failed")
+    item.summary = "原文已抓取，但摘要生成失败；请查看原文或讨论。"
+    item.summary_basis = "fetched_article"
+    item.summary_status = "failed"
+    item.summary_generation.status = "failed"
+    item.summary_generation.error_code = "quota_exceeded"
+    item.summary_generation.error_message = "secret provider detail"
+
+    markdown = render_markdown("2026-07-08", [item], [])
+    public_payload = json.loads(
+        render_public_brief_json(
+            "2026-07-08",
+            "2026-07-08T08:04:00+08:00",
+            [item],
+            [],
+        )
+    )
+
+    assert "原文已抓取，但摘要生成失败；请查看原文或讨论。" in markdown
+    assert (
+        "- Content: Error — 原文已抓取，但摘要生成失败（quota_exceeded）。"
+        in markdown
+    )
+    assert "secret provider detail" not in markdown
+    public_item = public_payload["sections"]["ai"]["items"][0]
+    assert public_item["content_status"] == "summary_failed"
+    assert "secret provider detail" not in json.dumps(
+        public_payload, ensure_ascii=False
+    )

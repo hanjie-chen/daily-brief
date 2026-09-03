@@ -103,6 +103,16 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 },
                 "summary_basis": candidate.summary_basis,
                 "summary_status": candidate.summary_status,
+                "summary_generation": {
+                    "status": candidate.summary_generation.status,
+                    "provider": candidate.summary_generation.provider,
+                    "model": candidate.summary_generation.model,
+                    "attempts": candidate.summary_generation.attempts,
+                    "error_type": candidate.summary_generation.error_type,
+                    "error_code": candidate.summary_generation.error_code,
+                    "http_status": candidate.summary_generation.http_status,
+                    "error_message": candidate.summary_generation.error_message,
+                },
             }
         )
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
@@ -161,6 +171,12 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
                     "- Content: Error — 原文抓取失败"
                     f"（{_single_line_display_text(error_code)}）。"
                 )
+        elif item.summary_status == "failed":
+            error_code = item.summary_generation.error_code or "summary_failed"
+            lines.append(
+                "- Content: Error — 原文已抓取，但摘要生成失败"
+                f"（{_single_line_display_text(error_code)}）。"
+            )
         lines.extend(
             [
                 f"- Why: {_single_line_display_text(item.why)}",

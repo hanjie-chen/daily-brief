@@ -150,7 +150,7 @@ class SummaryContext:
 
 
 def fallback_summary(candidate: Candidate) -> str:
-    return "未能生成可靠摘要，请查看原文或讨论。"
+    return "原文已抓取，但摘要生成失败；请查看原文或讨论。"
 
 
 def article_fetch_failure_summary(candidate: Candidate) -> str:

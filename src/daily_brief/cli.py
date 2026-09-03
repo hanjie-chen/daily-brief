@@ -4,7 +4,6 @@ import argparse
 import json
 import logging
 import os
-import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -51,6 +50,7 @@ from .models import (
     Candidate,
     RetrievalFailure,
     Story,
+    SummaryGeneration,
     SyndicatedRecovery,
     is_origin_block_reason,
 )
@@ -409,6 +409,7 @@ def run_generate(
         ):
             continue
         if candidate.article_retrieval.status == "failed":
+            candidate.summary_generation = SummaryGeneration(status="skipped")
             continue
         candidate.summary_mode = route_summary_mode(candidate)
         summary_context = build_summary_context(candidate)
@@ -417,6 +418,8 @@ def run_generate(
         candidate.summary_context_selected_chars = summary_context.selected_chars
         candidate.summary_context_sections = list(summary_context.sections)
         summarization_inputs.append(candidate)
+        provider = _summary_provider(summary_client)
+        model = _summary_model(summary_client)
         try:
             candidate.summary = normalize_summary_text(
                 summary_client.summarize(candidate)
@@ -426,8 +429,45 @@ def run_generate(
                     ALTERNATE_REPORTING_SUMMARY_PREFIX + candidate.summary
                 )
             candidate.summary_status = "success"
+            candidate.summary_generation = SummaryGeneration(
+                status="success",
+                provider=provider,
+                model=model,
+                attempts=_summary_attempts(summary_client),
+            )
+            LOGGER.info(
+                "component=summary_generation item_id=%s status=success "
+                "provider=%s model=%s attempts=%d",
+                candidate.story.hn_item_id,
+                provider or "unknown",
+                model or "unknown",
+                candidate.summary_generation.attempts,
+            )
         except Exception as exc:
-            print(f"Summary failed for {candidate.story.title}: {exc}", file=sys.stderr)
+            error_message = _bounded_error_message(exc)
+            candidate.summary_generation = SummaryGeneration(
+                status="failed",
+                provider=provider,
+                model=model,
+                attempts=_summary_attempts(summary_client),
+                error_type=type(exc).__name__,
+                error_code=_summary_error_code(exc),
+                http_status=_summary_http_status(exc),
+                error_message=error_message,
+            )
+            LOGGER.error(
+                "component=summary_generation item_id=%s status=failed "
+                "provider=%s model=%s attempts=%d error=%s code=%s "
+                "http_status=%s message=%s",
+                candidate.story.hn_item_id,
+                provider or "unknown",
+                model or "unknown",
+                candidate.summary_generation.attempts,
+                candidate.summary_generation.error_type,
+                candidate.summary_generation.error_code,
+                candidate.summary_generation.http_status or "none",
+                error_message,
+            )
             candidate.summary = fallback_summary(candidate)
             candidate.summary_status = "failed"
 
@@ -607,6 +647,7 @@ def _prepare_candidate_material(
                 candidate.summary = article_fetch_failure_summary(candidate)
                 candidate.summary_basis = "none"
                 candidate.summary_status = "skipped"
+                candidate.summary_generation = SummaryGeneration(status="skipped")
                 LOGGER.error(
                     "component=article_fetch item_id=%s status=failed method=%s "
                     "extractor=%s error=%s code=%s attempts=%d message=%s",
@@ -708,6 +749,43 @@ def _has_non_weak_keyword_match(candidate: Candidate) -> bool:
 
 def _bounded_error_message(exc: Exception, max_chars: int = 500) -> str:
     return " ".join(str(exc).split())[:max_chars]
+
+
+def _summary_provider(summary_client) -> str:
+    provider = getattr(summary_client, "name", "")
+    if not isinstance(provider, str) or not provider.strip():
+        provider = type(summary_client).__name__
+    return " ".join(provider.split())[:128]
+
+
+def _summary_model(summary_client) -> str:
+    model = getattr(summary_client, "summarizer_model", "")
+    if not isinstance(model, str):
+        return ""
+    return " ".join(model.split())[:128]
+
+
+def _summary_attempts(summary_client) -> int:
+    attempts = getattr(summary_client, "last_summary_attempts", 1)
+    if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
+        return 1
+    return attempts
+
+
+def _summary_error_code(exc: Exception) -> str:
+    error_code = getattr(exc, "error_code", "")
+    if not isinstance(error_code, str) or not error_code.strip():
+        return "unexpected_error"
+    return " ".join(error_code.split())[:128]
+
+
+def _summary_http_status(exc: Exception) -> int | None:
+    http_status = getattr(exc, "http_status", None)
+    if isinstance(http_status, bool) or not isinstance(http_status, int):
+        return None
+    if not 100 <= http_status <= 599:
+        return None
+    return http_status
 
 
 def _atomic_write_text(path: Path, content: str) -> None:

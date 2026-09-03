@@ -355,6 +355,26 @@ def test_quota_error_retries_with_bounded_provider_retry_delay():
     assert delays == [39.106525668, 60.0]
 
 
+def test_quota_error_exposes_stable_diagnostics_after_retries():
+    opener = RecordingOpener(
+        http_error(429, "quota reached", retry_after="0"),
+        http_error(429, "quota reached"),
+    )
+    backend = GeminiBackend(
+        api_key="secret-key",
+        opener=opener,
+        max_retries=1,
+        min_request_interval_seconds=0,
+    )
+
+    with pytest.raises(GeminiAPIError) as caught:
+        backend.summarize(candidate("1", "AI tool"))
+
+    assert caught.value.error_code == "quota_exceeded"
+    assert caught.value.http_status == 429
+    assert backend.last_summary_attempts == 2
+
+
 def test_network_error_retries_only_up_to_configured_limit():
     delays = []
     opener = RecordingOpener(URLError("offline"), URLError("still offline"))
@@ -384,6 +404,8 @@ def test_non_retryable_http_error_fails_once_without_exposing_key():
     assert "HTTP 403" in str(caught.value)
     assert "permission denied" in str(caught.value)
     assert "secret-key" not in str(caught.value)
+    assert caught.value.error_code == "http_403"
+    assert caught.value.http_status == 403
     assert len(opener.calls) == 1
 
 
