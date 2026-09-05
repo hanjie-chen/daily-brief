@@ -20,10 +20,21 @@ from .model_backend import ModelBackend, ensure_topic_decisions
 from .models import Candidate, Story
 from .summarizer import normalize_summary_text
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_SUMMARY_CANDIDATES = AI_MAX_ITEMS + NON_AI_MAX_ITEMS
 MAX_TEXT_LENGTH = 256 * 1024
 BACKEND_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+SUMMARY_BASES = frozenset(
+    {
+        "not_generated",
+        "none",
+        "fetched_article",
+        "youtube_caption",
+        "story_text",
+        "title_only",
+        "hn_comments",
+    }
+)
 
 
 class ModelEvaluationInputError(ValueError):
@@ -205,6 +216,8 @@ def _serialize_candidate(candidate: Candidate) -> dict:
         "comments": story.comments,
         "story_text": story.story_text,
         "fetched_text": story.fetched_text,
+        "summary_basis": candidate.summary_basis,
+        "discussion_text": candidate.discussion_text,
     }
 
 
@@ -253,6 +266,8 @@ def _parse_candidate(value, field_name: str) -> Candidate:
         "comments",
         "story_text",
         "fetched_text",
+        "summary_basis",
+        "discussion_text",
     }
     if not isinstance(value, dict) or set(value) != expected_keys:
         raise ModelEvaluationInputError(f"invalid item in {field_name}")
@@ -266,6 +281,8 @@ def _parse_candidate(value, field_name: str) -> Candidate:
         "created_at": 128,
         "story_text": MAX_TEXT_LENGTH,
         "fetched_text": MAX_TEXT_LENGTH,
+        "summary_basis": 64,
+        "discussion_text": MAX_TEXT_LENGTH,
     }
     for key, maximum in text_limits.items():
         if not isinstance(value[key], str) or len(value[key]) > maximum:
@@ -281,8 +298,35 @@ def _parse_candidate(value, field_name: str) -> Candidate:
             or value[key] < 0
         ):
             raise ModelEvaluationInputError(f"invalid {key} in {field_name}")
+    if value["summary_basis"] not in SUMMARY_BASES:
+        raise ModelEvaluationInputError(f"invalid summary_basis in {field_name}")
+    if bool(value["discussion_text"]) != (
+        value["summary_basis"] == "hn_comments"
+    ):
+        raise ModelEvaluationInputError(
+            f"discussion_text must match summary_basis in {field_name}"
+        )
 
-    return Candidate(story=Story(**value))
+    story_fields = {
+        key: value[key]
+        for key in (
+            "source",
+            "hn_item_id",
+            "title",
+            "source_url",
+            "hn_discussion_url",
+            "created_at",
+            "points",
+            "comments",
+            "story_text",
+            "fetched_text",
+        )
+    }
+    return Candidate(
+        story=Story(**story_fields),
+        summary_basis=value["summary_basis"],
+        discussion_text=value["discussion_text"],
+    )
 
 
 def _error_text(exc: Exception) -> str:

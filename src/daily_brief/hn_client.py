@@ -4,7 +4,10 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from collections import deque
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -21,10 +24,174 @@ LOGGER = logging.getLogger(__name__)
 REQUEST_TIMEOUT_SECONDS = 20
 RETRY_DELAYS_SECONDS = (10, 20)
 MAX_ATTEMPTS = 1 + len(RETRY_DELAYS_SECONDS)
+MAX_DISCUSSION_COMMENTS = 24
+MAX_DISCUSSION_ITEM_REQUESTS = 40
+MAX_DISCUSSION_DEPTH = 3
+MAX_DISCUSSION_CHARS = 16_000
+MAX_COMMENT_CHARS = 2_000
+MAX_DISCUSSION_FAILED_ITEMS = 3
+DISCUSSION_REQUEST_TIMEOUT_SECONDS = 8
 
 
 class RequestFailedError(RuntimeError):
     pass
+
+
+class HNDiscussionFetchError(RuntimeError):
+    def __init__(self, message: str, *, error_code: str):
+        super().__init__(message)
+        self.error_code = error_code
+
+
+@dataclass(frozen=True)
+class HNDiscussionResult:
+    text: str
+    comments: int
+    chars: int
+    requested_items: int
+    failed_items: int
+
+
+class _HNTextExtractor(HTMLParser):
+    _BLOCK_TAGS = frozenset({"blockquote", "br", "div", "li", "p", "pre"})
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    def text(self) -> str:
+        lines = [" ".join(line.split()) for line in "".join(self.parts).splitlines()]
+        return "\n".join(line for line in lines if line).strip()
+
+
+def fetch_hn_discussion(
+    item_id: str,
+    *,
+    max_comments: int = MAX_DISCUSSION_COMMENTS,
+    max_item_requests: int = MAX_DISCUSSION_ITEM_REQUESTS,
+    max_depth: int = MAX_DISCUSSION_DEPTH,
+    max_chars: int = MAX_DISCUSSION_CHARS,
+    max_comment_chars: int = MAX_COMMENT_CHARS,
+    item_fetcher: Callable[[str], object] | None = None,
+) -> HNDiscussionResult:
+    """Fetch a bounded breadth-first sample from an HN discussion."""
+    if not item_id.isdigit() or int(item_id) <= 0:
+        raise HNDiscussionFetchError(
+            "invalid Hacker News item ID",
+            error_code="invalid_item_id",
+        )
+    if min(
+        max_comments,
+        max_item_requests,
+        max_depth + 1,
+        max_chars,
+        max_comment_chars,
+    ) <= 0:
+        raise ValueError("discussion fetch bounds must be positive")
+
+    fetch_item = item_fetcher or _get_discussion_item
+    requested_items = 1
+    try:
+        root = fetch_item(HN_ITEM_URL.format(item_id=item_id))
+    except Exception as exc:
+        raise HNDiscussionFetchError(
+            f"Hacker News story request failed: {exc}",
+            error_code="story_request_failed",
+        ) from exc
+    if (
+        not isinstance(root, dict)
+        or root.get("type") != "story"
+        or str(root.get("id") or "") != item_id
+    ):
+        raise HNDiscussionFetchError(
+            "Hacker News item is not the requested story",
+            error_code="invalid_story",
+        )
+
+    queue = deque((kid, 0) for kid in _valid_kids(root.get("kids")))
+    samples: list[str] = []
+    selected_chars = 0
+    failed_items = 0
+    while (
+        queue
+        and len(samples) < max_comments
+        and requested_items < max_item_requests
+        and selected_chars < max_chars
+    ):
+        comment_id, depth = queue.popleft()
+        requested_items += 1
+        try:
+            comment = fetch_item(HN_ITEM_URL.format(item_id=comment_id))
+        except Exception:
+            failed_items += 1
+            if failed_items >= MAX_DISCUSSION_FAILED_ITEMS:
+                break
+            continue
+        if not isinstance(comment, dict) or comment.get("type") != "comment":
+            failed_items += 1
+            continue
+        if depth < max_depth:
+            queue.extend(
+                (kid, depth + 1) for kid in _valid_kids(comment.get("kids"))
+            )
+        if comment.get("dead") or comment.get("deleted"):
+            continue
+        text = _hn_html_to_text(comment.get("text"))[:max_comment_chars].strip()
+        if not text:
+            continue
+        author = " ".join(str(comment.get("by") or "unknown").split())[:80]
+        header = f"[评论 {len(samples) + 1}；层级 {depth}；作者 {author}]\n"
+        separator_chars = 2 if samples else 0
+        remaining = max_chars - selected_chars - separator_chars
+        sample = (header + text)[:remaining].rstrip()
+        if len(sample) <= len(header.rstrip()):
+            break
+        samples.append(sample)
+        selected_chars += len(sample) + separator_chars
+
+    discussion_text = "\n\n".join(samples)
+    return HNDiscussionResult(
+        text=discussion_text,
+        comments=len(samples),
+        chars=len(discussion_text),
+        requested_items=requested_items,
+        failed_items=failed_items,
+    )
+
+
+def _valid_kids(value) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    return [kid for kid in value if isinstance(kid, int) and kid > 0]
+
+
+def _hn_html_to_text(value) -> str:
+    if not isinstance(value, str) or not value:
+        return ""
+    parser = _HNTextExtractor()
+    try:
+        parser.feed(value)
+        parser.close()
+    except Exception:
+        return ""
+    return parser.text()
+
+
+def _get_discussion_item(url: str):
+    request = Request(url, headers={"User-Agent": "daily-brief/0.1"})
+    with urlopen(request, timeout=DISCUSSION_REQUEST_TIMEOUT_SECONDS) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def fetch_algolia_stories(window: TimeWindow, page_size: int = 100) -> list[Story]:

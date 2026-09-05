@@ -86,6 +86,20 @@ def test_capture_and_load_preserve_exact_unicode_model_inputs(tmp_path):
     )
 
 
+def test_hn_discussion_prompt_is_identical_after_capture_and_replay(tmp_path):
+    original = candidate("2", "付费文章")
+    original.summary_basis = "hn_comments"
+    original.discussion_text = "[评论 1]\n一种观点。\n\n[评论 2]\n另一种观点。"
+    input_path = tmp_path / "input.json"
+
+    capture_model_evaluation_input(input_path, "2026-07-20", [], [original])
+    replayed = load_model_evaluation_input(input_path).summary_candidates[0]
+
+    assert replayed.summary_basis == "hn_comments"
+    assert replayed.discussion_text == original.discussion_text
+    assert build_summary_prompt(replayed) == build_summary_prompt(original)
+
+
 def test_research_prompt_is_identical_after_capture_and_replay(tmp_path):
     body = """Abstract
 This study links enterprise account records to worker roles and financial data across more than 1,500 organizations, while distinguishing descriptive associations from causal effects.
@@ -228,7 +242,7 @@ def test_evaluation_normalizes_summary_before_writing_artifact(tmp_path):
     "payload",
     [
         [],
-        {"schema_version": 2},
+        {"schema_version": 3},
         {
             "schema_version": 1,
             "date": "20-07-2026",
@@ -242,4 +256,23 @@ def test_load_rejects_invalid_schema(tmp_path, payload):
     input_path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(ModelEvaluationInputError):
+        load_model_evaluation_input(input_path)
+
+
+def test_load_rejects_discussion_text_without_matching_summary_basis(tmp_path):
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(
+        input_path,
+        "2026-07-20",
+        [],
+        [candidate("1", "AI tool")],
+    )
+    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    payload["summary_candidates"][0]["discussion_text"] = "Unexpected comments"
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        ModelEvaluationInputError,
+        match="discussion_text must match summary_basis",
+    ):
         load_model_evaluation_input(input_path)

@@ -11,6 +11,7 @@ from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
 from daily_brief.cli import build_parser, main, run_generate
 from daily_brief.gemini_backend import GeminiAPIError
 from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
+from daily_brief.hn_client import HNDiscussionResult
 from daily_brief.model_evaluation import capture_model_evaluation_input
 from daily_brief.models import Candidate, Story
 from daily_brief.summarizer import (
@@ -31,6 +32,17 @@ def prevent_live_classifier_and_article_calls(monkeypatch):
         cli,
         "fetch_article",
         lambda url, **kwargs: "Test article facts.",
+    )
+    monkeypatch.setattr(
+        cli,
+        "fetch_hn_discussion",
+        lambda item_id: HNDiscussionResult(
+            text="",
+            comments=0,
+            chars=0,
+            requested_items=1,
+            failed_items=0,
+        ),
     )
 
 
@@ -1593,7 +1605,7 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
 
     assert result.model_input_path == data_dir / "model-eval-inputs/2026-07-20.json"
     payload = json.loads(result.model_input_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert [
         batch[0]["hn_item_id"]
         for batch in payload["exploration_classification_batches"]
@@ -1607,6 +1619,149 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
         "2",
     ]
     assert payload["summary_candidates"][0]["fetched_text"] == "Grounded article facts."
+
+
+def test_article_failure_uses_hn_comments_as_final_summary_fallback(tmp_path):
+    def raise_fetch_error(url, **kwargs):
+        raise ArticleFetchError(
+            "blocked",
+            error_code="http_403",
+            method="jina",
+            extractor="jina",
+            fallback_attempted=True,
+            fallback_reason="cloudflare_challenge",
+        )
+
+    discussion = "\n\n".join(
+        f"[评论 {index}；层级 0；作者 user{index}]\n"
+        + ("This is a grounded discussion viewpoint with detail. " * 5)
+        for index in range(1, 4)
+    )
+    summarizer = FakeSummarizer()
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        article_fetcher=raise_fetch_error,
+        hn_discussion_fetcher=lambda item_id: HNDiscussionResult(
+            text=discussion,
+            comments=3,
+            chars=len(discussion),
+            requested_items=4,
+            failed_items=0,
+        ),
+        summarizer=summarizer,
+        capture_model_inputs=True,
+    )
+
+    candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    public_item = json.loads(result.public_json_path.read_text(encoding="utf-8"))[
+        "sections"
+    ]["ai"]["items"][0]
+    model_input = json.loads(result.model_input_path.read_text(encoding="utf-8"))
+
+    assert candidate_payload["article_retrieval"]["status"] == "failed"
+    assert candidate_payload["discussion_retrieval"] == {
+        "status": "success",
+        "comments": 3,
+        "chars": len(discussion),
+        "requested_items": 4,
+        "failed_items": 0,
+        "error_type": "",
+        "error_code": "",
+        "error_message": "",
+    }
+    assert candidate_payload["summary_basis"] == "hn_comments"
+    assert candidate_payload["summary_mode"] == "hn_discussion"
+    assert candidate_payload["summary_context"]["strategy"] == "hn_comments"
+    assert public_item["summary"].startswith(
+        "根据 Hacker News 讨论（不代表原文观点）："
+    )
+    assert public_item["content_status"] == "fetch_failed"
+    assert "Content: Discussion fallback" in result.brief_path.read_text(
+        encoding="utf-8"
+    )
+    assert model_input["summary_candidates"][0]["summary_basis"] == "hn_comments"
+    assert model_input["summary_candidates"][0]["discussion_text"] == discussion
+
+
+def test_insufficient_hn_comments_preserve_original_fetch_failure(tmp_path):
+    def raise_fetch_error(url, **kwargs):
+        raise ArticleFetchError("blocked", error_code="http_403")
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        article_fetcher=raise_fetch_error,
+        hn_discussion_fetcher=lambda item_id: HNDiscussionResult(
+            text="Too little discussion",
+            comments=1,
+            chars=21,
+            requested_items=2,
+            failed_items=0,
+        ),
+        summarizer=FakeSummarizer(),
+    )
+
+    payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+
+    assert payload["discussion_retrieval"]["status"] == "insufficient"
+    assert payload["discussion_retrieval"]["error_code"] == (
+        "insufficient_comments"
+    )
+    assert payload["summary_basis"] == "none"
+    assert payload["summary_status"] == "skipped"
+
+
+def test_hn_discussion_summary_failure_restores_article_failure_message(tmp_path):
+    def raise_fetch_error(url, **kwargs):
+        raise ArticleFetchError(
+            "blocked",
+            error_code="http_403",
+            fallback_attempted=True,
+            fallback_reason="cloudflare_challenge",
+        )
+
+    discussion = "\n\n".join(
+        f"[评论 {index}]\n" + ("A substantial viewpoint. " * 9)
+        for index in range(1, 4)
+    )
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude release", points=40, comments=8)],
+        hot_stories=[],
+        article_fetcher=raise_fetch_error,
+        hn_discussion_fetcher=lambda item_id: HNDiscussionResult(
+            text=discussion,
+            comments=3,
+            chars=len(discussion),
+            requested_items=4,
+            failed_items=0,
+        ),
+        summarizer=RaisingSummarizer(),
+    )
+
+    payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    public_item = json.loads(result.public_json_path.read_text(encoding="utf-8"))[
+        "sections"
+    ]["ai"]["items"][0]
+
+    assert payload["discussion_retrieval"]["status"] == "success"
+    assert payload["summary_basis"] == "hn_comments"
+    assert payload["summary_status"] == "failed"
+    assert payload["summary_generation"]["error_code"] == "quota_exceeded"
+    assert public_item["summary"] == (
+        "来源网站阻止自动抓取，未生成可靠摘要；请查看原文或讨论。"
+    )
+    assert not public_item["summary"].startswith("根据 Hacker News 讨论")
+    assert public_item["content_status"] == "fetch_failed"
 
 
 def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):

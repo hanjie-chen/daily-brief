@@ -36,7 +36,13 @@ from .article_fetcher import (
 from .config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES, TIMEZONE
 from .gemini_backend import GeminiBackend
 from .history import load_history, recent_ids, save_history
-from .hn_client import fetch_algolia_stories, fetch_hot_stories
+from .hn_client import (
+    HNDiscussionFetchError,
+    HNDiscussionResult,
+    fetch_algolia_stories,
+    fetch_hn_discussion,
+    fetch_hot_stories,
+)
 from .keywords import match_keywords
 from .model_backend import ModelBackend, ensure_topic_decisions
 from .model_evaluation import (
@@ -48,6 +54,7 @@ from .models import (
     AlternateReportingRecovery,
     ArticleRetrieval,
     Candidate,
+    DiscussionRetrieval,
     RetrievalFailure,
     Story,
     SummaryGeneration,
@@ -88,6 +95,9 @@ LOGGER = logging.getLogger(__name__)
 RETRIEVAL_MODE_CLASSIFICATION = "classification"
 RETRIEVAL_MODE_SUMMARY = "summary"
 ALTERNATE_REPORTING_SUMMARY_PREFIX = "据 Reuters 对同一事件的报道："
+HN_DISCUSSION_SUMMARY_PREFIX = "根据 Hacker News 讨论（不代表原文观点）："
+MIN_DISCUSSION_COMMENTS = 3
+MIN_DISCUSSION_CHARS = 500
 
 
 @dataclass(frozen=True)
@@ -247,6 +257,7 @@ def run_generate(
     summarizer=None,
     classifier=None,
     article_fetcher=None,
+    hn_discussion_fetcher=None,
     syndicated_finder: SyndicatedCopyFinder | None = None,
     alternate_reporting_finder: AlternateReportingFinder | None = None,
     clock: Callable[[], float] = time.monotonic,
@@ -396,9 +407,8 @@ def run_generate(
     summary_candidates = [*ai_items, *selected_hot_items]
     summarization_inputs = []
     for candidate in summary_candidates:
-        if (
-            candidate.article_retrieval.status == "not_attempted"
-            and not _prepare_candidate_material(
+        if candidate.article_retrieval.status == "not_attempted":
+            _prepare_candidate_material(
                 candidate,
                 article_fetcher,
                 syndicated_finder,
@@ -406,11 +416,13 @@ def run_generate(
                 window,
                 retrieval_mode=RETRIEVAL_MODE_SUMMARY,
             )
-        ):
-            continue
         if candidate.article_retrieval.status == "failed":
-            candidate.summary_generation = SummaryGeneration(status="skipped")
-            continue
+            if not _prepare_hn_discussion_material(
+                candidate,
+                hn_discussion_fetcher,
+            ):
+                candidate.summary_generation = SummaryGeneration(status="skipped")
+                continue
         candidate.summary_mode = route_summary_mode(candidate)
         summary_context = build_summary_context(candidate)
         candidate.summary_context_strategy = summary_context.strategy
@@ -428,6 +440,8 @@ def run_generate(
                 candidate.summary = (
                     ALTERNATE_REPORTING_SUMMARY_PREFIX + candidate.summary
                 )
+            elif candidate.summary_basis == "hn_comments":
+                candidate.summary = HN_DISCUSSION_SUMMARY_PREFIX + candidate.summary
             candidate.summary_status = "success"
             summary_usage = _summary_usage(summary_client)
             candidate.summary_generation = SummaryGeneration(
@@ -474,7 +488,11 @@ def run_generate(
                 candidate.summary_generation.http_status or "none",
                 error_message,
             )
-            candidate.summary = fallback_summary(candidate)
+            candidate.summary = (
+                article_fetch_failure_summary(candidate)
+                if candidate.summary_basis == "hn_comments"
+                else fallback_summary(candidate)
+            )
             candidate.summary_status = "failed"
 
     output_path = Path(output_dir) / f"{label}.md"
@@ -736,6 +754,78 @@ def _prepare_candidate_material(
             method="title",
         )
         candidate.summary_basis = "title_only"
+    return True
+
+
+def _prepare_hn_discussion_material(
+    candidate: Candidate,
+    discussion_fetcher,
+) -> bool:
+    active_fetcher = discussion_fetcher or fetch_hn_discussion
+    try:
+        result = active_fetcher(candidate.story.hn_item_id)
+        if not isinstance(result, HNDiscussionResult):
+            raise TypeError("discussion fetcher returned an invalid result")
+    except Exception as exc:
+        candidate.discussion_retrieval = DiscussionRetrieval(
+            status="failed",
+            error_type=type(exc).__name__,
+            error_code=(
+                exc.error_code
+                if isinstance(exc, HNDiscussionFetchError)
+                else "unexpected_error"
+            ),
+            error_message=_bounded_error_message(exc),
+        )
+        LOGGER.error(
+            "component=hn_discussion_fetch item_id=%s status=failed "
+            "error=%s code=%s message=%s",
+            candidate.story.hn_item_id,
+            candidate.discussion_retrieval.error_type,
+            candidate.discussion_retrieval.error_code,
+            candidate.discussion_retrieval.error_message,
+        )
+        return False
+
+    status = (
+        "success"
+        if result.comments >= MIN_DISCUSSION_COMMENTS
+        and result.chars >= MIN_DISCUSSION_CHARS
+        else "insufficient"
+    )
+    candidate.discussion_retrieval = DiscussionRetrieval(
+        status=status,
+        comments=result.comments,
+        chars=result.chars,
+        requested_items=result.requested_items,
+        failed_items=result.failed_items,
+        error_code="" if status == "success" else "insufficient_comments",
+    )
+    if status != "success":
+        LOGGER.info(
+            "component=hn_discussion_fetch item_id=%s status=insufficient "
+            "comments=%d chars=%d requested_items=%d failed_items=%d",
+            candidate.story.hn_item_id,
+            result.comments,
+            result.chars,
+            result.requested_items,
+            result.failed_items,
+        )
+        return False
+
+    candidate.discussion_text = result.text
+    candidate.summary_basis = "hn_comments"
+    candidate.summary_status = "not_generated"
+    candidate.summary_generation = SummaryGeneration()
+    LOGGER.info(
+        "component=hn_discussion_fetch item_id=%s status=success "
+        "comments=%d chars=%d requested_items=%d failed_items=%d",
+        candidate.story.hn_item_id,
+        result.comments,
+        result.chars,
+        result.requested_items,
+        result.failed_items,
+    )
     return True
 
 

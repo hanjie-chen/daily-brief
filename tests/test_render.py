@@ -96,6 +96,7 @@ def test_render_candidates_json_uses_snake_case_fields():
         "section",
         "rejection_reason",
         "article_retrieval",
+        "discussion_retrieval",
         "summary_basis",
         "summary_status",
         "summary_generation",
@@ -150,6 +151,16 @@ def test_render_candidates_json_uses_snake_case_fields():
             "rejection_reasons": [],
             "error_code": "",
         },
+    }
+    assert data[0]["discussion_retrieval"] == {
+        "status": "not_attempted",
+        "comments": 0,
+        "chars": 0,
+        "requested_items": 0,
+        "failed_items": 0,
+        "error_type": "",
+        "error_code": "",
+        "error_message": "",
     }
     assert data[0]["summary_basis"] == "not_generated"
     assert data[0]["summary_status"] == "not_generated"
@@ -317,6 +328,35 @@ def test_render_labels_origin_block_without_exposing_terminal_fallback_error():
     assert "- Content: Error — 来源网站阻止自动抓取。" in markdown
     assert "http_403" not in markdown
     assert "secret Jina detail" not in markdown
+
+
+def test_render_labels_hn_discussion_fallback_without_hiding_fetch_failure():
+    item = candidate()
+    item.article_retrieval = ArticleRetrieval(
+        status="failed",
+        method="jina",
+        fallback_reason="cloudflare_challenge",
+    )
+    item.summary = "根据 Hacker News 讨论（不代表原文观点）：主要存在两种看法。"
+    item.summary_basis = "hn_comments"
+    item.summary_status = "success"
+
+    markdown = render_markdown("2026-07-08", [item], [])
+    public_payload = json.loads(
+        render_public_brief_json(
+            "2026-07-08",
+            "2026-07-08T08:04:00+08:00",
+            [item],
+            [],
+        )
+    )
+
+    assert "Content: Discussion fallback" in markdown
+    assert "原文抓取失败" in markdown
+    assert "摘要依据 Hacker News 评论，不代表原文观点" in markdown
+    assert public_payload["sections"]["ai"]["items"][0]["content_status"] == (
+        "fetch_failed"
+    )
 
 
 def test_public_content_status_distinguishes_title_only_and_summary_failure():

@@ -115,6 +115,18 @@ class SummaryGeneration:
 
 
 @dataclass
+class DiscussionRetrieval:
+    status: str = "not_attempted"
+    comments: int = 0
+    chars: int = 0
+    requested_items: int = 0
+    failed_items: int = 0
+    error_type: str = ""
+    error_code: str = ""
+    error_message: str = ""
+
+
+@dataclass
 class Candidate:
     story: Story
     matched_keywords: list[KeywordMatch] = field(default_factory=list)
@@ -131,6 +143,10 @@ class Candidate:
     summary_context_selected_chars: int = 0
     summary_context_sections: list[str] = field(default_factory=list)
     article_retrieval: ArticleRetrieval = field(default_factory=ArticleRetrieval)
+    discussion_text: str = ""
+    discussion_retrieval: DiscussionRetrieval = field(
+        default_factory=DiscussionRetrieval
+    )
     summary_basis: str = "not_generated"
     summary_status: str = "not_generated"
     summary_generation: SummaryGeneration = field(default_factory=SummaryGeneration)

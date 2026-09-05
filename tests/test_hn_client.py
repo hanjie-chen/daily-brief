@@ -6,11 +6,13 @@ import pytest
 
 from daily_brief.hn_client import (
     HN_BESTSTORIES_URL,
+    HNDiscussionFetchError,
     HN_ITEM_URL,
     HN_TOPSTORIES_URL,
     RequestFailedError,
     _get_json,
     fetch_algolia_stories,
+    fetch_hn_discussion,
     fetch_hot_stories,
     parse_algolia_hit,
     parse_hn_item,
@@ -261,3 +263,104 @@ def test_fetch_hot_stories_raises_when_both_lists_fail(monkeypatch):
 
     with pytest.raises(RequestFailedError, match="story lists failed"):
         fetch_hot_stories()
+
+
+def test_fetch_hn_discussion_collects_bounded_breadth_first_plain_text():
+    responses = {
+        "1": {"id": 1, "type": "story", "kids": [2, 3]},
+        "2": {
+            "id": 2,
+            "type": "comment",
+            "by": "alice",
+            "text": "First <i>view</i>.<p>Second line &amp; detail.",
+            "kids": [4],
+        },
+        "3": {
+            "id": 3,
+            "type": "comment",
+            "by": "bob",
+            "text": "Another viewpoint.",
+        },
+        "4": {
+            "id": 4,
+            "type": "comment",
+            "by": "carol",
+            "text": "A nested reply.",
+        },
+    }
+    requested = []
+
+    def fetch(url):
+        item_id = url.rsplit("/", 1)[-1].split(".", 1)[0]
+        requested.append(item_id)
+        return responses[item_id]
+
+    result = fetch_hn_discussion("1", item_fetcher=fetch)
+
+    assert requested == ["1", "2", "3", "4"]
+    assert result.comments == 3
+    assert result.requested_items == 4
+    assert result.failed_items == 0
+    assert "[评论 1；层级 0；作者 alice]" in result.text
+    assert "First view.\nSecond line & detail." in result.text
+    assert result.text.index("作者 bob") < result.text.index("作者 carol")
+    assert "<i>" not in result.text
+
+
+def test_fetch_hn_discussion_skips_bad_items_and_obeys_request_bound():
+    responses = {
+        "1": {"id": 1, "type": "story", "kids": [2, 3, 4]},
+        "2": {"id": 2, "type": "comment", "deleted": True, "kids": [5]},
+        "3": RuntimeError("unavailable"),
+        "4": {"id": 4, "type": "comment", "text": "not reached"},
+        "5": {"id": 5, "type": "comment", "text": "also not reached"},
+    }
+
+    def fetch(url):
+        item_id = url.rsplit("/", 1)[-1].split(".", 1)[0]
+        value = responses[item_id]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    result = fetch_hn_discussion(
+        "1",
+        max_item_requests=3,
+        item_fetcher=fetch,
+    )
+
+    assert result.text == ""
+    assert result.comments == 0
+    assert result.requested_items == 3
+    assert result.failed_items == 1
+
+
+@pytest.mark.parametrize("item_id", ["", "abc", "0", "-1"])
+def test_fetch_hn_discussion_rejects_invalid_item_id(item_id):
+    with pytest.raises(HNDiscussionFetchError) as raised:
+        fetch_hn_discussion(item_id, item_fetcher=lambda url: {})
+
+    assert raised.value.error_code == "invalid_item_id"
+
+
+def test_fetch_hn_discussion_requires_matching_story_root():
+    with pytest.raises(HNDiscussionFetchError) as raised:
+        fetch_hn_discussion(
+            "1",
+            item_fetcher=lambda url: {"id": 2, "type": "comment"},
+        )
+
+    assert raised.value.error_code == "invalid_story"
+
+
+def test_fetch_hn_discussion_caps_complete_material():
+    def fetch(url):
+        if url == HN_ITEM_URL.format(item_id=1):
+            return {"id": 1, "type": "story", "kids": [2]}
+        return {"id": 2, "type": "comment", "by": "alice", "text": "x" * 500}
+
+    result = fetch_hn_discussion("1", max_chars=100, item_fetcher=fetch)
+
+    assert result.comments == 1
+    assert result.chars == 100
+    assert len(result.text) == 100

@@ -101,6 +101,18 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                         "error_code": alternate_recovery.error_code,
                     },
                 },
+                "discussion_retrieval": {
+                    "status": candidate.discussion_retrieval.status,
+                    "comments": candidate.discussion_retrieval.comments,
+                    "chars": candidate.discussion_retrieval.chars,
+                    "requested_items": (
+                        candidate.discussion_retrieval.requested_items
+                    ),
+                    "failed_items": candidate.discussion_retrieval.failed_items,
+                    "error_type": candidate.discussion_retrieval.error_type,
+                    "error_code": candidate.discussion_retrieval.error_code,
+                    "error_message": candidate.discussion_retrieval.error_message,
+                },
                 "summary_basis": candidate.summary_basis,
                 "summary_status": candidate.summary_status,
                 "summary_generation": {
@@ -170,7 +182,15 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
             ]
         )
         if item.article_retrieval.status == "failed":
-            if item.article_retrieval.origin_blocked:
+            if (
+                item.summary_basis == "hn_comments"
+                and item.summary_status == "success"
+            ):
+                lines.append(
+                    "- Content: Discussion fallback — 原文抓取失败；"
+                    "摘要依据 Hacker News 评论，不代表原文观点。"
+                )
+            elif item.article_retrieval.origin_blocked:
                 lines.append("- Content: Error — 来源网站阻止自动抓取。")
             else:
                 error_code = item.article_retrieval.error_code or "fetch_failed"
