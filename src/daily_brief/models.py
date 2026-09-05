@@ -103,6 +103,11 @@ class SummaryGeneration:
     provider: str = ""
     model: str = ""
     attempts: int = 0
+    provider_status: str = ""
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    thought_tokens: int | None = None
+    total_tokens: int | None = None
     error_type: str = ""
     error_code: str = ""
     http_status: int | None = None

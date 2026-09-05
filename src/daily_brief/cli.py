@@ -429,11 +429,14 @@ def run_generate(
                     ALTERNATE_REPORTING_SUMMARY_PREFIX + candidate.summary
                 )
             candidate.summary_status = "success"
+            summary_usage = _summary_usage(summary_client)
             candidate.summary_generation = SummaryGeneration(
                 status="success",
                 provider=provider,
                 model=model,
                 attempts=_summary_attempts(summary_client),
+                provider_status=_summary_provider_status(summary_client),
+                **summary_usage,
             )
             LOGGER.info(
                 "component=summary_generation item_id=%s status=success "
@@ -445,11 +448,14 @@ def run_generate(
             )
         except Exception as exc:
             error_message = _bounded_error_message(exc)
+            summary_usage = _summary_usage(summary_client)
             candidate.summary_generation = SummaryGeneration(
                 status="failed",
                 provider=provider,
                 model=model,
                 attempts=_summary_attempts(summary_client),
+                provider_status=_summary_provider_status(summary_client, exc),
+                **summary_usage,
                 error_type=type(exc).__name__,
                 error_code=_summary_error_code(exc),
                 http_status=_summary_http_status(exc),
@@ -770,6 +776,36 @@ def _summary_attempts(summary_client) -> int:
     if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
         return 1
     return attempts
+
+
+def _summary_provider_status(summary_client, exc: Exception | None = None) -> str:
+    status = getattr(exc, "provider_status", "") if exc is not None else ""
+    if not isinstance(status, str) or not status.strip():
+        status = getattr(summary_client, "last_summary_provider_status", "")
+    if not isinstance(status, str) or not status.strip():
+        return ""
+    return " ".join(status.split())[:128]
+
+
+def _summary_usage(summary_client) -> dict[str, int | None]:
+    usage = getattr(summary_client, "last_summary_usage", {})
+    if not isinstance(usage, dict):
+        usage = {}
+    return {
+        name: _summary_token_count(usage.get(name))
+        for name in (
+            "input_tokens",
+            "output_tokens",
+            "thought_tokens",
+            "total_tokens",
+        )
+    }
+
+
+def _summary_token_count(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _summary_error_code(exc: Exception) -> str:

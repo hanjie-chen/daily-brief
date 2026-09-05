@@ -31,7 +31,9 @@ RETRYABLE_HTTP_STATUSES = {408, 429}
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_SUMMARY_CHARS = 1000
 CLASSIFIER_MAX_OUTPUT_TOKENS = 512
-SUMMARY_MAX_OUTPUT_TOKENS = 2048
+SUMMARY_MAX_OUTPUT_TOKENS = 8192
+SUMMARY_THINKING_LEVEL = "high"
+SUMMARY_INCOMPLETE_RETRIES = 1
 RETRY_DELAY_PATTERN = re.compile(r"^(\d+)(?:\.(\d{1,9}))?s$")
 RETRY_MESSAGE_PATTERN = re.compile(
     r"(?:^|\s)Please retry in (\d+(?:\.\d{1,9})?)s(?:[.\s]|$)"
@@ -56,8 +58,15 @@ class GeminiAPIError(RuntimeError):
 
 
 class GeminiResponseError(GeminiAPIError):
-    def __init__(self, message: str, *, error_code: str = "invalid_response") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "invalid_response",
+        provider_status: str = "",
+    ) -> None:
         super().__init__(message, error_code=error_code)
+        self.provider_status = provider_status
 
 
 class GeminiBackend:
@@ -132,10 +141,20 @@ class GeminiBackend:
         self.jitter = jitter
         self._last_request_started_by_model: dict[str, float] = {}
         self._last_request_attempts_by_model: dict[str, int] = {}
+        self._last_response_status_by_model: dict[str, str] = {}
+        self._last_response_usage_by_model: dict[str, dict[str, int | None]] = {}
 
     @property
     def last_summary_attempts(self) -> int:
         return self._last_request_attempts_by_model.get(self.summarizer_model, 0)
+
+    @property
+    def last_summary_provider_status(self) -> str:
+        return self._last_response_status_by_model.get(self.summarizer_model, "")
+
+    @property
+    def last_summary_usage(self) -> dict[str, int | None]:
+        return dict(self._last_response_usage_by_model.get(self.summarizer_model, {}))
 
     @classmethod
     def from_environment(
@@ -183,6 +202,7 @@ class GeminiBackend:
     def classify(self, candidates: list[Candidate]) -> dict[str, str]:
         if not candidates:
             return {}
+        self._reset_request_diagnostics(self.classifier_model)
         allowed_ids = [candidate.story.hn_item_id for candidate in candidates]
         output = self._interact(
             task="classify",
@@ -252,7 +272,7 @@ class GeminiBackend:
         return {item["id"]: item["label"] for item in decisions}
 
     def summarize(self, candidate: Candidate) -> str:
-        self._last_request_attempts_by_model[self.summarizer_model] = 0
+        self._reset_request_diagnostics(self.summarizer_model)
         output = self._interact(
             task="summarize",
             model=self.summarizer_model,
@@ -270,6 +290,8 @@ class GeminiBackend:
                 "additionalProperties": False,
             },
             max_output_tokens=SUMMARY_MAX_OUTPUT_TOKENS,
+            thinking_level=SUMMARY_THINKING_LEVEL,
+            incomplete_retries=SUMMARY_INCOMPLETE_RETRIES,
         )
         if set(output) != {"summary"} or not isinstance(output["summary"], str):
             raise GeminiResponseError("Gemini summarizer returned an invalid object")
@@ -289,24 +311,53 @@ class GeminiBackend:
         prompt: str,
         schema: dict,
         max_output_tokens: int,
+        thinking_level: str | None = None,
+        incomplete_retries: int = 0,
     ) -> dict:
-        response = self._post_json(
-            {
-                "model": model,
-                "input": prompt,
-                "system_instruction": system_instruction,
-                "response_format": {
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": schema,
-                },
-                "generation_config": {"max_output_tokens": max_output_tokens},
-                "store": False,
+        generation_config = {"max_output_tokens": max_output_tokens}
+        if thinking_level is not None:
+            generation_config["thinking_level"] = thinking_level
+        payload = {
+            "model": model,
+            "input": prompt,
+            "system_instruction": system_instruction,
+            "response_format": {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": schema,
             },
-            model=model,
-        )
-        if response.get("status") != "completed":
-            raise GeminiResponseError("Gemini interaction did not complete")
+            "generation_config": generation_config,
+            "store": False,
+        }
+        for incomplete_retry in range(incomplete_retries + 1):
+            self._last_response_status_by_model[model] = ""
+            self._last_response_usage_by_model[model] = {}
+            response = self._post_json(payload, model=model)
+            provider_status = _provider_status(response)
+            usage = _normalized_usage(response.get("usage"))
+            self._last_response_status_by_model[model] = provider_status
+            self._last_response_usage_by_model[model] = usage
+            if provider_status == "completed":
+                break
+            will_retry = (
+                provider_status == "incomplete"
+                and incomplete_retry < incomplete_retries
+            )
+            _log_non_completed_interaction(
+                task,
+                model,
+                provider_status,
+                response.get("errors"),
+                usage,
+                attempts=self._last_request_attempts_by_model.get(model, 0),
+                will_retry=will_retry,
+            )
+            if will_retry:
+                continue
+            raise GeminiResponseError(
+                f"Gemini interaction ended with status {provider_status}",
+                provider_status=provider_status,
+            )
         text = _extract_output_text(response)
         try:
             output = json.loads(text)
@@ -323,7 +374,9 @@ class GeminiBackend:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         for attempt in range(self.max_retries + 1):
             self._wait_for_request_slot(model)
-            self._last_request_attempts_by_model[model] = attempt + 1
+            self._last_request_attempts_by_model[model] = (
+                self._last_request_attempts_by_model.get(model, 0) + 1
+            )
             request = Request(
                 INTERACTIONS_URL,
                 data=body,
@@ -374,6 +427,11 @@ class GeminiBackend:
                 raise GeminiResponseError("Gemini API response must be an object")
             return decoded
         raise AssertionError("Gemini retry loop ended unexpectedly")
+
+    def _reset_request_diagnostics(self, model: str) -> None:
+        self._last_request_attempts_by_model[model] = 0
+        self._last_response_status_by_model[model] = ""
+        self._last_response_usage_by_model[model] = {}
 
     def _wait_for_request_slot(self, model: str) -> None:
         now = self.clock()
@@ -519,6 +577,68 @@ def _extract_output_text(response: dict) -> str:
     if not output_text:
         raise GeminiResponseError("Gemini response does not contain output text")
     return output_text
+
+
+def _provider_status(response: dict) -> str:
+    status = response.get("status")
+    if not isinstance(status, str) or not status.strip():
+        return "unknown"
+    return " ".join(status.split())[:128]
+
+
+def _normalized_usage(usage) -> dict[str, int | None]:
+    if not isinstance(usage, dict):
+        return {}
+    return {
+        "input_tokens": _usage_integer(usage.get("total_input_tokens")),
+        "output_tokens": _usage_integer(usage.get("total_output_tokens")),
+        "thought_tokens": _usage_integer(usage.get("total_thought_tokens")),
+        "total_tokens": _usage_integer(usage.get("total_tokens")),
+    }
+
+
+def _usage_integer(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _interaction_error_codes(errors) -> str:
+    if not isinstance(errors, list):
+        return "none"
+    codes = []
+    for error in errors[:5]:
+        code = error.get("code") if isinstance(error, dict) else None
+        if isinstance(code, str) and code.strip():
+            codes.append(" ".join(code.split())[:128])
+    return ",".join(codes) if codes else "none"
+
+
+def _log_non_completed_interaction(
+    task: str,
+    model: str,
+    provider_status: str,
+    errors,
+    usage: dict[str, int | None],
+    *,
+    attempts: int,
+    will_retry: bool,
+) -> None:
+    LOGGER.warning(
+        "component=gemini_api task=%s model=%s status=%s attempts=%d "
+        "retry=%s error_codes=%s input_tokens=%s output_tokens=%s "
+        "thought_tokens=%s total_tokens=%s",
+        task,
+        model,
+        provider_status,
+        attempts,
+        str(will_retry).lower(),
+        _interaction_error_codes(errors),
+        usage.get("input_tokens", "unknown"),
+        usage.get("output_tokens", "unknown"),
+        usage.get("thought_tokens", "unknown"),
+        usage.get("total_tokens", "unknown"),
+    )
 
 
 def _log_usage(task: str, model: str, usage) -> None:

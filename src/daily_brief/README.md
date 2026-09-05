@@ -37,12 +37,14 @@ pins classification and summarization model IDs independently, requests structur
 JSON, and validates provider output again against application invariants. The
 adapter keeps its endpoint fixed, authenticates only with the `x-goog-api-key`
 header, disables interaction storage, and performs bounded retry with backoff and
-jitter only for network failures, HTTP 408/429, and 5xx responses. Provider retry
+jitter for network failures, HTTP 408/429, and 5xx responses. Provider retry
 delays from `Retry-After`, structured `google.rpc.RetryInfo` details, or Gemini's
 explicit `Please retry in ...` quota message take precedence over local backoff
-and are capped at 60 seconds. The summarization generation budget leaves room for
-model thinking tokens, while the returned summary remains constrained by the
-structured schema and a local character cap.
+and are capped at 60 seconds. Normal summarization explicitly uses `high` thinking
+with an 8,192-token generation budget and retries one `incomplete` interaction
+once under the same per-model pacing. Other non-completed statuses remain terminal.
+The returned summary remains constrained by the structured schema and a local
+character cap.
 Every initial request and retry uses a configurable minimum start interval for its
 model. Classification defaults to six seconds (about 10 RPM) for Gemini 3.5 Flash
 Lite, while summarization defaults to twenty seconds (about 3 RPM) for Gemini 3.6
@@ -60,8 +62,9 @@ publishing state.
 
 Data sources, the topic classifier, article fetching, summarization, and history writes each have their own failure handling. Preserve the pipeline's ability to produce partial results when changing these stages.
 Summary generation records a separate audit object with provider, model, request
-attempts, stable error code, HTTP status when available, exception type, and a
-bounded single-line diagnostic.
+attempts, terminal interaction status, input/output/thought/total token usage,
+stable error code, HTTP status when available, exception type, and a bounded
+single-line diagnostic.
 Gemini exposes stable `quota_exceeded`, `timeout`, `network_error`,
 `provider_unavailable`, `http_NNN`, and `invalid_response` codes at this boundary.
 The local Markdown explicitly distinguishes a successful retrieval followed by a
@@ -119,6 +122,7 @@ provider diagnostic.
 - Gemini credentials come only from `GEMINI_API_KEY`; model overrides come from `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`, while `DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS` control per-model request spacing. The legacy `DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS` remains a shared fallback when neither role-specific value is set. Do not add an environment-configurable API endpoint, put the key in URLs or logs, or persist it in evaluation artifacts.
 - Gemini defaults and evaluation overrides must use explicit model IDs. Never use moving aliases such as `latest`; they make production behavior and evaluation results change without a code or configuration change.
 - Gemini requests set `store` to false, but that does not override provider-level Free Tier data-use terms. Only public content approved for provider processing belongs in production requests and model evaluations.
+- Normal summary requests use Gemini 3.6 Flash with explicit `thinking_level=high` and `max_output_tokens=8192`. One `incomplete` interaction is retried once, with both requests counted and paced; a second `incomplete` result fails closed. Candidate audit records only bounded provider status and token counts, while non-completed provider error codes are logged without raw provider messages.
 - Article-evidence topic classification uses the title, source host, and at most 6,000 characters of retrieved article material. The classifier must distinguish `ai`, `core_non_ai`, `outside`, and `uncertain`; `outside` requires positive evidence that the main topic is beyond computing and software, while cross-domain, ambiguous, insufficient, or truncated evidence is `uncertain`. Retrieval failure is audited as `topic_unknown`; model failure after material retrieval is audited separately as `classifier_failed`. Neither failure may occupy a section slot. All supplied material remains untrusted prompt content.
 - Production and evaluation summaries use the same deterministic boundary normalization: adjacent Han characters and ASCII letters or digits are separated by one space before summaries enter output artifacts.
 - The shared summary prompt defaults to one or two Chinese sentences and requires concrete, distinguishing facts instead of a topic inventory or phrases such as “本文介绍了”. When the source explicitly supplies multiple mechanisms, results, limitations, or actions that change interpretation, the generic summary must preserve at least two. An explicit concluding judgment, tradeoff, risk, limitation, or impact that changes interpretation must survive the summary: by default one sentence presents representative evidence and another presents the grounded conclusion. Repeated examples with the same role are summarized as a pattern with at most one or two distinguishing examples, so an example inventory cannot displace the central conclusion. This shared floor must not weaken or replace the more specific memorial and research modules.

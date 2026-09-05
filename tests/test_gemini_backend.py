@@ -309,10 +309,20 @@ def test_summarizer_uses_fetched_text_and_logs_usage(caplog):
     assert payload["model"] == DEFAULT_SUMMARIZER_MODEL
     assert "Grounded article facts." in payload["input"]
     assert payload["response_format"]["schema"]["required"] == ["summary"]
-    assert payload["generation_config"] == {"max_output_tokens": 2048}
+    assert payload["generation_config"] == {
+        "max_output_tokens": 8192,
+        "thinking_level": "high",
+    }
     assert "input_tokens=100" in caplog.text
     assert "thought_tokens=10" in caplog.text
     assert "secret-key" not in caplog.text
+    assert backend.last_summary_provider_status == "completed"
+    assert backend.last_summary_usage == {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "thought_tokens": 10,
+        "total_tokens": 130,
+    }
 
 
 def test_transient_http_errors_retry_with_retry_after_and_backoff():
@@ -455,14 +465,99 @@ def test_summarizer_rejects_invalid_structured_results(output, message):
         backend.summarize(candidate("1", "AI tool"))
 
 
-def test_incomplete_interaction_is_rejected():
+def test_failed_interaction_is_rejected_without_retry():
     opener = RecordingOpener(
         FakeResponse(interaction({"summary": "摘要"}, status="failed"))
     )
     backend = GeminiBackend(api_key="secret-key", opener=opener)
 
-    with pytest.raises(GeminiResponseError, match="did not complete"):
+    with pytest.raises(GeminiResponseError, match="ended with status failed") as caught:
         backend.summarize(candidate("1", "AI tool"))
+
+    assert caught.value.provider_status == "failed"
+    assert backend.last_summary_provider_status == "failed"
+    assert backend.last_summary_attempts == 1
+    assert len(opener.calls) == 1
+
+
+def test_incomplete_summary_interaction_retries_once_and_succeeds(caplog):
+    opener = RecordingOpener(
+        FakeResponse(
+            interaction(
+                {"summary": "partial"},
+                status="incomplete",
+                usage={
+                    "total_input_tokens": 100,
+                    "total_output_tokens": 4,
+                    "total_thought_tokens": 2044,
+                    "total_tokens": 2148,
+                },
+            )
+        ),
+        FakeResponse(
+            interaction(
+                {"summary": "完整摘要。"},
+                usage={
+                    "total_input_tokens": 100,
+                    "total_output_tokens": 20,
+                    "total_thought_tokens": 500,
+                    "total_tokens": 620,
+                },
+            )
+        ),
+    )
+    backend = GeminiBackend(
+        api_key="secret-key",
+        opener=opener,
+        min_request_interval_seconds=0,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="daily_brief.gemini_backend"):
+        assert backend.summarize(candidate("1", "AI tool")) == "完整摘要。"
+
+    assert len(opener.calls) == 2
+    assert backend.last_summary_attempts == 2
+    assert backend.last_summary_provider_status == "completed"
+    assert backend.last_summary_usage == {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "thought_tokens": 500,
+        "total_tokens": 620,
+    }
+    assert "status=incomplete attempts=1 retry=true" in caplog.text
+
+
+def test_incomplete_summary_interaction_stops_after_one_retry(caplog):
+    incomplete = interaction(
+        {"summary": "partial"},
+        status="incomplete",
+        usage={
+            "total_input_tokens": 100,
+            "total_output_tokens": 4,
+            "total_thought_tokens": 2044,
+            "total_tokens": 2148,
+        },
+    )
+    opener = RecordingOpener(FakeResponse(incomplete), FakeResponse(incomplete))
+    backend = GeminiBackend(
+        api_key="secret-key",
+        opener=opener,
+        min_request_interval_seconds=0,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="daily_brief.gemini_backend"):
+        with pytest.raises(
+            GeminiResponseError, match="ended with status incomplete"
+        ) as caught:
+            backend.summarize(candidate("1", "AI tool"))
+
+    assert caught.value.provider_status == "incomplete"
+    assert len(opener.calls) == 2
+    assert backend.last_summary_attempts == 2
+    assert backend.last_summary_provider_status == "incomplete"
+    assert backend.last_summary_usage["thought_tokens"] == 2044
+    assert "status=incomplete attempts=1 retry=true" in caplog.text
+    assert "status=incomplete attempts=2 retry=false" in caplog.text
 
 
 def test_from_environment_uses_explicit_model_overrides():

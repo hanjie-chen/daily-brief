@@ -108,6 +108,13 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                     "provider": candidate.summary_generation.provider,
                     "model": candidate.summary_generation.model,
                     "attempts": candidate.summary_generation.attempts,
+                    "provider_status": (
+                        candidate.summary_generation.provider_status
+                    ),
+                    "input_tokens": candidate.summary_generation.input_tokens,
+                    "output_tokens": candidate.summary_generation.output_tokens,
+                    "thought_tokens": candidate.summary_generation.thought_tokens,
+                    "total_tokens": candidate.summary_generation.total_tokens,
                     "error_type": candidate.summary_generation.error_type,
                     "error_code": candidate.summary_generation.error_code,
                     "http_status": candidate.summary_generation.http_status,

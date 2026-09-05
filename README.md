@@ -17,7 +17,7 @@
 
 若入选条目的原文抓取失败，简报会明确显示错误并跳过模型摘要；
 
-若原文已经抓取、但模型摘要仍因配额、网络或响应校验问题失败，简报会明确显示“原文已抓取，但摘要生成失败”，避免与 retrieval failure 混淆。候选审计会记录摘要 provider、model、请求次数、HTTP 状态、稳定错误码和有界错误信息，公开 JSON 仍只暴露稳定的 `summary_failed` 状态；
+若原文已经抓取、但模型摘要仍因配额、网络或响应校验问题失败，简报会明确显示“原文已抓取，但摘要生成失败”，避免与 retrieval failure 混淆。候选审计会记录摘要 provider、model、请求次数、interaction 状态、token usage、HTTP 状态、稳定错误码和有界错误信息，公开 JSON 仍只暴露稳定的 `summary_failed` 状态；
 
 若最终摘要抓取因明确的站点防护失败，系统可以有界搜索并验证 Reuters 对同一事件的报道作为替代材料。成功时摘要会固定以 `据 Reuters 对同一事件的报道：` 开头，原文链接仍保留 Hacker News 条目指向的来源；找不到合格报道时仍按抓取失败处理。
 
@@ -25,7 +25,7 @@
 
 - `briefs/YYYY-MM-DD.md` — 用于阅读的 Markdown；
 - `briefs/YYYY-MM-DD.json` — 用于网站发布的 schema 结构化数据；
-- `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文 transport、正文 extractor 与错误、摘要依据及摘要生成诊断，用于复盘和 debug。
+- `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文 transport、正文 extractor 与错误、摘要依据，以及包含 interaction 状态和 token usage 的摘要生成诊断，用于复盘和 debug。
 
 如果当天没有任何可发布条目，仍写 Markdown 和 candidate audit，但不写无效的 public JSON；改为写出 `briefs/YYYY-MM-DD.no-content`。之后运行 `publish` 会把该 marker 视为正常的 no-content 状态并幂等跳过。
 
@@ -34,7 +34,7 @@
 1. 收集候选：从 Algolia 拉取时间窗内的 HN stories，并从 HN 官方 top/best 榜补充热门候选
 2. 形成技术精选：明确的非弱关键词命中直接进入核心池；其余候选按 score 排序后最多走查 25 条正文，分类为 AI、核心领域非 AI、圈外或不确定。正文确认属于核心范围的候选获得固定证据分，与关键词候选统一检查最低门槛和排名，最多选 5 条
 3. 形成圈外探索：同一次有界走查中，只有正文明确属于圈外且独立达到圈外热度门槛的候选可以参选；走查结束后按 points 和评论数重排，最多选 2 条
-4. 生成摘要：入选条目复用走查阶段已经取得的正文，其余条目按需抓取原文；高置信站点阻止且既有 fallback 全部失败时，可使用经过完整抓取和同事件验证的 Reuters 报道并明确标注依据，再生成中文摘要
+4. 生成摘要：入选条目复用走查阶段已经取得的正文，其余条目按需抓取原文；正常摘要使用 Gemini 3.6 Flash 的 high thinking 和 8192-token 生成预算，首次返回 `incomplete` 时重试一次；高置信站点阻止且既有 fallback 全部失败时，可使用经过完整抓取和同事件验证的 Reuters 报道并明确标注依据，再生成中文摘要
 5. 输出与发布：写出阅读、发布和审计产物；发布是独立命令，无内容日期会正常跳过
 
 每个步骤的 details 详见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。

@@ -132,6 +132,11 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
         "provider": "FakeSummarizer",
         "model": "",
         "attempts": 1,
+        "provider_status": "completed",
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "thought_tokens": 60,
+        "total_tokens": 180,
         "error_type": "",
         "error_code": "",
         "http_status": None,
@@ -591,6 +596,11 @@ def test_run_generate_records_summary_failure_diagnostics(tmp_path, caplog):
         "provider": "test-provider",
         "model": "test-summary-model",
         "attempts": 4,
+        "provider_status": "",
+        "input_tokens": None,
+        "output_tokens": None,
+        "thought_tokens": None,
+        "total_tokens": None,
         "error_type": "GeminiAPIError",
         "error_code": "quota_exceeded",
         "http_status": 429,
@@ -2555,6 +2565,14 @@ def test_alternate_reporting_prefix_is_not_used_when_summary_fails(tmp_path):
 
 
 class FakeSummarizer:
+    last_summary_provider_status = "completed"
+    last_summary_usage = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "thought_tokens": 60,
+        "total_tokens": 180,
+    }
+
     def __init__(self):
         self.titles = []
 
