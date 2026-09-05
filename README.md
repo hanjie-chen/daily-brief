@@ -25,23 +25,37 @@
 
 ## How It Works
 
-1. 收集候选：从 Algolia 拉取时间窗内的 HN stories，并从 HN 官方 top/best 榜补充热门候选
-2. 形成技术精选：明确的非弱关键词命中直接进入核心池；其余候选按 score 排序后最多走查 25 条正文，分类为 AI、核心领域非 AI、圈外或不确定。正文确认属于核心范围的候选获得固定证据分，与关键词候选统一检查最低门槛和排名，最多选 5 条
-3. 形成圈外探索：同一次有界走查中，只有正文明确属于圈外且独立达到圈外热度门槛的候选可以参选；走查结束后按 points 和评论数重排，最多选 2 条
-4. 生成摘要：入选条目复用走查阶段已经取得的正文，其余条目按需抓取原文；正常摘要使用 Gemini 3.6 Flash 的 high thinking 和 8192-token 生成预算，首次返回 `incomplete` 时重试一次；高置信站点阻止且既有 fallback 全部失败时，可使用经过完整抓取和同事件验证的 Reuters 报道；若原文与恢复路径最终都失败，则只在 HN 评论样本足够时生成明确标注的讨论概览
-5. 输出与发布：写出阅读、发布和审计产物；发布是独立命令，无内容日期会正常跳过
+1. 收集候选：从 Hacker News 收集近期内容，并补充热门候选
+2. 筛选条目：结合主题相关性、原文内容和社区热度，选出最多 5 条技术精选和最多 2 条圈外探索
+3. 生成摘要：获取入选内容的原文并生成中文摘要；无法取得可靠材料时会明确标注，不根据标题或模型常识补写
+4. 输出与发布：生成用于阅读、发布和复盘的文件；发布作为独立步骤执行
 
 每个步骤的 details 详见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
 
 ## Config
 
-请参考 `.env.example` 设置变量和 key：
+Daily Brief 只读取进程环境变量，不会自动加载 `.env`。完整的变量列表、默认值和说明见 [`.env.example`](./.env.example)。
 
-- `GEMINI_API_KEY`：生成简报时必填；
-- `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL`、`DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`：可选的固定模型 ID；默认分别使用 `gemini-3.5-flash-lite` 和 `gemini-3.6-flash`；
-- `DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS`、`DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS`：分类与摘要请求（含内部重试）的独立最小间隔，默认分别为 6 秒和 20 秒；若两个角色使用同一模型，应用会采用两者中更保守的间隔；
-- `TAVILY_API_KEY`：可选；未配置时 Reuters 同稿转载 fallback 会安全跳过；
-- `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：可选，但必须同时配置，启用 Adobe PDF-to-Markdown；
-- `DAILY_BRIEF_PUBLISH_URL`、`DAILY_BRIEF_PUBLISH_TOKEN`：仅发布时需要，必须同时配置。
+本地运行时，可以复制配置模板，编辑后将其加载到当前 shell：
 
-应用只读取进程环境变量，不会自动加载 .env
+```sh
+cp .env.example .env
+# 编辑 .env 后执行
+set -a
+. ./.env
+set +a
+```
+
+### 生成简报所需
+
+- `GEMINI_API_KEY`：生成简报时必填。
+
+### 可选功能
+
+- `TAVILY_API_KEY`：用于在部分原文抓取受阻时寻找经过验证的恢复材料；未配置时会跳过这一恢复路径。
+- `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：同时配置后启用 Adobe PDF-to-Markdown；未配置时仍会使用本地 PDF 提取。
+- Gemini 模型和请求间隔通常无需调整；如需覆盖默认配置，请参考 [`.env.example`](./.env.example)。
+
+### 发布所需
+
+- `DAILY_BRIEF_PUBLISH_URL`、`DAILY_BRIEF_PUBLISH_TOKEN`：只有运行 `publish` 时需要，必须同时配置。
