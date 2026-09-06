@@ -109,9 +109,9 @@ modifying recommendation and publishing state.
 - Candidate collection is run-scoped: either required source failing aborts the
   run. After collection succeeds, classifier, article-retrieval, and summarizer
   failures are item-scoped and retain distinct reader-facing and audit states.
-- Public JSON retains the compatibility section keys `ai` and `non_ai_hot` even
-  though the reader-facing core section is 技术精选 (`Tech picks`). Changing a
-  display label is not a schema migration.
+- Public JSON retains the compatibility section keys `ai` and `non_ai_hot`.
+  Local Markdown labels the core section `Tech picks`, while the website displays
+  it as 技术精选. Changing either display label is not a schema migration.
 - Public JSON and private audit data have different trust and compatibility
   boundaries. Public output uses the strict schema in `public_schema.py` and never
   exposes raw provider diagnostics, recovery URLs, or private evaluation material.
