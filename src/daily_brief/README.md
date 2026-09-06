@@ -18,12 +18,12 @@ function-level behavior belongs in the code and tests.
 
 ## Generation Flow
 
-`cli.run_generate(...)` coordinates the production pipeline:
+Production generation spans CLI setup and `cli.run_generate(...)`:
 
 1. `time_window.py` calculates the daily collection window in the
    Asia/Singapore timezone.
-2. The production model backend is constructed before external collection so a
-   configuration error cannot leave a partially executed run.
+2. `cli.main()` constructs the production model backend before calling
+   `run_generate(...)`, so configuration errors fail before external collection.
 3. `hn_client.py` collects recent Algolia stories and hot stories from the
    official Hacker News API. Both sources are required; failure of either source
    aborts the run before date-scoped artifacts are written or replaced.
@@ -40,9 +40,12 @@ function-level behavior belongs in the code and tests.
    Material fetched during classification is reused. Specialized GitHub, YouTube,
    HTML, and PDF paths remain behind the same bounded retrieval interface;
    recovery material is accepted only after deterministic validation.
-8. `summarizer.py` selects the generic, memorial, research, or HN-discussion
-   summary route from available evidence. An external-source retrieval failure
-   never becomes a title- or model-knowledge-based article summary.
+8. If every external-source retrieval and recovery path fails for a selected
+   story, `cli.py` asks `hn_client.py` for a bounded HN discussion sample as the
+   final fallback.
+   `summarizer.py` selects the generic, memorial, research, or HN-discussion route
+   from available evidence. An external-source retrieval failure never becomes a
+   title- or model-knowledge-based article summary.
 9. `render.py` writes the readable Markdown, validated public JSON, and private
    candidate audit. `history.py` then records selected item IDs. An empty brief
    writes a `.no-content` marker instead of public JSON.
@@ -65,7 +68,7 @@ modifying recommendation and publishing state.
 | `config.py` | Timezone, topic vocabulary, quotas, thresholds, and scoring limits |
 | `models.py` | Shared story, candidate, retrieval, and model-diagnostic structures |
 | `time_window.py` | Daily collection window |
-| `hn_client.py` | Algolia collection and official Hacker News API access |
+| `hn_client.py` | Algolia collection, hot stories, and bounded HN discussion sampling |
 | `keywords.py` | Keyword and URL-token matching |
 | `keyword_evaluation.py` | Keyword corpus collection and deterministic replay |
 | `scoring.py` | Candidate scoring and recommendation explanations |
@@ -106,6 +109,9 @@ modifying recommendation and publishing state.
 - Candidate collection is run-scoped: either required source failing aborts the
   run. After collection succeeds, classifier, article-retrieval, and summarizer
   failures are item-scoped and retain distinct reader-facing and audit states.
+- Public JSON retains the compatibility section keys `ai` and `non_ai_hot` even
+  though the reader-facing core section is 技术精选 (`Tech picks`). Changing a
+  display label is not a schema migration.
 - Public JSON and private audit data have different trust and compatibility
   boundaries. Public output uses the strict schema in `public_schema.py` and never
   exposes raw provider diagnostics, recovery URLs, or private evaluation material.
