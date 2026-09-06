@@ -1,180 +1,140 @@
 # Daily Brief Python Package
 
-This directory contains the complete Daily Brief application logic. It fetches Hacker News content, identifies and ranks candidate stories, generates Chinese summaries, and writes the daily brief and candidate data used for review.
-
-This guide documents stable module boundaries, data flow, and maintenance entry points. Refer to the code and tests for function-level behavior and edge cases.
+This directory contains the Daily Brief application logic. This guide describes
+the package's entry points, data flow, module boundaries, and cross-cutting
+invariants. User-visible behavior belongs in the [root README](../../README.md),
+product intent belongs in [the product document](../../docs/product.md), and
+function-level behavior belongs in the code and tests.
 
 ## Entry Points
 
-- `__main__.py`: Supports starting the application with `python -m daily_brief`.
-- `cli.py`: Provides the `daily-brief` command and orchestrates the full generation flow. Start here when changing cross-module execution order or application-level fallback behavior.
+- `__main__.py` runs the primary CLI through `python -m daily_brief`.
+- `cli.py` provides the `daily-brief` commands for generation, publishing, and
+  model evaluation. Start here for changes to pipeline order or cross-module
+  fallback behavior.
+- `keyword_evaluation.py` provides the corpus collection and replay utility used
+  to evaluate production keyword matching. It can be run through
+  `scripts/evaluate_keywords.py`.
 
 ## Generation Flow
 
-`cli.run_generate(...)` orchestrates the following stages:
+`cli.run_generate(...)` coordinates the production pipeline:
 
-1. `time_window.py` calculates the collection window using the Asia/Singapore timezone and the daily 08:00 boundary.
-2. `hn_client.py` fetches new stories within that window from Algolia and hot stories from the official Hacker News API.
-3. `Story` and `Candidate` in `models.py` carry source content and selection state through the pipeline.
-4. `keywords.py` matches keywords, and `scoring.py` calculates a score from keyword evidence, points, and comments.
-5. `selection.py` first deduplicates candidates, and `history.py` excludes stories recommended recently.
-6. Candidates with explicit non-weak keyword matches enter the core pool directly without article retrieval. The remaining candidates are ordered by the same score used for final ranking, with no entry threshold, and `cli.py` walks at most 25 of them.
-7. Each walked candidate uses bounded classification retrieval and receives one of four article-evidence decisions: `ai`, `core_non_ai`, `outside`, or `uncertain`. Confirmed `ai` and `core_non_ai` candidates receive the fixed `ARTICLE_EVIDENCE_BONUS` and join the same five-item core pool as keyword candidates. Confirmed `outside` candidates must independently pass the exploration points/comments threshold; after the complete walk, all qualifying outside candidates are reranked by points and comments and at most two are selected. Filling both exploration slots never stops the walk early. Retrieval failure (`topic_unknown`), model failure (`classifier_failed`), and `uncertain` all fail closed.
-8. `article_fetcher.py` uses the same SSRF, redirect, content-size, and extraction boundaries for two retrieval policies. Classification retrieval uses an 8-second HTTP timeout, one direct attempt, no Jina or Wayback fallback, no Adobe PDF conversion, a 10-second local PDF timeout, and skips YouTube with the stable `youtube_skipped_in_classification` error before caption retrieval. `cli.py` also disables Reuters syndicated recovery in this mode. Selected-item summarization retains the complete recovery behavior described below. The orchestration layer passes the selected policy and bounds to both the default article fetcher and any injected compatible fetcher; injected fetchers must accept the same keyword options as `fetch_article()`. Material obtained successfully during classification is reused for summarization rather than fetched again. A selected story with an external source URL always retrieves that source even when Hacker News also supplies non-empty `story_text`; HN story text is the primary material only for self-posts whose source URL is the HN discussion. Supported YouTube video URLs are routed to `youtube_captions.py`, which runs `yt-dlp` in bounded subprocesses, selects a manual track in the declared language or an original-language automatic track, downloads no audio or video, and flattens JSON3 captions into bounded summary text. GitHub repository-root URLs use GitHub's official API to retrieve the preferred README; standard GitHub blob URLs use the exact raw file URL instead of the GitHub HTML wrapper. All downloaded HTML is extracted locally with `trafilatura`; before precision extraction, a bounded DOM compatibility pass preserves visible `<time>` text and empty-marker tail text in semantic table cells without broadening extraction outside tables. When both Adobe credentials are configured, validated PDF bytes are passed to the bounded `adobe_pdf_extractor.py` worker for PDF-to-Markdown conversion; any provider, quota, network, timeout, or output failure falls back to the existing bounded `pypdf` worker. Without Adobe credentials, PDFs remain local. A direct network timeout waits one second and retries once through the same validated transport; a second timeout uses Jina Reader once. Direct requests that explicitly return a Cloudflare Challenge, return a DataDome-protected HTTP 401 or 403, return a recognized HTTP 200 browser-verification interstitial, successfully download HTML that `trafilatura` reduces to `empty_content`, or fail TLS verification specifically because OpenSSL cannot obtain the local issuer certificate (verify code 20), also use Jina Reader as a bounded single fallback. Vercel HTTP 429 security checkpoints are recognized separately and use Jina first. If Jina also fails, the fetcher makes one exact-URL Wayback CDX lookup bounded from 24 hours before the HN story timestamp through the brief cutoff, then accepts only the newest HTTP 200 `text/html` capture whose source identity and timestamp validate. Its identity replay must remain on the same Wayback timestamp and original URL, use an unencoded bounded response, pass the same challenge-page checks, and yield non-empty `trafilatura` text. This Internet Archive path is best-effort and never retries Archive rate limits. The same high-confidence interstitial validation is applied to Jina content before it can be accepted. If an original Reuters URL is still unavailable specifically after the DataDome-to-Jina chain, `cli.py` may ask the bounded finder in `syndicated_copy.py` for up to three allowlisted syndicated URLs. Tavily supplies discovery URLs only; each candidate is fetched through the existing article client and must pass deterministic Reuters-marker, source-date, story-identity, length, and teaser checks before its text can reach a model. Successful methods and structured failures, including per-chain transport attempts, are recorded on the candidate. A failed source retrieval still skips model classification rather than inferring a topic from the title. For an already selected item only, a terminal source-retrieval failure may proceed to the bounded HN-discussion fallback described below. After source or discussion material is available, `summarizer.py` deterministically selects the matching summary mode. Article material can route to generic, high-confidence memorial/personal-essay, or high-confidence research-report mode; discussion material always routes to its isolated HN-discussion prompt. Successful output is canonicalized before it enters rendering or evaluation artifacts.
-Alternate-reporting recovery is also disabled during classification. In summary mode, a non-Reuters source whose retrieval chain terminates after an attempted high-confidence challenge fallback may invoke the independent `alternate_reporting.py` finder once. It searches only Reuters and the Yahoo Finance allowlist, fetches candidates through the same article client, prefers verified Yahoo candidates, and requires Reuters authorship, a terminal reporting footer, complete non-teaser body text, nearby dates, and sufficient same-event signals. Multiple verified candidates are resolved by longest body and stable URL unless their event identities conflict, which fails the recovery closed. A successful model summary receives the deterministic `据 Reuters 对同一事件的报道：` prefix after output normalization.
+1. `time_window.py` calculates the daily collection window in the
+   Asia/Singapore timezone.
+2. The production model backend is constructed before external collection so a
+   configuration error cannot leave a partially executed run.
+3. `hn_client.py` collects recent Algolia stories and hot stories from the
+   official Hacker News API. Both sources are required; failure of either source
+   aborts the run before date-scoped artifacts are written or replaced.
+4. `selection.py` deduplicates candidates, while `history.py` excludes recently
+   recommended stories. `keywords.py` and `scoring.py` establish the initial core
+   candidates and ranking order.
+5. A bounded set of remaining candidates is fetched under the classification
+   retrieval policy and classified by article evidence as AI, other core
+   computing, outside the core scope, or uncertain. Retrieval and classifier
+   failures fail closed for that candidate.
+6. Confirmed core candidates join one ranked pool. Confirmed outside candidates
+   must also satisfy the exploration eligibility rules and are ranked separately.
+7. Selected external stories are retrieved under the fuller summary policy.
+   Material fetched during classification is reused. Specialized GitHub, YouTube,
+   HTML, and PDF paths remain behind the same bounded retrieval interface;
+   recovery material is accepted only after deterministic validation.
+8. `summarizer.py` selects the generic, memorial, research, or HN-discussion
+   summary route from available evidence. An external-source retrieval failure
+   never becomes a title- or model-knowledge-based article summary.
+9. `render.py` writes the readable Markdown, validated public JSON, and private
+   candidate audit. `history.py` then records selected item IDs. An empty brief
+   writes a `.no-content` marker instead of public JSON.
+10. Publishing is a separate, explicitly targeted operation. `publisher.py`
+    validates the public payload, sends it to the website, and records successful
+    content hashes for idempotent retries.
 
-If every original-source and recovery path fails for a selected item, `hn_client.py` reads a breadth-first sample from the official HN item API. It requests at most 40 items, accepts at most 24 non-empty comments through depth three, caps each comment at 2,000 characters and the complete material at 16,000 characters, performs no per-comment retry, and stops after three failed comment-item requests. Deleted, dead, empty, and malformed comments are ignored, HTML is converted locally to plain text, and no comment link is followed. `cli.py` requires at least three comments and 500 characters before invoking the summarizer. The isolated prompt treats all comments as untrusted, potentially wrong discussion rather than article evidence; successful output receives the deterministic `根据 Hacker News 讨论（不代表原文观点）：` prefix. The original `ArticleRetrieval` stays failed and public `content_status` stays `fetch_failed`. Candidate audit records bounded discussion counts and failures without storing comment text; exact comment input appears only in the opt-in model-evaluation capture. Insufficient discussion, API failure, or model failure preserves the fixed original retrieval-failure summary.
-
-9. Algolia and the HN Official API together form the required candidate inventory. If either collection source exhausts its retries, generation raises `SourceCollectionError` immediately, before writing or replacing date-scoped artifacts; the CLI returns a non-zero status so a scheduled `generate && publish` stops before publishing. After both collections succeed, `render.py` produces the Markdown brief, schema-versioned public JSON, and candidate JSON, and `history.py` records the selected story IDs. If both sections are empty, generation keeps the Markdown and audit JSON but atomically writes a date-scoped `.no-content` marker instead of an invalid public JSON.
-10. `publisher.py` sends only the targeted daily public JSON to the website and records its successful content hash for idempotent retry. If JSON exists, it must validate even when a stale marker also exists; only an absent JSON plus a present marker is an idempotent no-content skip. Normal scheduled publishing targets the current Daily Brief date; historical publishing is explicit.
-
-`model_backend.py` is the provider-neutral boundary for classification and
-summarization. Production constructs `GeminiBackend`; orchestration and model
-evaluation depend only on the shared contract so another provider can be added
-without changing the generation pipeline.
-
-`gemini_backend.py` implements the production and evaluation provider boundary. It
-uses the Interactions REST API directly through the Python standard library,
-pins classification and summarization model IDs independently, requests structured
-JSON, and validates provider output again against application invariants. The
-adapter keeps its endpoint fixed, authenticates only with the `x-goog-api-key`
-header, disables interaction storage, and performs bounded retry with backoff and
-jitter for network failures, HTTP 408/429, and 5xx responses. Provider retry
-delays from `Retry-After`, structured `google.rpc.RetryInfo` details, or Gemini's
-explicit `Please retry in ...` quota message take precedence over local backoff
-and are capped at 60 seconds. Normal summarization explicitly uses `high` thinking
-with an 8,192-token generation budget and retries one `incomplete` interaction
-once under the same per-model pacing. Other non-completed statuses remain terminal.
-The returned summary remains constrained by the structured schema and a local
-character cap.
-Every initial request and retry uses a configurable minimum start interval for its
-model. Classification defaults to six seconds (about 10 RPM) for Gemini 3.5 Flash
-Lite, while summarization defaults to twenty seconds (about 3 RPM) for Gemini 3.6
-Flash. Different models are paced independently. If both roles use the same model,
-the backend applies the more conservative interval to their combined traffic.
-
-Model comparisons use an explicit two-step flow. `generate
---capture-model-inputs` writes the exact sequential exploration-classification
-batches and post-fetch summary inputs to
-`data/model-eval-inputs/YYYY-MM-DD.json`. `evaluate-model --date
-YYYY-MM-DD` replays that immutable input with the configured Gemini models and
-writes an isolated result under `data/model-evaluations/`. Evaluation never fetches
-sources, renders or publishes a brief, or reads and writes recommendation and
-publishing state.
-
-Data sources, the topic classifier, article fetching, summarization, and history writes each have their own failure handling. Preserve the pipeline's ability to produce partial results when changing these stages.
-Summary generation records a separate audit object with provider, model, request
-attempts, terminal interaction status, input/output/thought/total token usage,
-stable error code, HTTP status when available, exception type, and a bounded
-single-line diagnostic.
-Gemini exposes stable `quota_exceeded`, `timeout`, `network_error`,
-`provider_unavailable`, `http_NNN`, and `invalid_response` codes at this boundary.
-The local Markdown explicitly distinguishes a successful retrieval followed by a
-summary failure from an article retrieval failure. Public JSON keeps schema v2 and
-exposes only the existing stable `summary_failed` content status, never the raw
-provider diagnostic.
+Model comparison is intentionally separate from generation. A generation run can
+capture the exact classifier and summarizer inputs, and `evaluate-model` can
+replay that immutable input without fetching sources, rendering a brief, or
+modifying recommendation and publishing state.
 
 ## Module Map
 
-| File | Responsibility | Start here when changing |
-| --- | --- | --- |
-| `__init__.py` | Package version | Package-level metadata |
-| `__main__.py` | `python -m daily_brief` entry point | Module execution behavior |
-| `cli.py` | CLI definition and end-to-end orchestration | Pipeline order, cross-module behavior, logging, or output writes |
-| `config.py` | Timezone, keywords, thresholds, limits, and scoring caps | Selection policy or tuning |
-| `models.py` | Shared story, candidate, keyword, retrieval, summary-provenance, and summary-diagnostic data structures | Data passed between stages |
-| `time_window.py` | Daily collection window | Timezone or daily boundary behavior |
-| `hn_client.py` | Algolia story collection and bounded official-API discussion sampling | Sources, retries, comment bounds, parsing, or Hacker News URLs |
-| `keywords.py` | Keyword and URL-token matching | Core-topic keyword recognition |
-| `model_backend.py` | Provider-neutral model contracts and shared output constraints | Adding a model provider or changing provider selection |
-| `gemini_backend.py` | Gemini Interactions API adapter, structured-output validation, and bounded retry | Gemini models, request/response handling, provider errors, or usage logging |
-| `model_evaluation.py` | Versioned model-input capture and side-effect-free replay | Comparing classifier or summarizer backends on identical inputs |
-| `topic_classifier.py` | Four-state article-evidence prompt for bounded unclassified candidates | AI/core/outside taxonomy, uncertainty rules, excerpt bounds, or classifier prompts |
-| `scoring.py` | Heat, keyword, and topic scoring | Ranking formulas or recommendation reasons |
-| `selection.py` | Duplicate handling and final section selection | Eligibility, quotas, deduplication, or rejection reasons |
-| `history.py` | Recent recommendation history | Repeat suppression or history retention |
-| `article_fetcher.py` | Bounded public HTTP(S) article fetching, visible-text extraction, and retrieval outcomes | Article retrieval, parsing, provenance, or network safety |
-| `syndicated_copy.py` | Bounded Reuters syndicated-copy discovery and deterministic validation | Reuters recovery routing, Tavily request handling, allowlists, or copy validation |
-| `alternate_reporting.py` | Bounded Reuters-authored same-event discovery and deterministic validation | Alternate-reporting routing, query semantics, allowlists, authorship, completeness, or event validation |
-| `youtube_captions.py` | Bounded `yt-dlp` caption selection, download, and JSON3 flattening | YouTube video URL recognition or caption retrieval |
-| `adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker with page and output validation | Adobe credentials, SDK behavior, timeouts, cleanup, or Markdown validation |
-| `pdf_extractor.py` | Resource-bounded subprocess worker for `pypdf` layout-text extraction | PDF parsing, page/output limits, or worker resource controls |
-| `summarizer.py` | Shared summary prompt, provider-neutral typography normalization, mode routing, research evidence selection, and fallback text | Summary prompts, output normalization, routing, evidence selection, or fallback behavior |
-| `render.py` | Markdown brief, public content status, and candidate audit serialization | Output format |
-| `public_schema.py` | Strict public schema v2 contract shared by rendering and publishing | Website payload compatibility or validation |
-| `publisher.py` | Authenticated website publishing, retry, and local success state | Delivery behavior or publish configuration |
+| File | Responsibility |
+| --- | --- |
+| `__init__.py` | Package metadata |
+| `__main__.py` | `python -m daily_brief` entry point |
+| `cli.py` | Primary CLI and end-to-end orchestration |
+| `config.py` | Timezone, topic vocabulary, quotas, thresholds, and scoring limits |
+| `models.py` | Shared story, candidate, retrieval, and model-diagnostic structures |
+| `time_window.py` | Daily collection window |
+| `hn_client.py` | Algolia collection and official Hacker News API access |
+| `keywords.py` | Keyword and URL-token matching |
+| `keyword_evaluation.py` | Keyword corpus collection and deterministic replay |
+| `scoring.py` | Candidate scoring and recommendation explanations |
+| `selection.py` | Deduplication and final section selection |
+| `history.py` | Recent recommendation history |
+| `model_backend.py` | Provider-neutral classification and summarization contracts |
+| `gemini_backend.py` | Gemini adapter, pacing, structured output, and bounded retry |
+| `model_evaluation.py` | Versioned model-input capture and side-effect-free replay |
+| `topic_classifier.py` | Article-evidence topic classification |
+| `article_fetcher.py` | Bounded public article retrieval, extraction, and provenance |
+| `syndicated_copy.py` | Discovery and validation of Reuters syndicated copies |
+| `alternate_reporting.py` | Discovery and validation of Reuters reporting on the same event |
+| `youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
+| `adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
+| `pdf_extractor.py` | Resource-bounded local PDF text worker |
+| `summarizer.py` | Grounded prompts, route selection, evidence selection, and normalization |
+| `render.py` | Markdown, public JSON, and private candidate-audit serialization |
+| `public_schema.py` | Public payload contract shared by generation and publishing |
+| `publisher.py` | Website delivery, retry, and local success state |
 
-## Important Invariants
+## Core Invariants
 
-- The public JSON keeps the compatibility keys `ai` and `non_ai_hot`. The user-facing name of the core `ai` section is `技术精选` / `Tech picks`, and local Markdown renders it as `Hacker News: Tech picks`; do not treat the display-name change as a schema migration.
-- Hacker News titles, story text, fetched article content, URLs, and source hosts are untrusted input. Model prompts must continue to label supplied content as untrusted and must not follow instructions contained in it.
-- Article retrieval must only access validated public HTTP(S) destinations. Preserve address validation across the initial URL, redirects, and the final response URL, along with response size and timeout bounds. The production opener ignores environment proxy settings and connects sockets directly to the exact public IP addresses returned by its validated resolution, so DNS rebinding cannot substitute a private destination between validation and connection.
-- Jina Reader is an anonymous retrieval fallback only after two direct network timeouts, for direct responses explicitly marked `cf-mitigated: challenge`, HTTP 401 or 403 responses explicitly marked `x-datadome: protected`, high-confidence browser-verification interstitials recognized from the final URL, raw HTML, or extracted text, direct HTML responses whose `trafilatura` extractor returns `empty_content`, or a structured `SSLCertVerificationError` with OpenSSL verify code 20 (`unable to get local issuer certificate`). A direct timeout gets one retry after a fixed one-second delay; deterministic URL-validation, HTTP, extraction, content-type, size, and certificate failures do not enter that retry path. Each item gets at most one Jina attempt. The request uses the same timeout and extracted-response size bound as direct retrieval, accepts at most a five-minute cached result, and validates the bounded JSON envelope, provider status, origin status and URL, non-empty content, and absence of recognized verification-page signals before accepting it. Other TLS verification failures—including expired, hostname-mismatched, and self-signed certificates—remain terminal, as do ordinary HTTP errors, extraction exceptions, other content types, PDF failures, GitHub API failures, and GitHub raw failures. There is no broad login-wall or paywall detector: only high-confidence verification-page signatures are rejected, while a generic `200` HTML wall that `trafilatura` reduces to empty remains indistinguishable from a CSR shell and can therefore trigger this fallback.
-- Reuters syndicated recovery is an orchestration fallback, never a transport fallback inside `article_fetcher.py`. It runs once only for an original `reuters.com` candidate whose high-confidence DataDome response already triggered and failed the single Jina attempt. Tavily Search uses a fixed endpoint, a bounded response and timeout, `basic` search, at most three results, exact-match slug-derived terms, and an explicit exact-host allowlist containing `finance.yahoo.com` and `ca.finance.yahoo.com`. Production reads only result `title` and `url`; provider `answer`, `content`, and `raw_content` never enter article material, audit data, or model input. Candidate URLs are filtered locally before fetch, and the effective URL after direct or Jina retrieval is checked against the same exact-host allowlist before any text can reach validation or summarization. A copy is accepted only when deterministic checks confirm adequate body length, an early Reuters marker, a date near the date encoded in the Reuters URL, sufficient story anchors including numeric and title-entity signals, and no known teaser text. Candidate failures cannot recursively invoke discovery. Missing credentials, provider errors, invalid responses, empty results, and validation failures all preserve the original Reuters failure and allow the rest of the brief to complete.
-- Alternate-reporting recovery is a separate summary-only orchestration fallback. It runs once for a non-Reuters origin only when the terminal failure confirms that a challenge fallback was attempted and the shared reason is `challenge_page`, `cloudflare_challenge`, `datadome_challenge`, or `vercel_challenge`; the terminal transport is intentionally irrelevant. Its Tavily adapter has an independent unquoted query and `exact_match=False` request, at most five results, and an exact allowlist containing Reuters plus `finance.yahoo.com` and `ca.finance.yahoo.com`. Search-provider answer and content fields are discarded, and the result title is discovery metadata only: it cannot contribute same-event evidence. Initial and effective URLs are allowlisted independently. Validation requires at least 400 characters, an early Reuters marker, a terminal `Reporting by` footer, no teaser/paywall signal, a reporting date within two days of the date encoded in NYTimes/Reuters URLs or the HN timestamp fallback, and sufficient body-only canonical same-event anchors without relying on title case. Canonicalization is limited to deterministic inflection or derivation; event-specific semantic synonyms are forbidden. Only magnitude or percentage phrases are mandatory numeric signals, while bare numbers do not fail an otherwise verified report. Yahoo candidates are fetched first regardless of provider order; Reuters candidates are considered only when no Yahoo candidate validates. Candidate fetching cannot recursively invoke either discovery path.
-- GitHub repository-root URLs use the public GitHub README API without authentication and report `github_readme` transport provenance. Standard `github.com/{owner}/{repo}/blob/{ref}/{path}` URLs report `github_raw` transport provenance and retrieve the exact raw file; a 404 is terminal and must not trigger ref/history discovery or Jina. Other GitHub paths must not be silently replaced with repository README content. The initial blob router supports commit SHAs and one-segment refs; it must not intentionally guess slash-containing ref boundaries.
-- Supported `youtube.com` and `youtu.be` video URLs report `youtube_caption` transport provenance and `yt_dlp` extraction. The extractor ignores local yt-dlp configuration, disables playlists and media downloads, uses bounded subprocess and socket timeouts, prefers a manual caption track matching the video's declared language and otherwise the original automatic track, and flattens one JSON3 file to at most 256 KiB of text. Missing, malformed, oversized, blocked, or timed-out captions are terminal for that item; there is no related-article, ASR, Jina, or multimodal fallback. YouTube caption text is untrusted and the summarizer must not infer unseen visual content from it.
-- Every successfully downloaded HTML response is processed by `trafilatura` with comments disabled and precision favored after recognized verification interstitials are rejected. Before extraction, HTML containing tables receives a local, network-disabled, non-`huge_tree` DOM normalization pass. It removes explicitly hidden table descendants without losing visible tail text, unwraps only empty `span` markers with meaningful tail text inside `th[scope=row]`, and unwraps visible table-local `time` elements without synthesizing text from attributes. Non-empty inline spans and `time` elements outside tables retain the previous behavior, and a parser-limit failure falls back to the original markup. Extracted headings, paragraphs, list items, and preformatted text retain their content-block line boundaries and indentation so content-based routing can recognize HTML research articles without damaging code or nested-list structure. GitHub README, raw text, and Jina Markdown retain line breaks and preformatted content; single-line normalization is reserved for diagnostics. The HTML download bound is 4 MiB and the extracted UTF-8 text bound is 256 KiB. An extraction exception is terminal and full-page visible text is never used; a normal empty `trafilatura` result on the direct transport can trigger Jina, while other extraction failures cannot.
-- PDF responses require both an accepted MIME type and `%PDF-` magic. A direct `application/octet-stream` response is accepted only when the request URL path ends in `.pdf`; this does not broaden generic binary downloads into PDF candidates. Downloads are bounded to 20 MiB, documents to 100 pages, and extracted UTF-8 text to 256 KiB. With both `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET`, the parent launches `adobe_pdf_extractor.py` with a 300-second hard timeout and an approximately 512 MiB address-space limit. The worker performs a local page-count preflight, requests Markdown without embedded figures, validates `text/markdown`, UTF-8, non-empty content, and the output bound, and best-effort deletes input/output assets. It never logs raw SDK exceptions or credentials. Adobe may recover text from scanned PDFs. Any Adobe failure, including incomplete credentials, is locally recoverable through `pypdf`; the stable fallback reason is retained in candidate audit data. Without Adobe credentials, PDFs are never sent to Adobe. `pypdf` layout extraction retains its separate 60-second subprocess timeout and the same address-space limit. If both extractors fail, the item fails; PDF failures never trigger Jina.
-- Tests must be deterministic and must not call live Hacker News APIs, Tavily, Reuters, Yahoo, Jina, or Gemini.
-- Real alternate-reporting article bodies remain under Git-ignored `data/alternate-reporting-fixtures/`. The tracked manifest records only source metadata, expected validation, character count, and SHA-256. Its replay test runs only when the ignored body is present and otherwise skips; synthetic fixtures remain responsible for deterministic CI coverage and must be named as synthetic.
-- Model evaluation input is schema-versioned, bounded to the production classifier and section limits, and contains only prompt-driving candidate fields. Schema v3 records the same ordered, single-candidate exploration batches that production evaluated, including batches whose provider call later failed, followed by exact selected-item article or HN-discussion summary inputs. Keep generated evaluation inputs and results under the Git-ignored `data/` directory because they can include public article text and public HN comments.
-- `evaluate-model` is read-only with respect to its input, `recommendation-history.json`, and `publish-state.json`. It may write only its backend-specific result file under `data/model-evaluations/`.
-- Production `generate` uses Gemini. Backend construction must happen before source fetching so missing production credentials fail without partially running the pipeline.
-- Gemini credentials come only from `GEMINI_API_KEY`; model overrides come from `DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL`, while `DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS` and `DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS` control per-model request spacing. The legacy `DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS` remains a shared fallback when neither role-specific value is set. Do not add an environment-configurable API endpoint, put the key in URLs or logs, or persist it in evaluation artifacts.
-- Gemini defaults and evaluation overrides must use explicit model IDs. Never use moving aliases such as `latest`; they make production behavior and evaluation results change without a code or configuration change.
-- Gemini requests set `store` to false, but that does not override provider-level Free Tier data-use terms. Only public content approved for provider processing belongs in production requests and model evaluations.
-- Normal summary requests use Gemini 3.6 Flash with explicit `thinking_level=high` and `max_output_tokens=8192`. One `incomplete` interaction is retried once, with both requests counted and paced; a second `incomplete` result fails closed. Candidate audit records only bounded provider status and token counts, while non-completed provider error codes are logged without raw provider messages.
-- Article-evidence topic classification uses the title, source host, and at most 6,000 characters of retrieved article material. The classifier must distinguish `ai`, `core_non_ai`, `outside`, and `uncertain`; `outside` requires positive evidence that the main topic is beyond computing and software, while cross-domain, ambiguous, insufficient, or truncated evidence is `uncertain`. Retrieval failure is audited as `topic_unknown`; model failure after material retrieval is audited separately as `classifier_failed`. Neither failure may occupy a section slot. All supplied material remains untrusted prompt content.
-- Production and evaluation summaries use the same deterministic boundary normalization: adjacent Han characters and ASCII letters or digits are separated by one space before summaries enter output artifacts.
-- The shared summary prompt defaults to one or two Chinese sentences and requires concrete, distinguishing facts instead of a topic inventory or phrases such as “本文介绍了”. When the source explicitly supplies multiple mechanisms, results, limitations, or actions that change interpretation, the generic summary must preserve at least two. An explicit concluding judgment, tradeoff, risk, limitation, or impact that changes interpretation must survive the summary: by default one sentence presents representative evidence and another presents the grounded conclusion. Repeated examples with the same role are summarized as a pattern with at most one or two distinguishing examples, so an example inventory cannot displace the central conclusion. This shared floor must not weaken or replace the more specific memorial and research modules.
-- Summary-mode routing runs only after article retrieval and is pure code. The memorial/personal-essay mode requires retrieved body text plus a complete high-confidence title shape: an `In Memory of`, `In Memoriam`, or `Obituary` form, an obituary suffix, or a whole-title lifespan paired with an early death signal in the body. It must use generic fallback for uncertain titles, including technical uses of `in-memory`. Memorial routing has precedence over research routing. Research-report routing does not depend on a PDF extension or extractor provenance: it accepts plain-text or Markdown headings and requires an `Abstract` near the front followed in order by `Introduction` and `Conclusion`, plus ordered `Results`/`Findings`/numbered `Facts` or a later `References` section. The selected mode is recorded in candidate audit JSON.
-- Research evidence selection is summary-only and must not mutate `Story.story_text` or `Story.fetched_text`. A reliable selection contains the abstract and either principal results through conclusion or the conclusion; references, appendices, and other recognized back matter are excluded. Short or structurally uncertain selections fall back to the complete source text. Candidate audit JSON records only the strategy, source/selected character counts, and section labels, never a second copy of the evidence text.
-- Routed prompt modules are trusted instructions inserted before the untrusted-content boundary. Titles, URLs, metadata, story text, and article text remain untrusted after that boundary. Modules may change which grounded facts receive priority but must not relax grounding: absent privacy contrasts, relationships, occupations, author names, reputational context, research outcomes, causal claims, productivity, or business impact must never be inferred from the route, URL, domain, Hacker News metadata, or world knowledge. First-person sources without a grounded author name continue to use “作者”.
-- Both candidate collection sources are required: an Algolia or HN Official API failure is terminal for the complete generation run. After candidate collection succeeds, a classifier, individual article-fetch, or summarizer failure affects only that candidate and must retain its documented fallback behavior. Summary failures must remain distinct from retrieval failures in reader-facing text, structured logs, and candidate audit data; raw provider diagnostics stay out of public JSON.
-- Every selected candidate records source-retrieval and summary provenance. Up to 25 non-selected walked candidates may also carry retrieval provenance because their article material was needed for core recall and exploration routing; other non-selected candidates remain `not_attempted`. HN story text is `not_needed`. External retrieval records transport in `method` (`direct`, `youtube_caption`, `github_readme`, `github_raw`, `jina`, or `wayback`), text derivation in `extractor` (`trafilatura`, `yt_dlp`, `adobe_pdf_to_markdown`, `pypdf`, `plain_text`, or `jina`), total external request `attempts`, the actual `retrieved_url`, and whether material came from the original source, a validated `archived_copy`, or a verified syndicated copy. A successful Wayback recovery keeps the original public source URL, records the identity replay URL only in audit data, and uses `fallback_reason=vercel_challenge`; a failed chain retains the terminal Wayback error together with the origin-block fallback reason. A successful syndicated recovery records its own transport fields at the top level and nests the untouched original Reuters/Jina failure; unsuccessful recovery leaves the original failure at the top level. Finder status, bounded counts, stable rejection reasons, and provider error codes are audit-only. A successful local fallback retains the stable Adobe failure code in `fallback_reason`; dual failures retain both the terminal local extractor and the attempted Adobe fallback provenance. Failures keep a bounded single-line diagnostic in candidate audit JSON. Public brief JSON exposes only the stable `content_status`, never raw retrieval errors, the material URL, archive provenance, or syndicated-recovery details; its source URL remains the original Hacker News source.
-- Alternate-reporting success uses `material_origin=alternate_reporting`, keeps `summary_basis=fetched_article`, records the actual Reuters/Yahoo material URL and untouched origin failure only in candidate audit, and has its own recovery object separate from syndicated-copy audit. Public schema v2 remains unchanged: the original source URL stays public and successful recovery has `content_status=ok`. Honesty is carried by the deterministic summary prefix. If recovery or summarization fails, the existing failure status and fallback summary apply; failed summaries never receive the Reuters prefix.
-- External article retrieval failure must never produce a title-only article paraphrase. It may invoke the summarizer only when the selected item has passed the bounded HN-discussion minimum; otherwise it keeps the fixed reader-facing failure summary and is excluded from captured summary-model inputs.
-- `data/recommendation-history.json` suppresses recently selected story IDs. `data/YYYY-MM-DD-hn-candidates.json` is a per-run audit artifact for selection review; the two files are not interchangeable.
-- Mutations to `Candidate` fields—including `selected`, `section`, `rejection_reason`, `summary`, `why`, `topic_route`, `summary_mode`, `discussion_retrieval`, `summary_generation`, and the `summary_context_*` audit fields—are observable in rendered output or candidate audit data. Update tests when their meaning changes.
-- Public brief JSON uses strict schema version 2 with required `content_status`; schema v1 is intentionally unsupported. Every published item carries its stable `hn_item_id`, and the website requires that ID to match the Hacker News discussion URL. The publisher validates the complete contract before sending.
-- Generation validates public schema v2 before writing and uses atomic replacement for the public JSON. Candidate collection must succeed before any date-scoped artifact is written. A completely empty brief then produces `briefs/YYYY-MM-DD.no-content`; it removes any same-date JSON before atomically writing the marker. Valid content removes that marker only after the JSON is safely replaced. Publishing never lets a marker mask an existing invalid JSON.
-- Publisher credentials come only from `DAILY_BRIEF_PUBLISH_URL` and `DAILY_BRIEF_PUBLISH_TOKEN`. Never write the token into generated artifacts, logs, Git, or tests.
-- Publisher requests use the stable `daily-brief-publisher/1.0` user agent so the authenticated machine-to-machine endpoint is not mistaken for a malformed browser client by the public edge.
-- `data/publish-state.json` records only successful content hashes. Scheduled publishing targets one date and must never scan or automatically catch up historical files; operators can retry or repair a historical date explicitly with `publish --date`.
+- Hacker News fields, article content, captions, URLs, and source metadata are
+  untrusted input. They remain behind an explicit prompt boundary and cannot
+  supply instructions to the model.
+- Article retrieval accepts only validated public HTTP(S) destinations and
+  preserves address validation across redirects and final responses. All network,
+  subprocess, document, and extracted-text work remains bounded. Specialized
+  transports and recovery paths must not weaken these controls.
+- Classification uses a stricter retrieval policy than selected-item
+  summarization. A recovery path is eligible only for its documented failure
+  conditions, cannot recurse, and must validate both source identity and usable
+  material before model input is created.
+- Summaries are grounded in retrieved article text, Hacker News self-post text, or
+  an explicitly labeled bounded discussion sample. Failed external retrieval never
+  produces a title-only article paraphrase. Product-level summary requirements are
+  defined in [the product document](../../docs/product.md).
+- Candidate collection is run-scoped: either required source failing aborts the
+  run. After collection succeeds, classifier, article-retrieval, and summarizer
+  failures are item-scoped and retain distinct reader-facing and audit states.
+- Public JSON and private audit data have different trust and compatibility
+  boundaries. Public output uses the strict schema in `public_schema.py` and never
+  exposes raw provider diagnostics, recovery URLs, or private evaluation material.
+- Public JSON replacement and no-content marker writes are atomic. A no-content
+  marker cannot hide an existing invalid public payload, and publishing never
+  scans or catches up old dates implicitly.
+- Credentials come only from process environment variables and must not enter
+  artifacts, logs, fixtures, model-evaluation data, or Git. Configuration is
+  documented in [`.env.example`](../../.env.example).
+- Production and evaluation share provider-neutral model contracts and output
+  normalization. Provider-specific behavior stays in its adapter, and production
+  model identifiers remain explicit rather than moving aliases.
+- Tests are deterministic and do not call live Hacker News, retrieval, search, or
+  model-provider services. Real article bodies and captured model inputs remain
+  under Git-ignored `data/` paths.
 
 ## Common Change Paths
 
-### Change Core Topic Recognition
+- Core-topic recognition: `config.py` -> `keywords.py` -> `topic_classifier.py`
+  -> `cli.py`.
+- Ranking or quotas: `config.py` -> `scoring.py` -> `selection.py` -> `cli.py`.
+- Article material: the relevant transport or extractor -> `article_fetcher.py`
+  -> `summarizer.py` -> `cli.py`.
+- Summary quality: `summarizer.py` -> the model adapter -> relevant orchestration
+  and rendering tests.
+- Generated or published data: `render.py` -> `public_schema.py` -> `publisher.py`
+  -> `cli.py`.
 
-Start with `config.py` and `keywords.py`. If the change affects article-evidence routing, also inspect `topic_classifier.py` and the orchestration in `cli.py`. Verify with `tests/test_keywords.py`, `tests/test_topic_classifier.py`, and the relevant CLI tests.
-
-### Change Ranking or Selection Policy
-
-Follow `config.py` -> `scoring.py` -> `selection.py`. Verify the scoring, duplicate, threshold, quota, and rejection-reason cases in `tests/test_scoring_selection.py` and `tests/test_cli.py`.
-
-### Add or Change a Content Source
-
-Start with the source client and normalize its data into `models.Story`, then connect it in `cli.py`. Keep external calls injectable so tests can use local fakes. Verify parsing separately from orchestration.
-
-### Change Summary Quality or Article Context
-
-Follow `article_fetcher.py` -> `summarizer.py` -> `cli.py`. Preserve the network and prompt-injection boundaries, then verify `tests/test_article_fetcher.py`, `tests/test_summarizer.py`, and the relevant CLI integration cases.
-
-### Change Generated Files
-
-Start with `render.py` for content shape and `cli.py` for paths and write timing. For website delivery, follow `publisher.py` and `tests/test_publisher.py`. Check `tests/test_render.py` and `tests/test_cli.py`; update the root README if user-visible output or run behavior changes.
-
-## Verification
-
-Run the smallest relevant test file while developing. Before completing a code or behavior change, run:
-
-```bash
-pytest -q
-```
-
-For documentation-only changes, review the rendered Markdown structure and run:
-
-```bash
-git diff --check
-```
+Keep external calls injectable, update tests at the boundary whose behavior
+changes, and update the root README or product document when a change affects
+their documented responsibilities. Follow the repository [contributor
+instructions](../../AGENTS.md) for verification requirements.
