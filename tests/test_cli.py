@@ -8,7 +8,7 @@ from daily_brief import article_fetcher as article_fetcher_module
 from daily_brief import cli
 from daily_brief.alternate_reporting import AlternateReportingCandidate
 from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
-from daily_brief.cli import build_parser, main, run_generate
+from daily_brief.cli import SourceCollectionError, build_parser, main, run_generate
 from daily_brief.gemini_backend import GeminiAPIError
 from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
 from daily_brief.hn_client import HNDiscussionResult
@@ -641,7 +641,7 @@ def test_run_generate_normalizes_summary_before_writing_outputs(tmp_path):
     assert public_payload["sections"]["ai"]["items"][0]["summary"] == expected
 
 
-def test_run_generate_writes_files_when_algolia_fetch_fails(tmp_path, monkeypatch):
+def test_run_generate_fails_when_algolia_fetch_fails(tmp_path, monkeypatch):
     output_dir = tmp_path / "briefs"
     data_dir = tmp_path / "data"
 
@@ -652,41 +652,22 @@ def test_run_generate_writes_files_when_algolia_fetch_fails(tmp_path, monkeypatc
     monkeypatch.setattr(
         cli,
         "fetch_hot_stories",
-        lambda: [
-            story(
-                "3",
-                "SQLite release notes",
-                source="hn_official",
-                points=350,
-                comments=20,
-            )
-        ],
+        lambda: pytest.fail("HN API must not run after Algolia fails"),
     )
 
-    result = run_generate(
-        output_dir=output_dir,
-        data_dir=data_dir,
-        date_label="2026-07-08",
-        summarizer=FakeSummarizer(),
-    )
+    with pytest.raises(SourceCollectionError, match="algolia"):
+        run_generate(
+            output_dir=output_dir,
+            data_dir=data_dir,
+            date_label="2026-07-08",
+            summarizer=FakeSummarizer(),
+        )
 
-    markdown = result.brief_path.read_text(encoding="utf-8")
-
-    assert result.brief_path.exists()
-    assert result.data_path.exists()
-    assert "Tech picks data source failed" in markdown
-    assert "Algolia" in markdown
-    assert "SQLite release notes" in markdown
-    public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
-    assert public_payload["sections"]["ai"]["note"] == (
-        "技术精选数据源本次不可用，当前栏目可能不完整。"
-    )
-    assert "algolia unavailable" not in result.public_json_path.read_text(
-        encoding="utf-8"
-    )
+    assert not output_dir.exists()
+    assert not data_dir.exists()
 
 
-def test_run_generate_writes_files_when_hot_fetch_fails(tmp_path, monkeypatch):
+def test_run_generate_fails_when_hot_fetch_fails(tmp_path, monkeypatch):
     output_dir = tmp_path / "briefs"
     data_dir = tmp_path / "data"
 
@@ -695,23 +676,57 @@ def test_run_generate_writes_files_when_hot_fetch_fails(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli, "fetch_hot_stories", raise_hot_error)
 
-    result = run_generate(
-        output_dir=output_dir,
-        data_dir=data_dir,
-        date_label="2026-07-08",
-        algolia_stories=[
-            story("1", "AI coding agent with Claude", points=40, comments=8)
-        ],
-        summarizer=FakeSummarizer(),
+    with pytest.raises(SourceCollectionError, match="hn_official"):
+        run_generate(
+            output_dir=output_dir,
+            data_dir=data_dir,
+            date_label="2026-07-08",
+            algolia_stories=[
+                story("1", "AI coding agent with Claude", points=40, comments=8)
+            ],
+            summarizer=FakeSummarizer(),
+        )
+
+    assert not output_dir.exists()
+    assert not data_dir.exists()
+
+
+def test_source_failure_does_not_replace_existing_date_artifacts(
+    tmp_path, monkeypatch
+):
+    output_dir = tmp_path / "briefs"
+    data_dir = tmp_path / "data"
+    output_dir.mkdir()
+    data_dir.mkdir()
+    existing_artifacts = {
+        output_dir / "2026-07-08.md": "existing markdown",
+        output_dir / "2026-07-08.json": "existing public json",
+        output_dir / "2026-07-08.no-content": "existing marker",
+        data_dir / "2026-07-08-hn-candidates.json": "existing audit",
+    }
+    for path, content in existing_artifacts.items():
+        path.write_text(content, encoding="utf-8")
+
+    def raise_algolia_error(window):
+        raise RuntimeError("algolia unavailable")
+
+    monkeypatch.setattr(cli, "fetch_algolia_stories", raise_algolia_error)
+    monkeypatch.setattr(
+        cli,
+        "fetch_hot_stories",
+        lambda: pytest.fail("HN API must not run after Algolia fails"),
     )
 
-    markdown = result.brief_path.read_text(encoding="utf-8")
+    with pytest.raises(SourceCollectionError, match="algolia"):
+        run_generate(
+            output_dir=output_dir,
+            data_dir=data_dir,
+            date_label="2026-07-08",
+            summarizer=FakeSummarizer(),
+        )
 
-    assert result.brief_path.exists()
-    assert result.data_path.exists()
-    assert "HN hot data source failed" in markdown
-    assert "Beyond the Bubble" in markdown
-    assert "AI coding agent with Claude" in markdown
+    for path, content in existing_artifacts.items():
+        assert path.read_text(encoding="utf-8") == content
 
 
 def test_run_generate_logs_source_success_and_completion(tmp_path, monkeypatch, caplog):
@@ -749,22 +764,21 @@ def test_run_generate_logs_terminal_source_failure(tmp_path, monkeypatch, caplog
     clock = iter([10.0, 100.0, 200.0, 201.0, 300.0, 301.0]).__next__
 
     with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
-        result = run_generate(
-            output_dir=tmp_path / "briefs",
-            data_dir=tmp_path / "data",
-            date_label="2026-07-08",
-            summarizer=FakeSummarizer(),
-            clock=clock,
-        )
+        with pytest.raises(SourceCollectionError):
+            run_generate(
+                output_dir=tmp_path / "briefs",
+                data_dir=tmp_path / "data",
+                date_label="2026-07-08",
+                summarizer=FakeSummarizer(),
+                clock=clock,
+            )
 
     assert (
         "source=algolia status=failed duration=90.000s error=RuntimeError"
         in caplog.text
     )
-    assert "source=hn_official status=success stories=0 duration=1.000s" in caplog.text
-    assert "Tech picks data source failed" in result.brief_path.read_text(
-        encoding="utf-8"
-    )
+    assert "source=hn_official" not in caplog.text
+    assert not (tmp_path / "briefs").exists()
 
 
 def test_run_generate_routes_approved_core_keyword_to_ai_schema_section(tmp_path):
@@ -952,6 +966,27 @@ def test_main_uses_gemini_backend_for_production_generate(monkeypatch):
 
     assert len(calls) == 1
     assert calls[0]["model_backend"].name == "fake"
+
+
+def test_main_reports_inconclusive_no_content_as_generate_failure(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(
+        cli,
+        "run_generate",
+        lambda **kwargs: (_ for _ in ()).throw(
+            SourceCollectionError(
+                "news source collection failed: algolia"
+            )
+        ),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+        exit_code = main(["generate"])
+
+    assert exit_code == 1
+    assert "component=generate status=failed" in caplog.text
+    assert "news source collection failed: algolia" in caplog.text
 
 
 def test_main_reports_missing_gemini_key_for_production_generate(monkeypatch, caplog):

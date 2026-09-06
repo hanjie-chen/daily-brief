@@ -109,6 +109,10 @@ class GenerateResult:
     model_input_path: Path | None = None
 
 
+class SourceCollectionError(RuntimeError):
+    """Raised when a Hacker News candidate source cannot be collected."""
+
+
 @dataclass(frozen=True)
 class _FetchedMaterial:
     text: str
@@ -141,9 +145,8 @@ class _ValidatedAlternateReporting:
 def _fetch_source(
     source: str,
     fetch: Callable[[], list[Story]],
-    failure_prefix: str,
     clock: Callable[[], float],
-) -> tuple[list[Story], str]:
+) -> list[Story]:
     started = clock()
     try:
         stories = fetch()
@@ -156,7 +159,9 @@ def _fetch_source(
             type(exc).__name__,
             exc,
         )
-        return [], f"{failure_prefix} ({exc})."
+        raise SourceCollectionError(
+            f"news source collection failed: {source}"
+        ) from exc
 
     duration = clock() - started
     LOGGER.info(
@@ -165,7 +170,7 @@ def _fetch_source(
         len(stories),
         duration,
     )
-    return stories, ""
+    return stories
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -201,12 +206,16 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             LOGGER.error("component=model_backend status=failed message=%s", exc)
             return 1
-        run_generate(
-            output_dir=args.output_dir,
-            data_dir=args.data_dir,
-            capture_model_inputs=args.capture_model_inputs,
-            model_backend=backend,
-        )
+        try:
+            run_generate(
+                output_dir=args.output_dir,
+                data_dir=args.data_dir,
+                capture_model_inputs=args.capture_model_inputs,
+                model_backend=backend,
+            )
+        except SourceCollectionError as exc:
+            LOGGER.error("component=generate status=failed message=%s", exc)
+            return 1
     elif args.command == "publish":
         date_label = args.date or daily_window().date_label
         try:
@@ -267,25 +276,21 @@ def run_generate(
 ) -> GenerateResult:
     window = daily_window()
     label = date_label or window.date_label
-    ai_note = ""
-    hot_note = ""
     if algolia_stories is not None:
         algolia_items = algolia_stories
     else:
-        algolia_items, ai_note = _fetch_source(
+        algolia_items = _fetch_source(
             "algolia",
             lambda: fetch_algolia_stories(window),
-            "Today's Tech picks data source failed: Algolia request failed",
             clock,
         )
 
     if hot_stories is not None:
         hot_items = hot_stories
     else:
-        hot_items, hot_note = _fetch_source(
+        hot_items = _fetch_source(
             "hn_official",
             fetch_hot_stories,
-            "Today's HN hot data source failed: HN official API request failed",
             clock,
         )
 
@@ -502,9 +507,7 @@ def run_generate(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     data_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        render_markdown(
-            label, ai_items, selected_hot_items, ai_note=ai_note, hot_note=hot_note
-        ),
+        render_markdown(label, ai_items, selected_hot_items),
         encoding="utf-8",
     )
     public_json_text = render_public_brief_json(
@@ -512,8 +515,6 @@ def run_generate(
         generated_at or datetime.now(TIMEZONE).isoformat(timespec="seconds"),
         ai_items,
         selected_hot_items,
-        ai_note=("技术精选数据源本次不可用，当前栏目可能不完整。" if ai_note else ""),
-        hot_note=("HN 热门数据源本次不可用，当前栏目可能不完整。" if hot_note else ""),
     )
     public_payload = json.loads(public_json_text)
     written_public_json_path: Path | None

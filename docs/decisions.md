@@ -91,3 +91,11 @@
 验证:HN 49473522 对应的 Yahoo Canada Reuters 正文由 production fetcher 抽取为 644 字符,正文 SHA-256 为`0fc59135524e5f9f199eb433aa712fd69fb95b18af1c0f23ca5a2503f889c41b`;不使用候选标题时,正文独立命中`judge`、`rule`、`blacklist`和`anthropic`并通过验证。第三方正文保留在 Git ignored `data/`,tracked manifest 只保存来源 metadata、hash、长度和预期验证结果。
 
 已知 follow-up:既有`syndicated_copy.py`同稿 validator 仍把 discovery title 与抓取正文合并计算 story anchors、数字和 title entities,存在同类的 provider-title evidence 风险。本次继续遵守隔离约束,不改变该稳定路径的语义;后续应使用真实 Reuters/Yahoo 同稿样本单独收紧,不能在 alternate-reporting 修复中顺带泛化。
+
+# 2026-09-06: 任一候选数据源失败都停止发布
+
+决定:Algolia 与 HN Official API 共同组成完整的候选条目来源。任一来源在重试后仍失败,`generate` 都必须立即失败,在写入或替换同日 Markdown、public JSON、candidate audit、marker 和 history 之前返回非零状态,使定时任务中的 `generate && publish` 停在发布之前。只有两个来源都成功、且两个栏目最终都为空时,才写入同日 `.no-content` marker。
+
+边界:这条规则只适用于候选收集阶段。候选收集成功后,单篇原文抓取、分类或摘要失败仍只影响对应条目,不丢弃其他条目的成功结果。失败重跑不覆盖同日已有产物;显式注入的空列表表示数据源成功返回零条,不等同于获取失败。
+
+理由:09-06 的主机代理故障使 Algolia 与 HN Official API 同时失败,旧实现将两次异常都转换为空列表,随后写入 `.no-content` 并让 publisher 正常跳过。这破坏了 marker 用来区分“确定无内容”与“生成没有完成”的原始语义,也让 cron 退出状态无法反映真实故障。

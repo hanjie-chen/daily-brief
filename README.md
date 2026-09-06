@@ -21,7 +21,9 @@
 - `briefs/YYYY-MM-DD.json` — 用于网站发布的 schema 结构化数据；
 - `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文 transport、正文 extractor 与错误、摘要依据，以及包含 interaction 状态和 token usage 的摘要生成诊断，用于复盘和 debug。
 
-如果当天没有任何可发布条目，仍写 Markdown 和 candidate audit，但不写无效的 public JSON；改为写出 `briefs/YYYY-MM-DD.no-content`。之后运行 `publish` 会把该 marker 视为正常的 no-content 状态并幂等跳过。
+如果两个 Hacker News 数据源都获取成功、但当天没有任何可发布条目，仍写 Markdown 和 candidate audit，但不写无效的 public JSON；改为写出 `briefs/YYYY-MM-DD.no-content`。之后运行 `publish` 会把该 marker 视为正常的 no-content 状态并幂等跳过。
+
+Algolia 和 HN Official API 共同组成完整的候选来源。任一数据源在重试后仍获取失败，`generate` 都会立即失败并返回非零状态，不写或替换当天产物；正常的 `generate && publish` 定时流程因此不会继续发布。进入单篇原文抓取阶段后，某篇原文获取失败仍只影响该条目，不影响其他条目或整份简报。
 
 ## How It Works
 
