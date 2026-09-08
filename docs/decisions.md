@@ -44,7 +44,7 @@
 
 理由:目标是取得足以支持可靠摘要、且可审计的材料,而不是绕过 Reuters 的站点防护。搜索 snippet 或供应商生成的 answer 无法提供同等的材料 provenance;任意搜索结果又存在误匹配风险。域名 allowlist、本地抓取与多信号验证把首期范围限制在已真实验证的 Reuters 通讯社转载模式。
 
-边界:discovery 位于 `cli.run_generate(...)` 的原始 Reuters failure 路径,不进入通用 `article_fetcher/`,因此转载候选失败不会递归触发搜索。公共 source URL 继续指向 Reuters,public schema 不变。candidate audit 记录实际材料 URL、最终 transport/extractor/attempts、原始 Reuters/Jina 失败链和有界 recovery 结果。缺少 `TAVILY_API_KEY`、供应商错误、候选抓取或验证失败都 fail closed,保留原始阻止状态且不影响整份简报。
+边界:discovery 位于 `cli` 摘要阶段的原始 Reuters failure 路径,不进入通用 `article_fetcher/`,因此转载候选失败不会递归触发搜索。公共 source URL 继续指向 Reuters,public schema 不变。candidate audit 记录实际材料 URL、最终 transport/extractor/attempts、原始 Reuters/Jina 失败链和有界 recovery 结果。缺少 `TAVILY_API_KEY`、供应商错误、候选抓取或验证失败都 fail closed,保留原始阻止状态且不影响整份简报。
 
 # 2026-08-26: 圈外探索使用正文四态分类并 fail closed
 
