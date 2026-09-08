@@ -128,6 +128,62 @@ CLASSIFICATION_FETCH_POLICY = ArticleFetchPolicy(
 
 
 @dataclass(frozen=True)
+class _DirectFailureRule:
+    direct_failure: str
+    policy_failure: str = ""
+    wayback_after_jina: bool = False
+    log_extractor: str = ""
+    log_attempts: bool = False
+
+
+_DIRECT_FAILURE_RULES = {
+    "vercel_challenge": _DirectFailureRule(
+        direct_failure="vercel challenge",
+        wayback_after_jina=True,
+    ),
+    "datadome_challenge": _DirectFailureRule(
+        direct_failure="datadome challenge",
+        policy_failure="DataDome challenge",
+    ),
+    "cloudflare_challenge": _DirectFailureRule(
+        direct_failure="cloudflare challenge",
+        policy_failure="Cloudflare challenge",
+    ),
+    "challenge_page": _DirectFailureRule(
+        direct_failure="browser verification challenge page",
+    ),
+    "empty_content": _DirectFailureRule(
+        direct_failure="trafilatura empty_content",
+        log_extractor="trafilatura",
+    ),
+    "tls_issuer_unavailable": _DirectFailureRule(
+        direct_failure="TLS issuer unavailable",
+    ),
+    "network_timeout": _DirectFailureRule(
+        direct_failure="network timeout",
+        log_attempts=True,
+    ),
+}
+
+
+@dataclass(frozen=True)
+class _JinaFallbackContext:
+    url: str
+    opener: object
+    resolver: object
+    timeout_seconds: int
+    extracted_max_bytes: int
+    html_max_bytes: int
+    pdf_max_bytes: int
+    pdf_max_pages: int
+    pdf_parse_timeout_seconds: int
+    pdf_address_space_bytes: int
+    wayback_not_before: datetime | None
+    wayback_not_after: datetime | None
+    policy: ArticleFetchPolicy
+
+
+@dataclass(frozen=True)
 class ArticleFetchResult:
     text: str
     method: str
@@ -437,6 +493,21 @@ def fetch_article(
         },
     )
     open_request = opener or _build_safe_opener(resolver).open
+    fallback_context = _JinaFallbackContext(
+        url=url,
+        opener=open_request,
+        resolver=resolver,
+        timeout_seconds=timeout_seconds,
+        extracted_max_bytes=extracted_max_bytes,
+        html_max_bytes=html_max_bytes,
+        pdf_max_bytes=pdf_max_bytes,
+        pdf_max_pages=pdf_max_pages,
+        pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
+        pdf_address_space_bytes=pdf_address_space_bytes,
+        wayback_not_before=wayback_not_before,
+        wayback_not_after=wayback_not_after,
+        policy=policy,
+    )
 
     for attempt in range(1, policy.direct_max_attempts + 1):
         try:
@@ -454,157 +525,29 @@ def fetch_article(
                 adobe_pdf_enabled=policy.adobe_pdf_enabled,
             )
         except HTTPError as exc:
-            if _is_vercel_challenge(exc):
-                if not policy.jina_enabled:
-                    raise _direct_policy_failure(
-                        "vercel challenge",
-                        "vercel_challenge",
-                        attempt,
-                    ) from exc
-                LOGGER.warning(
-                    "component=article_fetch method=direct status=vercel_challenge "
-                    "fallback=jina"
-                )
-                return _fetch_jina_fallback(
-                    url,
-                    direct_failure="vercel challenge",
-                    fallback_reason="vercel_challenge",
-                    opener=open_request,
-                    resolver=resolver,
-                    timeout_seconds=timeout_seconds,
-                    max_bytes=extracted_max_bytes,
+            fallback_reason = _http_fallback_reason(exc)
+            if fallback_reason:
+                return _recover_direct_failure(
+                    fallback_context,
+                    fallback_reason=fallback_reason,
                     direct_attempts=attempt,
-                    wayback_enabled=policy.wayback_enabled,
-                    wayback_not_before=wayback_not_before,
-                    wayback_not_after=wayback_not_after,
-                    html_max_bytes=html_max_bytes,
-                    pdf_max_bytes=pdf_max_bytes,
-                    pdf_max_pages=pdf_max_pages,
-                    pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
-                    pdf_address_space_bytes=pdf_address_space_bytes,
+                    cause=exc,
                 )
-            if _is_datadome_challenge(exc):
-                if not policy.jina_enabled:
-                    raise _direct_policy_failure(
-                        "DataDome challenge",
-                        "datadome_challenge",
-                        attempt,
-                    ) from exc
-                LOGGER.warning(
-                    "component=article_fetch method=direct status=datadome_challenge "
-                    "fallback=jina"
-                )
-                return _fetch_jina_fallback(
-                    url,
-                    direct_failure="datadome challenge",
-                    fallback_reason="datadome_challenge",
-                    opener=open_request,
-                    resolver=resolver,
-                    timeout_seconds=timeout_seconds,
-                    max_bytes=extracted_max_bytes,
-                    direct_attempts=attempt,
-                )
-            if not _is_cloudflare_challenge(exc):
-                raise ArticleFetchError(
-                    f"direct article request failed: {exc}",
-                    error_code=f"http_{exc.code}",
-                    method="direct",
-                    attempts=attempt,
-                ) from exc
-            if not policy.jina_enabled:
-                raise _direct_policy_failure(
-                    "Cloudflare challenge",
-                    "cloudflare_challenge",
-                    attempt,
-                ) from exc
-            LOGGER.warning(
-                "component=article_fetch method=direct status=cloudflare_challenge "
-                "fallback=jina"
-            )
-            return _fetch_jina_fallback(
-                url,
-                direct_failure="cloudflare challenge",
-                fallback_reason="cloudflare_challenge",
-                opener=open_request,
-                resolver=resolver,
-                timeout_seconds=timeout_seconds,
-                max_bytes=extracted_max_bytes,
-                direct_attempts=attempt,
-            )
+            raise ArticleFetchError(
+                f"direct article request failed: {exc}",
+                error_code=f"http_{exc.code}",
+                method="direct",
+                attempts=attempt,
+            ) from exc
         except ArticleFetchError as exc:
-            if exc.error_code == "vercel_challenge":
-                if not policy.jina_enabled:
-                    raise _direct_policy_failure(
-                        "vercel challenge",
-                        exc.error_code,
-                        attempt,
-                        extractor=exc.extractor,
-                    ) from exc
-                LOGGER.warning(
-                    "component=article_fetch method=direct status=vercel_challenge "
-                    "fallback=jina"
-                )
-                return _fetch_jina_fallback(
-                    url,
-                    direct_failure="vercel challenge",
-                    fallback_reason="vercel_challenge",
-                    opener=open_request,
-                    resolver=resolver,
-                    timeout_seconds=timeout_seconds,
-                    max_bytes=extracted_max_bytes,
+            fallback_reason = _article_error_fallback_reason(exc)
+            if fallback_reason:
+                return _recover_direct_failure(
+                    fallback_context,
+                    fallback_reason=fallback_reason,
                     direct_attempts=attempt,
-                    wayback_enabled=policy.wayback_enabled,
-                    wayback_not_before=wayback_not_before,
-                    wayback_not_after=wayback_not_after,
-                    html_max_bytes=html_max_bytes,
-                    pdf_max_bytes=pdf_max_bytes,
-                    pdf_max_pages=pdf_max_pages,
-                    pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
-                    pdf_address_space_bytes=pdf_address_space_bytes,
-                )
-            if exc.error_code == "challenge_page":
-                if not policy.jina_enabled:
-                    raise _direct_policy_failure(
-                        "browser verification challenge page",
-                        exc.error_code,
-                        attempt,
-                        extractor=exc.extractor,
-                    ) from exc
-                LOGGER.warning(
-                    "component=article_fetch method=direct status=challenge_page "
-                    "fallback=jina"
-                )
-                return _fetch_jina_fallback(
-                    url,
-                    direct_failure="browser verification challenge page",
-                    fallback_reason="challenge_page",
-                    opener=open_request,
-                    resolver=resolver,
-                    timeout_seconds=timeout_seconds,
-                    max_bytes=extracted_max_bytes,
-                    direct_attempts=attempt,
-                )
-            if exc.error_code == "empty_content" and exc.extractor == "trafilatura":
-                if not policy.jina_enabled:
-                    raise _direct_policy_failure(
-                        "trafilatura empty_content",
-                        exc.error_code,
-                        attempt,
-                        extractor=exc.extractor,
-                    ) from exc
-                LOGGER.warning(
-                    "component=article_fetch method=direct extractor=trafilatura "
-                    "status=empty_content fallback=jina"
-                )
-                return _fetch_jina_fallback(
-                    url,
-                    direct_failure="trafilatura empty_content",
-                    fallback_reason="empty_content",
-                    opener=open_request,
-                    resolver=resolver,
-                    timeout_seconds=timeout_seconds,
-                    max_bytes=extracted_max_bytes,
-                    direct_attempts=attempt,
+                    cause=exc,
+                    extractor=exc.extractor,
                 )
             raise ArticleFetchError(
                 f"direct article retrieval failed: {exc}",
@@ -617,25 +560,11 @@ def fetch_article(
             ) from exc
         except (URLError, TimeoutError) as exc:
             if _is_tls_issuer_unavailable(exc):
-                if not policy.jina_enabled:
-                    raise _direct_policy_failure(
-                        "TLS issuer unavailable",
-                        "tls_issuer_unavailable",
-                        attempt,
-                    ) from exc
-                LOGGER.warning(
-                    "component=article_fetch method=direct "
-                    "status=tls_issuer_unavailable fallback=jina"
-                )
-                return _fetch_jina_fallback(
-                    url,
-                    direct_failure="TLS issuer unavailable",
+                return _recover_direct_failure(
+                    fallback_context,
                     fallback_reason="tls_issuer_unavailable",
-                    opener=open_request,
-                    resolver=resolver,
-                    timeout_seconds=timeout_seconds,
-                    max_bytes=extracted_max_bytes,
                     direct_attempts=attempt,
+                    cause=exc,
                 )
             if _is_network_timeout(exc):
                 if attempt < policy.direct_max_attempts:
@@ -648,27 +577,12 @@ def fetch_article(
                     )
                     sleeper(DIRECT_RETRY_DELAY_SECONDS)
                     continue
-                if not policy.jina_enabled:
-                    raise _direct_policy_failure(
-                        f"network timeout after {attempt} attempts: {exc}",
-                        "network_timeout",
-                        attempt,
-                    ) from exc
-                LOGGER.warning(
-                    "component=article_fetch method=direct status=network_timeout "
-                    "attempt=%d/%d fallback=jina",
-                    attempt,
-                    policy.direct_max_attempts,
-                )
-                return _fetch_jina_fallback(
-                    url,
-                    direct_failure=(f"network timeout after {attempt} attempts: {exc}"),
+                return _recover_direct_failure(
+                    fallback_context,
                     fallback_reason="network_timeout",
-                    opener=open_request,
-                    resolver=resolver,
-                    timeout_seconds=timeout_seconds,
-                    max_bytes=extracted_max_bytes,
                     direct_attempts=attempt,
+                    cause=exc,
+                    direct_failure=f"network timeout after {attempt} attempts: {exc}",
                 )
             raise ArticleFetchError(
                 f"direct article request failed: {exc}",
@@ -700,6 +614,85 @@ def fetch_article(
         )
 
     raise AssertionError("direct article retry loop ended unexpectedly")
+
+
+def _http_fallback_reason(exc: HTTPError) -> str:
+    if _is_vercel_challenge(exc):
+        return "vercel_challenge"
+    if _is_datadome_challenge(exc):
+        return "datadome_challenge"
+    if _is_cloudflare_challenge(exc):
+        return "cloudflare_challenge"
+    return ""
+
+
+def _article_error_fallback_reason(exc: ArticleFetchError) -> str:
+    if exc.error_code in {"vercel_challenge", "challenge_page"}:
+        return exc.error_code
+    if exc.error_code == "empty_content" and exc.extractor == "trafilatura":
+        return "empty_content"
+    return ""
+
+
+def _recover_direct_failure(
+    context: _JinaFallbackContext,
+    *,
+    fallback_reason: str,
+    direct_attempts: int,
+    cause: BaseException,
+    extractor: str = "",
+    direct_failure: str = "",
+) -> ArticleFetchResult:
+    rule = _DIRECT_FAILURE_RULES[fallback_reason]
+    policy_failure = direct_failure or rule.policy_failure or rule.direct_failure
+    direct_failure = direct_failure or rule.direct_failure
+    if not context.policy.jina_enabled:
+        raise _direct_policy_failure(
+            policy_failure,
+            fallback_reason,
+            direct_attempts,
+            extractor=extractor,
+        ) from cause
+
+    if rule.log_attempts:
+        LOGGER.warning(
+            "component=article_fetch method=direct status=%s "
+            "attempt=%d/%d fallback=jina",
+            fallback_reason,
+            direct_attempts,
+            context.policy.direct_max_attempts,
+        )
+    elif rule.log_extractor:
+        LOGGER.warning(
+            "component=article_fetch method=direct extractor=%s "
+            "status=%s fallback=jina",
+            rule.log_extractor,
+            fallback_reason,
+        )
+    else:
+        LOGGER.warning(
+            "component=article_fetch method=direct status=%s fallback=jina",
+            fallback_reason,
+        )
+
+    return _fetch_jina_fallback(
+        context.url,
+        direct_failure=direct_failure,
+        fallback_reason=fallback_reason,
+        opener=context.opener,
+        resolver=context.resolver,
+        timeout_seconds=context.timeout_seconds,
+        max_bytes=context.extracted_max_bytes,
+        direct_attempts=direct_attempts,
+        wayback_enabled=(rule.wayback_after_jina and context.policy.wayback_enabled),
+        wayback_not_before=context.wayback_not_before,
+        wayback_not_after=context.wayback_not_after,
+        html_max_bytes=context.html_max_bytes,
+        pdf_max_bytes=context.pdf_max_bytes,
+        pdf_max_pages=context.pdf_max_pages,
+        pdf_parse_timeout_seconds=context.pdf_parse_timeout_seconds,
+        pdf_address_space_bytes=context.pdf_address_space_bytes,
+    )
 
 
 def _direct_policy_failure(

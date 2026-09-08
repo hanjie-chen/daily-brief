@@ -15,6 +15,7 @@ from daily_brief import article_fetcher
 from daily_brief.article_fetcher import (
     CLASSIFICATION_FETCH_POLICY,
     ArticleFetchError,
+    ArticleFetchPolicy,
     _create_public_connection,
     _validate_public_http_url,
     extract_html,
@@ -1889,6 +1890,142 @@ def test_wayback_rejects_replay_redirect_to_live_source():
     assert caught.value.error_code == "wayback_invalid_replay_url"
     assert caught.value.method == "wayback"
     assert caught.value.attempts == 4
+
+
+@pytest.mark.parametrize(
+    "fallback_reason",
+    [
+        "vercel_challenge",
+        "datadome_challenge",
+        "cloudflare_challenge",
+        "challenge_page",
+        "empty_content",
+        "tls_issuer_unavailable",
+        "network_timeout",
+    ],
+)
+def test_only_vercel_rule_uses_wayback_after_jina_failure(monkeypatch, fallback_reason):
+    source_url = "https://example.com/article"
+    requests = []
+    if fallback_reason == "empty_content":
+        monkeypatch.setattr(
+            "daily_brief.article_fetcher.trafilatura.extract",
+            lambda *args, **kwargs: None,
+        )
+
+    def fail_recovery(request, timeout):
+        requests.append(request.full_url)
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 502)
+        if request.full_url.startswith("https://web.archive.org/cdx/search/cdx?"):
+            return FakeResponse(
+                make_wayback_payload(),
+                content_type="application/json",
+                final_url=request.full_url,
+            )
+        if fallback_reason == "vercel_challenge":
+            raise http_error(
+                request.full_url,
+                429,
+                server="Vercel",
+                x_vercel_mitigated="challenge",
+            )
+        if fallback_reason == "datadome_challenge":
+            raise http_error(
+                request.full_url,
+                403,
+                x_datadome="protected",
+                x_dd_b="1",
+            )
+        if fallback_reason == "cloudflare_challenge":
+            raise http_error(request.full_url, 403, cf_mitigated="challenge")
+        if fallback_reason == "challenge_page":
+            response = FakeResponse(b"<html><body>Challenge</body></html>")
+            response.headers["cf-mitigated"] = "challenge"
+            return response
+        if fallback_reason == "empty_content":
+            return FakeResponse(b"<html><body>Client shell</body></html>")
+        if fallback_reason == "tls_issuer_unavailable":
+            raise tls_verification_error(20, "unable to get local issuer certificate")
+        raise TimeoutError("timed out")
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            source_url,
+            opener=fail_recovery,
+            resolver=resolver_for({}),
+            sleeper=lambda _: None,
+        )
+
+    attempted_wayback = any(
+        request.startswith("https://web.archive.org/") for request in requests
+    )
+    assert attempted_wayback is (fallback_reason == "vercel_challenge")
+    assert caught.value.method == (
+        "wayback" if fallback_reason == "vercel_challenge" else "jina"
+    )
+    assert caught.value.fallback_reason == fallback_reason
+
+
+def test_vercel_wayback_rule_respects_disabled_policy():
+    source_url = "https://example.com/article"
+    requests = []
+
+    def fail(request, timeout):
+        requests.append(request.full_url)
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 502)
+        if request.full_url.startswith("https://web.archive.org/"):
+            pytest.fail("disabled Wayback must not be requested")
+        raise http_error(
+            request.full_url,
+            429,
+            server="Vercel",
+            x_vercel_mitigated="challenge",
+        )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            source_url,
+            opener=fail,
+            resolver=resolver_for({}),
+            policy=ArticleFetchPolicy(wayback_enabled=False),
+        )
+
+    assert requests == [source_url, f"https://r.jina.ai/{source_url}"]
+    assert caught.value.method == "jina"
+    assert caught.value.fallback_reason == "vercel_challenge"
+
+
+def test_http_200_vercel_challenge_header_uses_wayback_after_jina_failure():
+    source_url = "https://example.com/article"
+    direct_response = FakeResponse(b"<html><body>Challenge</body></html>")
+    direct_response.headers["x-vercel-mitigated"] = "challenge"
+    requests = []
+
+    def fail_recovery(request, timeout):
+        requests.append(request.full_url)
+        if request.full_url == source_url:
+            return direct_response
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 502)
+        return FakeResponse(
+            make_wayback_payload(),
+            content_type="application/json",
+            final_url=request.full_url,
+        )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            source_url,
+            opener=fail_recovery,
+            resolver=resolver_for({}),
+        )
+
+    assert len(requests) == 3
+    assert requests[2].startswith("https://web.archive.org/cdx/search/cdx?")
+    assert caught.value.method == "wayback"
+    assert caught.value.fallback_reason == "vercel_challenge"
 
 
 @pytest.mark.parametrize("status_code", [401, 403])
