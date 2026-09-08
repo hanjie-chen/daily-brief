@@ -89,7 +89,7 @@ from .syndicated_copy import (
     normalize_allowed_candidate_url,
     validate_syndicated_copy,
 )
-from .time_window import daily_window
+from .time_window import TimeWindow, daily_window
 
 LOGGER = logging.getLogger(__name__)
 RETRIEVAL_MODE_CLASSIFICATION = "classification"
@@ -140,6 +140,21 @@ class _AlternateReportingOutcome:
 class _ValidatedAlternateReporting:
     material: _FetchedMaterial
     validation: AlternateReportingValidation
+
+
+@dataclass(frozen=True)
+class _CandidatePool:
+    all_candidates: list[Candidate]
+    eligible_candidates: list[Candidate]
+    history_path: Path
+    recommendation_history: dict[str, list[str]]
+
+
+@dataclass(frozen=True)
+class _SelectionResult:
+    ai_items: list[Candidate]
+    selected_hot_items: list[Candidate]
+    classification_batches: list[list[Candidate]]
 
 
 def _fetch_source(
@@ -276,6 +291,55 @@ def run_generate(
 ) -> GenerateResult:
     window = daily_window()
     label = date_label or window.date_label
+    candidates = _collect_candidates(
+        window,
+        algolia_stories,
+        hot_stories,
+        clock,
+    )
+    candidate_pool = _exclude_recent_candidates(candidates, data_dir, label)
+
+    backend = model_backend
+    if classifier is None or summarizer is None:
+        backend = backend or GeminiBackend.from_environment()
+
+    selection = _classify_and_select_candidates(
+        candidate_pool.eligible_candidates,
+        classifier or backend,
+        article_fetcher,
+        syndicated_finder,
+        alternate_reporting_finder,
+        window,
+        clock,
+    )
+    summarization_inputs = _summarize_selected_candidates(
+        selection.ai_items,
+        selection.selected_hot_items,
+        summarizer or backend,
+        article_fetcher,
+        hn_discussion_fetcher,
+        syndicated_finder,
+        alternate_reporting_finder,
+        window,
+    )
+    return _persist_generation(
+        output_dir,
+        data_dir,
+        label,
+        generated_at,
+        candidate_pool,
+        selection,
+        summarization_inputs,
+        capture_model_inputs,
+    )
+
+
+def _collect_candidates(
+    window: TimeWindow,
+    algolia_stories: list[Story] | None,
+    hot_stories: list[Story] | None,
+    clock: Callable[[], float],
+) -> list[Candidate]:
     if algolia_stories is not None:
         algolia_items = algolia_stories
     else:
@@ -294,9 +358,16 @@ def run_generate(
             clock,
         )
 
-    candidates = dedupe_candidates(
+    return dedupe_candidates(
         [*map(_candidate, algolia_items), *map(_candidate, hot_items)]
     )
+
+
+def _exclude_recent_candidates(
+    candidates: list[Candidate],
+    data_dir,
+    label: str,
+) -> _CandidatePool:
     history_path = Path(data_dir) / "recommendation-history.json"
     recommendation_history = load_history(history_path)
     recent_item_ids = recent_ids(recommendation_history, label)
@@ -309,6 +380,23 @@ def run_generate(
         else:
             eligible_candidates.append(candidate)
 
+    return _CandidatePool(
+        all_candidates=candidates,
+        eligible_candidates=eligible_candidates,
+        history_path=history_path,
+        recommendation_history=recommendation_history,
+    )
+
+
+def _classify_and_select_candidates(
+    eligible_candidates: list[Candidate],
+    topic_classifier,
+    article_fetcher,
+    syndicated_finder: SyndicatedCopyFinder | None,
+    alternate_reporting_finder: AlternateReportingFinder | None,
+    window: TimeWindow,
+    clock: Callable[[], float],
+) -> _SelectionResult:
     known_core_candidates = [
         candidate
         for candidate in eligible_candidates
@@ -321,10 +409,6 @@ def run_generate(
         for candidate in eligible_candidates
         if not _has_non_weak_keyword_match(candidate)
     ]
-    backend = model_backend
-    if classifier is None or summarizer is None:
-        backend = backend or GeminiBackend.from_environment()
-    topic_classifier = classifier or backend
     core_candidates = list(known_core_candidates)
     ranked_exploration = rank_exploration_candidates(unmatched_candidates)
     outside_candidates: list[Candidate] = []
@@ -408,9 +492,25 @@ def run_generate(
         len(selected_hot_items),
         EXPLORATION_CLASSIFIER_MAX_CANDIDATES,
     )
-    summary_client = summarizer or backend
+    return _SelectionResult(
+        ai_items=ai_items,
+        selected_hot_items=selected_hot_items,
+        classification_batches=classification_batches,
+    )
+
+
+def _summarize_selected_candidates(
+    ai_items: list[Candidate],
+    selected_hot_items: list[Candidate],
+    summary_client,
+    article_fetcher,
+    hn_discussion_fetcher,
+    syndicated_finder: SyndicatedCopyFinder | None,
+    alternate_reporting_finder: AlternateReportingFinder | None,
+    window: TimeWindow,
+) -> list[Candidate]:
     summary_candidates = [*ai_items, *selected_hot_items]
-    summarization_inputs = []
+    summarization_inputs: list[Candidate] = []
     for candidate in summary_candidates:
         if candidate.article_retrieval.status == "not_attempted":
             _prepare_candidate_material(
@@ -500,6 +600,21 @@ def run_generate(
             )
             candidate.summary_status = "failed"
 
+    return summarization_inputs
+
+
+def _persist_generation(
+    output_dir,
+    data_dir,
+    label: str,
+    generated_at: str | None,
+    candidate_pool: _CandidatePool,
+    selection: _SelectionResult,
+    summarization_inputs: list[Candidate],
+    capture_model_inputs: bool,
+) -> GenerateResult:
+    ai_items = selection.ai_items
+    selected_hot_items = selection.selected_hot_items
     output_path = Path(output_dir) / f"{label}.md"
     public_json_path = Path(output_dir) / f"{label}.json"
     no_content_marker_path = Path(output_dir) / f"{label}.no-content"
@@ -532,20 +647,23 @@ def run_generate(
         no_content_marker_path.unlink(missing_ok=True)
         written_public_json_path = public_json_path
         written_marker_path = None
-    data_path.write_text(render_candidates_json(candidates), encoding="utf-8")
+    data_path.write_text(
+        render_candidates_json(candidate_pool.all_candidates),
+        encoding="utf-8",
+    )
     model_input_path = None
     if capture_model_inputs:
         model_input_path = Path(data_dir) / "model-eval-inputs" / f"{label}.json"
         capture_model_evaluation_input(
             model_input_path,
             label,
-            classification_batches,
+            selection.classification_batches,
             summarization_inputs,
         )
     try:
         save_history(
-            history_path,
-            recommendation_history,
+            candidate_pool.history_path,
+            candidate_pool.recommendation_history,
             label,
             [
                 candidate.story.hn_item_id
