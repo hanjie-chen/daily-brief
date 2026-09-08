@@ -144,13 +144,16 @@ _DIRECT_FAILURE_RULES = {
     "datadome_challenge": _DirectFailureRule(
         direct_failure="datadome challenge",
         policy_failure="DataDome challenge",
+        wayback_after_jina=True,
     ),
     "cloudflare_challenge": _DirectFailureRule(
         direct_failure="cloudflare challenge",
         policy_failure="Cloudflare challenge",
+        wayback_after_jina=True,
     ),
     "challenge_page": _DirectFailureRule(
         direct_failure="browser verification challenge page",
+        wayback_after_jina=True,
     ),
     "empty_content": _DirectFailureRule(
         direct_failure="trafilatura empty_content",

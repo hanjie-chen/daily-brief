@@ -99,3 +99,11 @@
 边界:这条规则只适用于候选收集阶段。候选收集成功后,单篇原文抓取、分类或摘要失败仍只影响对应条目,不丢弃其他条目的成功结果。失败重跑不覆盖同日已有产物;显式注入的空列表表示数据源成功返回零条,不等同于获取失败。
 
 理由:09-06 的主机代理故障使 Algolia 与 HN Official API 同时失败,旧实现将两次异常都转换为空列表,随后写入 `.no-content` 并让 publisher 正常跳过。这破坏了 marker 用来区分“确定无内容”与“生成没有完成”的原始语义,也让 cron 退出状态无法反映真实故障。
+
+# 2026-09-08: 高置信来源阻止共用 Wayback fallback
+
+决定:在最终摘要抓取中,`vercel_challenge`、`cloudflare_challenge`、`datadome_challenge`和`challenge_page`共用 direct -> Jina -> Wayback 的有界恢复顺序。分类抓取仍只尝试一次 direct。网络超时、Trafilatura 正文提取为空和 TLS issuer 不可用仍最多恢复到 Jina,不进入 Wayback。
+
+理由:这四种原因都表示来源网站通过高置信 challenge 阻止自动抓取。Jina 也失败后,时间足够接近且通过原始 URL、响应身份、content type、正文完整性和大小校验的 Internet Archive HTML 快照,可以提供含明确 provenance 的原文副本。把资格集中在抓取规则表中,避免同类来源阻止因分支复制而产生不同恢复行为。
+
+边界:Wayback 的时间窗、URL identity、redirect、内容校验和`archived_copy` provenance 保持不变。Reuters DataDome 在 Wayback 也失败后仍继续现有的经验证同稿转载恢复,不能因为最终失败 method 从`jina`变成`wayback`而跳过。其他普通 HTTP、证书、网络或 extraction 失败不因本决定扩大恢复范围。

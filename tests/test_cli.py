@@ -2040,6 +2040,61 @@ def test_reuters_datadome_failure_recovers_verified_yahoo_copy(tmp_path):
     assert public_item["content_status"] == "ok"
 
 
+def test_reuters_datadome_wayback_failure_still_recovers_yahoo_copy(tmp_path):
+    reuters_url = reuters_story_url()
+    yahoo_url = yahoo_story_url()
+    fetched_urls = []
+    finder = FakeSyndicatedFinder(
+        [
+            SyndicatedCandidate(
+                title=(
+                    "Nvidia scales back funding guarantee for Ohio OpenAI data "
+                    "center, WSJ reports"
+                ),
+                url=yahoo_url,
+            )
+        ]
+    )
+
+    def fetch(url, **kwargs):
+        fetched_urls.append(url)
+        if url == reuters_url:
+            raise origin_block_failure("datadome_challenge", method="wayback")
+        return ArticleFetchResult(
+            text=verified_reuters_copy_body(),
+            method="direct",
+            extractor="trafilatura",
+            attempts=2,
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs",
+        data_dir=tmp_path / "data",
+        date_label="2026-08-18",
+        algolia_stories=[
+            story(
+                "49323686",
+                "Nvidia dramatically reduces amount of OpenAI infra financing it may guarantee",
+                points=40,
+                comments=8,
+                url=reuters_url,
+            )
+        ],
+        hot_stories=[],
+        article_fetcher=fetch,
+        syndicated_finder=finder,
+        summarizer=FakeSummarizer(),
+    )
+
+    assert finder.calls == ["49323686"]
+    assert fetched_urls == [reuters_url, yahoo_url]
+    payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
+    retrieval = payload["article_retrieval"]
+    assert retrieval["material_origin"] == "syndicated_copy"
+    assert retrieval["origin_failure"]["method"] == "wayback"
+    assert retrieval["origin_failure"]["fallback_reason"] == "datadome_challenge"
+
+
 @pytest.mark.parametrize(
     ("url_kind", "failure_kind"),
     [
@@ -2443,9 +2498,9 @@ def test_origin_block_recovers_verified_alternate_reporting_with_prefix(tmp_path
 @pytest.mark.parametrize(
     ("fallback_reason", "method"),
     [
-        ("challenge_page", "jina"),
-        ("cloudflare_challenge", "jina"),
-        ("datadome_challenge", "jina"),
+        ("challenge_page", "wayback"),
+        ("cloudflare_challenge", "wayback"),
+        ("datadome_challenge", "wayback"),
         ("vercel_challenge", "wayback"),
     ],
 )

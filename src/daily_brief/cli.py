@@ -1009,7 +1009,7 @@ def _should_attempt_reuters_recovery(
 ) -> bool:
     return (
         is_reuters_url(candidate.story.source_url)
-        and failure.method == "jina"
+        and failure.method in {"jina", "wayback"}
         and failure.fallback_attempted
         and failure.fallback_reason == "datadome_challenge"
     )

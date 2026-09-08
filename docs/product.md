@@ -35,7 +35,7 @@ Daily Brief 主要在工作日使用。我通常希望在一天开始时用大�
 
 简报不会把原文抓取失败伪装成正常摘要。原文 retrieval 失败时,条目会明确说明抓取失败;原文已经取得、但模型摘要因配额、网络或响应校验问题失败时,条目会明确说明“原文已抓取，但摘要生成失败”。这让我可以选择直接查看原文或讨论,也让后续复盘能够区分内容判断问题、原文 retrieval 问题和模型摘要问题。供应商、模型、请求次数、interaction 状态、token usage、HTTP 状态、稳定错误码和有界诊断只进入候选审计,公开数据不暴露原始供应商错误。正常摘要优先保留 high thinking 所需的生成空间;首次因生成不完整而终止时,系统会在同一有界请求节奏下重试一次。
 
-当来源网站明确通过 Vercel browser challenge 阻止自动抓取时,系统可以先尝试 Jina Reader;如果仍无法取得原文,可以使用 Internet Archive 中时间足够接近、原始 URL 一致且通过内容校验的 HTML 快照。归档正文必须保留快照 URL 与 `archived_copy` provenance,不能伪装成实时原文。没有合格快照、归档服务限流或快照内容不完整时,系统仍应明确报告来源网站阻止自动抓取,不能根据标题、搜索片段或模型常识补写摘要。
+当来源网站明确通过 Vercel、Cloudflare、DataDome 或其他高置信 browser verification challenge 阻止自动抓取时,系统可以先尝试 Jina Reader;如果仍无法取得原文,可以使用 Internet Archive 中时间足够接近、原始 URL 一致且通过内容校验的 HTML 快照。归档正文必须保留快照 URL 与 `archived_copy` provenance,不能伪装成实时原文。Reuters 的 DataDome 路径在归档也失败后仍可继续寻找经过验证的同稿转载。网络超时、正文提取为空和 TLS issuer 不可用不进入 Wayback。没有合格快照、归档服务限流或快照内容不完整时,系统仍应明确报告来源网站阻止自动抓取,不能根据标题、搜索片段或模型常识补写摘要。
 
 当最终摘要抓取已经确认来源网站通过高置信 challenge 阻止自动访问,并且既有原文 retrieval chain 终止时,系统可以自动寻找 Reuters 对同一事件的替代报道。搜索结果只用于发现候选 URL;候选必须由本地 article fetcher 取得完整正文,并通过 Reuters 作者标记、署名尾、日期、正文完整性和同事件信号验证。成功时简报必须由代码固定标注`据 Reuters 对同一事件的报道：`,原始 source URL 保持不变,实际材料 URL 与原始失败链只进入 candidate audit。替代材料不等同于原文或同稿转载;无法验证作者身份、完整性或事件身份时继续 fail closed,不能使用搜索 snippet、供应商 answer 或模型常识补写摘要。
 

@@ -712,7 +712,7 @@ def test_turnstile_html_uses_jina_once():
     assert result.fallback_reason == "challenge_page"
 
 
-def test_nonempty_challenge_content_from_direct_and_jina_is_a_fetch_failure():
+def test_nonempty_challenge_content_exhausts_jina_and_wayback():
     direct_response = FakeResponse(
         b"""
         <html><body><main>
@@ -735,7 +735,15 @@ def test_nonempty_challenge_content_from_direct_and_jina_is_a_fetch_failure():
 
     def open_response(request, timeout):
         requests.append(request.full_url)
-        return direct_response if len(requests) == 1 else jina_response
+        if len(requests) == 1:
+            return direct_response
+        if request.full_url.startswith("https://r.jina.ai/"):
+            return jina_response
+        return FakeResponse(
+            make_wayback_payload(),
+            content_type="application/json",
+            final_url=request.full_url,
+        )
 
     with pytest.raises(
         ArticleFetchError,
@@ -750,13 +758,15 @@ def test_nonempty_challenge_content_from_direct_and_jina_is_a_fetch_failure():
             resolver=resolver_for({}),
         )
 
-    assert requests == [
+    assert requests[:2] == [
         "https://openreview.net/forum?id=paper-id",
         "https://r.jina.ai/https://openreview.net/forum?id=paper-id",
     ]
-    assert caught.value.error_code == "challenge_page"
-    assert caught.value.method == "jina"
-    assert caught.value.extractor == "jina"
+    assert len(requests) == 3
+    assert requests[2].startswith("https://web.archive.org/cdx/search/cdx?")
+    assert caught.value.error_code == "wayback_no_capture"
+    assert caught.value.method == "wayback"
+    assert caught.value.extractor == ""
     assert caught.value.fallback_attempted is True
     assert caught.value.fallback_reason == "challenge_page"
 
@@ -1904,7 +1914,9 @@ def test_wayback_rejects_replay_redirect_to_live_source():
         "network_timeout",
     ],
 )
-def test_only_vercel_rule_uses_wayback_after_jina_failure(monkeypatch, fallback_reason):
+def test_origin_block_rules_use_wayback_after_jina_failure(
+    monkeypatch, fallback_reason
+):
     source_url = "https://example.com/article"
     requests = []
     if fallback_reason == "empty_content":
@@ -1960,9 +1972,15 @@ def test_only_vercel_rule_uses_wayback_after_jina_failure(monkeypatch, fallback_
     attempted_wayback = any(
         request.startswith("https://web.archive.org/") for request in requests
     )
-    assert attempted_wayback is (fallback_reason == "vercel_challenge")
+    wayback_reasons = {
+        "vercel_challenge",
+        "datadome_challenge",
+        "cloudflare_challenge",
+        "challenge_page",
+    }
+    assert attempted_wayback is (fallback_reason in wayback_reasons)
     assert caught.value.method == (
-        "wayback" if fallback_reason == "vercel_challenge" else "jina"
+        "wayback" if fallback_reason in wayback_reasons else "jina"
     )
     assert caught.value.fallback_reason == fallback_reason
 
@@ -2097,10 +2115,19 @@ def test_datadome_detection_requires_supported_status_and_explicit_header(
     assert caught.value.fallback_attempted is False
 
 
-def test_fetch_article_reports_datadome_and_jina_failures():
+def test_fetch_article_reports_datadome_jina_and_wayback_failures():
+    requests = []
+
     def fail(request, timeout):
+        requests.append(request.full_url)
         if request.full_url.startswith("https://r.jina.ai/"):
             raise http_error(request.full_url, 403)
+        if request.full_url.startswith("https://web.archive.org/"):
+            return FakeResponse(
+                make_wayback_payload(),
+                content_type="application/json",
+                final_url=request.full_url,
+            )
         raise http_error(request.full_url, 401, x_datadome="protected", x_dd_b="1")
 
     with pytest.raises(ArticleFetchError) as caught:
@@ -2110,12 +2137,16 @@ def test_fetch_article_reports_datadome_and_jina_failures():
             resolver=resolver_for({}),
         )
 
-    assert caught.value.error_code == "http_403"
-    assert caught.value.method == "jina"
-    assert caught.value.extractor == "jina"
+    assert len(requests) == 3
+    assert requests[2].startswith("https://web.archive.org/cdx/search/cdx?")
+    assert caught.value.error_code == "wayback_no_capture"
+    assert caught.value.method == "wayback"
+    assert caught.value.extractor == ""
     assert caught.value.fallback_attempted is True
     assert caught.value.fallback_reason == "datadome_challenge"
     assert "direct=datadome challenge" in str(caught.value)
+    assert "jina=Jina Reader request failed" in str(caught.value)
+    assert "wayback=Wayback CDX found no capture" in str(caught.value)
 
 
 def test_fetch_jina_reader_text_preserves_markdown_structure():
@@ -2334,10 +2365,19 @@ def test_fetch_article_does_not_use_jina_for_other_tls_verification_errors(
     assert caught.value.fallback_attempted is False
 
 
-def test_fetch_article_text_reports_direct_and_jina_failures():
+def test_fetch_article_text_reports_cloudflare_jina_and_wayback_failures():
+    requests = []
+
     def fail(request, timeout):
+        requests.append(request.full_url)
         if request.full_url.startswith("https://r.jina.ai/"):
             raise http_error(request.full_url, 502)
+        if request.full_url.startswith("https://web.archive.org/"):
+            return FakeResponse(
+                make_wayback_payload(),
+                content_type="application/json",
+                final_url=request.full_url,
+            )
         raise http_error(request.full_url, 403, cf_mitigated="challenge")
 
     with pytest.raises(
@@ -2353,8 +2393,10 @@ def test_fetch_article_text_reports_direct_and_jina_failures():
             resolver=resolver_for({}),
         )
 
-    assert caught.value.error_code == "http_502"
-    assert caught.value.method == "jina"
+    assert len(requests) == 3
+    assert requests[2].startswith("https://web.archive.org/cdx/search/cdx?")
+    assert caught.value.error_code == "wayback_no_capture"
+    assert caught.value.method == "wayback"
     assert caught.value.fallback_attempted is True
     assert caught.value.fallback_reason == "cloudflare_challenge"
 
