@@ -12,17 +12,22 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from daily_brief import article_fetcher
+from daily_brief.article_fetcher import extract as article_extract_module
+from daily_brief.article_fetcher import fetch as article_fetch_module
+from daily_brief.article_fetcher import responses as article_responses_module
 from daily_brief.article_fetcher import (
     CLASSIFICATION_FETCH_POLICY,
     ArticleFetchError,
     ArticleFetchPolicy,
-    _create_public_connection,
-    _validate_public_http_url,
     extract_html,
     fetch_article,
     fetch_article_text,
     fetch_github_readme_text,
     fetch_jina_reader_text,
+)
+from daily_brief.article_fetcher.http_safety import (
+    _create_public_connection,
+    _validate_public_http_url,
 )
 from daily_brief.youtube_captions import YoutubeCaptionResult
 
@@ -330,9 +335,9 @@ def test_semantic_table_normalization_is_idempotent_for_multiple_malformed_table
     </article></body></html>
     """
 
-    normalized = article_fetcher._normalize_semantic_tables(markup)
+    normalized = article_extract_module._normalize_semantic_tables(markup)
 
-    assert article_fetcher._normalize_semantic_tables(normalized) == normalized
+    assert article_extract_module._normalize_semantic_tables(normalized) == normalized
     assert "Alpha" in extract_html(markup)
     assert "8/1/2026" in extract_html(markup)
     assert "Beta" in extract_html(markup)
@@ -347,7 +352,7 @@ def test_semantic_table_normalization_keeps_nonempty_inline_spans():
     </th><td><time>8/9/2026</time></td></tr></table>
     """
 
-    normalized = article_fetcher._normalize_semantic_tables(markup)
+    normalized = article_extract_module._normalize_semantic_tables(markup)
 
     assert '<span class="company-name">Anthropic</span>' in normalized
     assert "company-marker" not in normalized
@@ -358,11 +363,15 @@ def test_semantic_table_normalization_parser_failure_keeps_original(monkeypatch)
     markup = "<table><tr><td><time>8/9/2026</time></td></tr></table>"
 
     def fail_to_parse(*args, **kwargs):
-        raise article_fetcher.etree.ParserError("parser limit reached")
+        raise article_extract_module.etree.ParserError("parser limit reached")
 
-    monkeypatch.setattr(article_fetcher.lxml_html, "document_fromstring", fail_to_parse)
+    monkeypatch.setattr(
+        article_extract_module.lxml_html,
+        "document_fromstring",
+        fail_to_parse,
+    )
 
-    assert article_fetcher._normalize_semantic_tables(markup) == markup
+    assert article_extract_module._normalize_semantic_tables(markup) == markup
 
 
 def test_fetch_article_text_extracts_html_from_public_url():
@@ -417,7 +426,7 @@ def test_fetch_article_routes_target_youtube_video_to_caption_extractor(monkeypa
             generated=True,
         )
 
-    monkeypatch.setattr(article_fetcher, "fetch_youtube_caption", fetch_caption)
+    monkeypatch.setattr(article_fetch_module, "fetch_youtube_caption", fetch_caption)
 
     result = fetch_article(
         "https://www.youtube.com/watch?v=68X8yEatepQ",
@@ -437,7 +446,7 @@ def test_fetch_article_routes_target_youtube_video_to_caption_extractor(monkeypa
 
 def test_classification_policy_skips_youtube_without_attempting_captions(monkeypatch):
     monkeypatch.setattr(
-        article_fetcher,
+        article_fetch_module,
         "fetch_youtube_caption",
         lambda *args, **kwargs: pytest.fail("classification must skip YouTube"),
     )
@@ -531,7 +540,7 @@ def test_html_over_separate_raw_limit_fails_before_extraction(monkeypatch):
     response = FakeResponse(b"<html>" + (b"x" * 101) + b"</html>")
     extracted = []
     monkeypatch.setattr(
-        "daily_brief.article_fetcher.extract_html",
+        "daily_brief.article_fetcher.responses.extract_html",
         lambda markup: extracted.append(markup) or "unexpected",
     )
 
@@ -576,7 +585,8 @@ def test_html_extraction_excludes_page_chrome_scripts_and_comments():
 @pytest.mark.parametrize("provider_status", [200, 20000])
 def test_empty_trafilatura_result_uses_jina_once(monkeypatch, provider_status, caplog):
     monkeypatch.setattr(
-        "daily_brief.article_fetcher.trafilatura.extract", lambda *args, **kwargs: None
+        "daily_brief.article_fetcher.extract.trafilatura.extract",
+        lambda *args, **kwargs: None,
     )
     direct_response = FakeResponse(
         b"<html><body><nav>Navigation must not become article text.</nav></body></html>"
@@ -794,7 +804,8 @@ def test_article_discussing_browser_verification_is_not_a_challenge_page():
 
 def test_html_extracted_text_has_its_own_limit(monkeypatch):
     monkeypatch.setattr(
-        "daily_brief.article_fetcher.extract_html", lambda markup: "grounded " * 20
+        "daily_brief.article_fetcher.responses.extract_html",
+        lambda markup: "grounded " * 20,
     )
     response = FakeResponse(b"<html><article>small response</article></html>")
 
@@ -815,7 +826,7 @@ def test_html_extraction_exception_does_not_use_jina(monkeypatch):
         raise ValueError("broken parser")
 
     monkeypatch.setattr(
-        "daily_brief.article_fetcher.trafilatura.extract", fail_extraction
+        "daily_brief.article_fetcher.extract.trafilatura.extract", fail_extraction
     )
     response = FakeResponse(b"<html><article>Facts</article></html>")
     requested_urls = []
@@ -1093,12 +1104,12 @@ def test_direct_pdf_uses_adobe_markdown_when_configured(monkeypatch):
     monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "test-client-id")
     monkeypatch.setenv("PDF_SERVICES_CLIENT_SECRET", "test-client-secret")
     monkeypatch.setattr(
-        article_fetcher,
+        article_responses_module,
         "_extract_pdf_with_adobe_in_subprocess",
         lambda *args, **kwargs: "# Report\n\nClean Adobe paragraph.",
     )
     monkeypatch.setattr(
-        article_fetcher,
+        article_responses_module,
         "_extract_pdf_in_subprocess",
         lambda *args, **kwargs: pytest.fail("pypdf fallback should not run"),
     )
@@ -1118,7 +1129,7 @@ def test_classification_policy_disables_adobe_and_uses_local_pdf(monkeypatch):
     monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "client-id")
     monkeypatch.setenv("PDF_SERVICES_CLIENT_SECRET", "client-secret")
     monkeypatch.setattr(
-        article_fetcher,
+        article_responses_module,
         "_extract_pdf_with_adobe_in_subprocess",
         lambda *args, **kwargs: pytest.fail("classification must not call Adobe"),
     )
@@ -1158,12 +1169,12 @@ def test_direct_pdf_falls_back_to_pypdf_when_adobe_fails(monkeypatch, caplog):
         )
 
     monkeypatch.setattr(
-        article_fetcher,
+        article_responses_module,
         "_extract_pdf_with_adobe_in_subprocess",
         fail_adobe,
     )
     monkeypatch.setattr(
-        article_fetcher,
+        article_responses_module,
         "_extract_pdf_in_subprocess",
         lambda *args, **kwargs: "Local pypdf facts.",
     )
@@ -1188,7 +1199,7 @@ def test_direct_pdf_uses_pypdf_for_incomplete_adobe_credentials(monkeypatch):
     )
     monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "test-client-id")
     monkeypatch.setattr(
-        article_fetcher,
+        article_responses_module,
         "_extract_pdf_in_subprocess",
         lambda *args, **kwargs: "Local pypdf facts.",
     )
@@ -1226,11 +1237,15 @@ def test_direct_pdf_preserves_adobe_fallback_when_pypdf_also_fails(monkeypatch):
         )
 
     monkeypatch.setattr(
-        article_fetcher,
+        article_responses_module,
         "_extract_pdf_with_adobe_in_subprocess",
         fail_adobe,
     )
-    monkeypatch.setattr(article_fetcher, "_extract_pdf_in_subprocess", fail_pypdf)
+    monkeypatch.setattr(
+        article_responses_module,
+        "_extract_pdf_in_subprocess",
+        fail_pypdf,
+    )
 
     with pytest.raises(ArticleFetchError) as caught:
         fetch_article(
@@ -1259,9 +1274,9 @@ def test_adobe_pdf_worker_uses_bounded_subprocess_and_parses_markdown(monkeypatc
             stderr=b"",
         )
 
-    monkeypatch.setattr(article_fetcher.subprocess, "run", complete)
+    monkeypatch.setattr(article_responses_module.subprocess, "run", complete)
 
-    text = article_fetcher._extract_pdf_with_adobe_in_subprocess(
+    text = article_responses_module._extract_pdf_with_adobe_in_subprocess(
         b"%PDF-test",
         max_pages=100,
         max_text_bytes=1024,
@@ -1281,10 +1296,10 @@ def test_adobe_pdf_worker_hard_timeout_has_stable_error(monkeypatch):
     def time_out(command, **kwargs):
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
-    monkeypatch.setattr(article_fetcher.subprocess, "run", time_out)
+    monkeypatch.setattr(article_responses_module.subprocess, "run", time_out)
 
     with pytest.raises(ArticleFetchError) as caught:
-        article_fetcher._extract_pdf_with_adobe_in_subprocess(
+        article_responses_module._extract_pdf_with_adobe_in_subprocess(
             b"%PDF-test",
             max_pages=100,
             max_text_bytes=1024,
@@ -1354,7 +1369,7 @@ def test_direct_pdf_enforces_download_limit_before_parsing(monkeypatch):
     )
     subprocess_calls = []
     monkeypatch.setattr(
-        "daily_brief.article_fetcher.subprocess.run",
+        "daily_brief.article_fetcher.responses.subprocess.run",
         lambda *args, **kwargs: subprocess_calls.append((args, kwargs)),
     )
 
@@ -1432,7 +1447,10 @@ def test_direct_pdf_reports_subprocess_timeout(monkeypatch):
     def time_out(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
 
-    monkeypatch.setattr("daily_brief.article_fetcher.subprocess.run", time_out)
+    monkeypatch.setattr(
+        "daily_brief.article_fetcher.responses.subprocess.run",
+        time_out,
+    )
 
     with pytest.raises(ArticleFetchError) as caught:
         fetch_article_text(
@@ -1511,7 +1529,7 @@ def test_connection_revalidates_and_rejects_dns_rebinding(monkeypatch):
 
     opened_sockets = []
     monkeypatch.setattr(
-        "daily_brief.article_fetcher.socket.socket",
+        "daily_brief.article_fetcher.http_safety.socket.socket",
         lambda *args: opened_sockets.append(args),
     )
 
@@ -1543,7 +1561,7 @@ def test_connection_uses_the_exact_validated_socket_address(monkeypatch):
             pass
 
     monkeypatch.setattr(
-        "daily_brief.article_fetcher.socket.socket",
+        "daily_brief.article_fetcher.http_safety.socket.socket",
         lambda *args: FakeSocket(),
     )
 
@@ -1921,7 +1939,7 @@ def test_origin_block_rules_use_wayback_after_jina_failure(
     requests = []
     if fallback_reason == "empty_content":
         monkeypatch.setattr(
-            "daily_brief.article_fetcher.trafilatura.extract",
+            "daily_brief.article_fetcher.extract.trafilatura.extract",
             lambda *args, **kwargs: None,
         )
 
@@ -2405,7 +2423,8 @@ def test_empty_trafilatura_and_jina_failure_preserve_combined_provenance(
     monkeypatch,
 ):
     monkeypatch.setattr(
-        "daily_brief.article_fetcher.trafilatura.extract", lambda *args, **kwargs: None
+        "daily_brief.article_fetcher.extract.trafilatura.extract",
+        lambda *args, **kwargs: None,
     )
     direct_response = FakeResponse(b"<html><body>Client shell</body></html>")
     jina_response = FakeResponse(

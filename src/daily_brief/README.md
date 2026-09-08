@@ -78,7 +78,17 @@ modifying recommendation and publishing state.
 | `gemini_backend.py` | Gemini adapter, pacing, structured output, and bounded retry |
 | `model_evaluation.py` | Versioned model-input capture and side-effect-free replay |
 | `topic_classifier.py` | Article-evidence topic classification |
-| `article_fetcher.py` | Bounded public article retrieval, extraction, and provenance |
+| [`article_fetcher/`](article_fetcher/README.md) | Stable facade for bounded public article retrieval |
+| `article_fetcher/contracts.py` | Shared retrieval policies, results, errors, and limits |
+| `article_fetcher/fetch.py` | Transport routing and direct-request retry |
+| `article_fetcher/recovery.py` | Jina and Wayback fallback orchestration |
+| `article_fetcher/responses.py` | Response decoding plus HTML/PDF extraction dispatch |
+| `article_fetcher/wayback.py` | Internet Archive capture lookup and replay validation |
+| `article_fetcher/jina.py` | Jina Reader transport and response validation |
+| `article_fetcher/github.py` | GitHub README and exact blob retrieval |
+| `article_fetcher/extract.py` | HTML body and semantic-table extraction |
+| `article_fetcher/http_safety.py` | Public-address validation and pinned connections |
+| `article_fetcher/challenges.py` | Browser-challenge and network-failure detection |
 | `syndicated_copy.py` | Discovery and validation of Reuters syndicated copies |
 | `alternate_reporting.py` | Discovery and validation of Reuters reporting on the same event |
 | `youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
@@ -133,7 +143,7 @@ modifying recommendation and publishing state.
 - Core-topic recognition: `config.py` -> `keywords.py` -> `topic_classifier.py`
   -> `cli.py`.
 - Ranking or quotas: `config.py` -> `scoring.py` -> `selection.py` -> `cli.py`.
-- Article material: the relevant transport or extractor -> `article_fetcher.py`
+- Article material: the relevant transport or extractor -> `article_fetcher/`
   -> `summarizer.py` -> `cli.py`.
 - Summary quality: `summarizer.py` -> the model adapter -> relevant orchestration
   and rendering tests.
