@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from time import monotonic
 from urllib.parse import urlparse
 from urllib.request import Request
 
@@ -234,6 +235,7 @@ def _extract_pdf_payload(
     )
     fallback_reason = ""
     if credential_state == "configured":
+        adobe_started = monotonic()
         try:
             text = _extract_pdf_with_adobe_in_subprocess(
                 payload,
@@ -243,16 +245,20 @@ def _extract_pdf_payload(
                 address_space_bytes=address_space_bytes,
             )
         except ArticleFetchError as exc:
+            adobe_duration = monotonic() - adobe_started
             fallback_reason = exc.error_code
             LOGGER.warning(
                 "component=pdf_extract extractor=adobe_pdf_to_markdown "
-                "status=failed code=%s fallback=pypdf",
+                "status=failed code=%s duration=%.3fs fallback=pypdf",
                 exc.error_code,
+                adobe_duration,
             )
         else:
+            adobe_duration = monotonic() - adobe_started
             LOGGER.info(
                 "component=pdf_extract extractor=adobe_pdf_to_markdown "
-                "status=success"
+                "status=success duration=%.3fs",
+                adobe_duration,
             )
             return text, "adobe_pdf_to_markdown", ""
     elif credential_state == "incomplete":

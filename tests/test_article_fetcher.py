@@ -16,8 +16,8 @@ from daily_brief.article_fetcher import extract as article_extract_module
 from daily_brief.article_fetcher import fetch as article_fetch_module
 from daily_brief.article_fetcher import responses as article_responses_module
 from daily_brief.article_fetcher import (
-    CLASSIFICATION_ADOBE_PDF_TIMEOUT_SECONDS,
     CLASSIFICATION_FETCH_POLICY,
+    DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
     ArticleFetchError,
     ArticleFetchPolicy,
     extract_html,
@@ -1126,7 +1126,9 @@ def test_direct_pdf_uses_adobe_markdown_when_configured(monkeypatch):
     assert result.extractor == "adobe_pdf_to_markdown"
 
 
-def test_classification_policy_prefers_adobe_with_shorter_timeout(monkeypatch):
+def test_classification_policy_allows_slow_adobe_with_full_timeout(
+    monkeypatch, caplog
+):
     monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "client-id")
     monkeypatch.setenv("PDF_SERVICES_CLIENT_SECRET", "client-secret")
     adobe_calls = []
@@ -1145,26 +1147,28 @@ def test_classification_policy_prefers_adobe_with_shorter_timeout(monkeypatch):
         "_extract_pdf_in_subprocess",
         lambda *args, **kwargs: pytest.fail("pypdf fallback should not run"),
     )
+    times = iter((10.0, 75.0))
+    monkeypatch.setattr(article_responses_module, "monotonic", lambda: next(times))
     response = FakeResponse(
         make_pdf("Local PDF facts."),
         content_type="application/pdf",
         final_url="https://example.com/report.pdf",
     )
 
-    result = fetch_article(
-        "https://example.com/report.pdf",
-        opener=lambda request, timeout: response,
-        resolver=resolver_for({}),
-        policy=CLASSIFICATION_FETCH_POLICY,
-        pdf_parse_timeout_seconds=10,
-    )
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(
+            "https://example.com/report.pdf",
+            opener=lambda request, timeout: response,
+            resolver=resolver_for({}),
+            policy=CLASSIFICATION_FETCH_POLICY,
+            pdf_parse_timeout_seconds=10,
+        )
 
     assert result.text == "# Report\n\nClean classification Markdown."
     assert result.extractor == "adobe_pdf_to_markdown"
     assert result.fallback_reason == ""
-    assert adobe_calls[0]["timeout_seconds"] == (
-        CLASSIFICATION_ADOBE_PDF_TIMEOUT_SECONDS
-    )
+    assert adobe_calls[0]["timeout_seconds"] == DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS
+    assert "status=success duration=65.000s" in caplog.text
 
 
 def test_direct_pdf_falls_back_to_pypdf_when_adobe_fails(monkeypatch, caplog):
@@ -1192,6 +1196,8 @@ def test_direct_pdf_falls_back_to_pypdf_when_adobe_fails(monkeypatch, caplog):
         "_extract_pdf_in_subprocess",
         lambda *args, **kwargs: "Local pypdf facts.",
     )
+    times = iter((20.0, 22.5))
+    monkeypatch.setattr(article_responses_module, "monotonic", lambda: next(times))
 
     with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
         result = fetch_article(
@@ -1203,7 +1209,10 @@ def test_direct_pdf_falls_back_to_pypdf_when_adobe_fails(monkeypatch, caplog):
     assert result.text == "Local pypdf facts."
     assert result.extractor == "pypdf"
     assert result.fallback_reason == "adobe_pdf_request_failed"
-    assert "status=failed code=adobe_pdf_request_failed fallback=pypdf" in caplog.text
+    assert (
+        "status=failed code=adobe_pdf_request_failed duration=2.500s "
+        "fallback=pypdf" in caplog.text
+    )
     assert (
         "extractor=pypdf status=success fallback_from=adobe "
         "code=adobe_pdf_request_failed" in caplog.text

@@ -22,8 +22,9 @@ bounded flow:
    GitHub PDF blobs retain the same PDF extraction policy.
 3. Otherwise perform the direct request, validate redirects and the final URL,
    and extract bounded HTML, text, or PDF content. Public PDFs use Adobe
-   PDF-to-Markdown first when configured, with policy-specific hard timeouts and
-   an explicit, logged local `pypdf` fallback.
+   PDF-to-Markdown first when configured, with one bounded hard timeout across
+   classification and summary retrieval, duration logging, and an explicit,
+   logged local `pypdf` fallback.
 4. Retry a direct network timeout only when the policy permits it.
 5. For eligible failures, try Jina Reader and then, for eligible browser
    challenges only, a validated Wayback capture.

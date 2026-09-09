@@ -38,8 +38,9 @@ Production generation spans CLI setup and `cli.run_generate(...)`:
    must also satisfy the exploration eligibility rules and are ranked separately.
 7. Selected external stories are retrieved under the fuller summary policy.
    Material fetched during classification is reused. Every fetched public PDF is
-   Adobe PDF-to-Markdown first when credentials are configured, with a shorter
-   hard timeout during classification and a logged local `pypdf` fallback.
+   Adobe PDF-to-Markdown first when credentials are configured, with the same
+   bounded hard timeout in classification and summary retrieval, conversion
+   duration logging, and a logged local `pypdf` fallback.
    Specialized GitHub, YouTube, HTML, and PDF paths remain behind the same bounded
    retrieval interface; recovery material is accepted only after deterministic
    validation.
