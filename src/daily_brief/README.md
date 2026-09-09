@@ -37,9 +37,12 @@ Production generation spans CLI setup and `cli.run_generate(...)`:
 6. Confirmed core candidates join one ranked pool. Confirmed outside candidates
    must also satisfy the exploration eligibility rules and are ranked separately.
 7. Selected external stories are retrieved under the fuller summary policy.
-   Material fetched during classification is reused. Specialized GitHub, YouTube,
-   HTML, and PDF paths remain behind the same bounded retrieval interface;
-   recovery material is accepted only after deterministic validation.
+   Material fetched during classification is reused. Every fetched public PDF is
+   Adobe PDF-to-Markdown first when credentials are configured, with a shorter
+   hard timeout during classification and a logged local `pypdf` fallback.
+   Specialized GitHub, YouTube, HTML, and PDF paths remain behind the same bounded
+   retrieval interface; recovery material is accepted only after deterministic
+   validation.
 8. If every external-source retrieval and recovery path fails for a selected
    story, `cli.py` asks `hn_client.py` for a bounded HN discussion sample as the
    final fallback.

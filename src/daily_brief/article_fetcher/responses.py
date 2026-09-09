@@ -13,7 +13,12 @@ from ..adobe_pdf_extractor import (
     credentials_status as adobe_credentials_status,
 )
 from .challenges import _challenge_from_headers, _is_challenge_page
-from .contracts import ArticleFetchError, ArticleFetchResult, LOGGER
+from .contracts import (
+    DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
+    ArticleFetchError,
+    ArticleFetchResult,
+    LOGGER,
+)
 from .extract import extract_html
 from .http_safety import (
     _enforce_extracted_limit,
@@ -22,7 +27,6 @@ from .http_safety import (
 )
 
 
-DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS = 300
 GITHUB_RAW_CONTENT_TYPE = "application/vnd.github.raw+json"
 PDF_CONTENT_TYPES = {
     "application/pdf",
@@ -54,6 +58,7 @@ def _fetch_direct_response(
     pdf_parse_timeout_seconds: int,
     pdf_address_space_bytes: int,
     adobe_pdf_enabled: bool = True,
+    adobe_pdf_timeout_seconds: int = DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
     require_identity_encoding: bool = False,
 ) -> ArticleFetchResult:
     expects_pdf = urlparse(request.full_url).path.lower().endswith(".pdf")
@@ -104,6 +109,7 @@ def _fetch_direct_response(
         pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
         pdf_address_space_bytes=pdf_address_space_bytes,
         adobe_pdf_enabled=adobe_pdf_enabled,
+        adobe_pdf_timeout_seconds=adobe_pdf_timeout_seconds,
         expects_pdf=expects_pdf,
         allow_octet_stream_pdf=True,
     )
@@ -136,6 +142,7 @@ def _extract_response_payload(
     expects_pdf: bool = False,
     allow_octet_stream_pdf: bool = False,
     adobe_pdf_enabled: bool = True,
+    adobe_pdf_timeout_seconds: int = DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
 ) -> ArticleFetchResult:
     has_pdf_magic = payload.startswith(b"%PDF-")
     is_pdf_type = content_type == "application/pdf" or (
@@ -162,6 +169,7 @@ def _extract_response_payload(
             pypdf_timeout_seconds=pdf_parse_timeout_seconds,
             address_space_bytes=pdf_address_space_bytes,
             adobe_pdf_enabled=adobe_pdf_enabled,
+            adobe_pdf_timeout_seconds=adobe_pdf_timeout_seconds,
         )
         return ArticleFetchResult(
             text=text,
@@ -219,6 +227,7 @@ def _extract_pdf_payload(
     pypdf_timeout_seconds: int,
     address_space_bytes: int,
     adobe_pdf_enabled: bool = True,
+    adobe_pdf_timeout_seconds: int = DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
 ) -> tuple[str, str, str]:
     credential_state = (
         adobe_credentials_status(os.environ) if adobe_pdf_enabled else "disabled"
@@ -230,7 +239,7 @@ def _extract_pdf_payload(
                 payload,
                 max_pages=max_pages,
                 max_text_bytes=max_text_bytes,
-                timeout_seconds=DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
+                timeout_seconds=adobe_pdf_timeout_seconds,
                 address_space_bytes=address_space_bytes,
             )
         except ArticleFetchError as exc:
@@ -272,6 +281,18 @@ def _extract_pdf_payload(
             fallback_attempted=True,
             fallback_reason=fallback_reason,
         ) from exc
+    if fallback_reason:
+        LOGGER.warning(
+            "component=pdf_extract extractor=pypdf status=success "
+            "fallback_from=adobe code=%s",
+            fallback_reason,
+        )
+    else:
+        LOGGER.info(
+            "component=pdf_extract extractor=pypdf status=success "
+            "adobe_status=%s",
+            credential_state,
+        )
     return text, "pypdf", fallback_reason
 
 

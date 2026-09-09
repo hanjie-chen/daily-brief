@@ -16,6 +16,7 @@ from daily_brief.article_fetcher import extract as article_extract_module
 from daily_brief.article_fetcher import fetch as article_fetch_module
 from daily_brief.article_fetcher import responses as article_responses_module
 from daily_brief.article_fetcher import (
+    CLASSIFICATION_ADOBE_PDF_TIMEOUT_SECONDS,
     CLASSIFICATION_FETCH_POLICY,
     ArticleFetchError,
     ArticleFetchPolicy,
@@ -1125,13 +1126,24 @@ def test_direct_pdf_uses_adobe_markdown_when_configured(monkeypatch):
     assert result.extractor == "adobe_pdf_to_markdown"
 
 
-def test_classification_policy_disables_adobe_and_uses_local_pdf(monkeypatch):
+def test_classification_policy_prefers_adobe_with_shorter_timeout(monkeypatch):
     monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "client-id")
     monkeypatch.setenv("PDF_SERVICES_CLIENT_SECRET", "client-secret")
+    adobe_calls = []
+
+    def extract_with_adobe(*args, **kwargs):
+        adobe_calls.append(kwargs)
+        return "# Report\n\nClean classification Markdown."
+
     monkeypatch.setattr(
         article_responses_module,
         "_extract_pdf_with_adobe_in_subprocess",
-        lambda *args, **kwargs: pytest.fail("classification must not call Adobe"),
+        extract_with_adobe,
+    )
+    monkeypatch.setattr(
+        article_responses_module,
+        "_extract_pdf_in_subprocess",
+        lambda *args, **kwargs: pytest.fail("pypdf fallback should not run"),
     )
     response = FakeResponse(
         make_pdf("Local PDF facts."),
@@ -1147,10 +1159,12 @@ def test_classification_policy_disables_adobe_and_uses_local_pdf(monkeypatch):
         pdf_parse_timeout_seconds=10,
     )
 
-    assert "Local PDF facts" in result.text
-    assert result.extractor == "pypdf"
+    assert result.text == "# Report\n\nClean classification Markdown."
+    assert result.extractor == "adobe_pdf_to_markdown"
     assert result.fallback_reason == ""
-    assert result.fallback_reason == ""
+    assert adobe_calls[0]["timeout_seconds"] == (
+        CLASSIFICATION_ADOBE_PDF_TIMEOUT_SECONDS
+    )
 
 
 def test_direct_pdf_falls_back_to_pypdf_when_adobe_fails(monkeypatch, caplog):
@@ -1190,6 +1204,10 @@ def test_direct_pdf_falls_back_to_pypdf_when_adobe_fails(monkeypatch, caplog):
     assert result.extractor == "pypdf"
     assert result.fallback_reason == "adobe_pdf_request_failed"
     assert "status=failed code=adobe_pdf_request_failed fallback=pypdf" in caplog.text
+    assert (
+        "extractor=pypdf status=success fallback_from=adobe "
+        "code=adobe_pdf_request_failed" in caplog.text
+    )
 
 
 def test_direct_pdf_uses_pypdf_for_incomplete_adobe_credentials(monkeypatch):

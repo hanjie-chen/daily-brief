@@ -9,6 +9,7 @@ from urllib.request import Request
 from .contracts import (
     ArticleFetchError,
     ArticleFetchResult,
+    DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
     DEFAULT_MAX_EXTRACTED_BYTES,
     DEFAULT_MAX_HTML_BYTES,
     DEFAULT_MAX_PDF_BYTES,
@@ -106,6 +107,7 @@ def fetch_github_blob(
     pdf_parse_timeout_seconds: int = DEFAULT_PDF_PARSE_TIMEOUT_SECONDS,
     pdf_address_space_bytes: int = DEFAULT_PDF_ADDRESS_SPACE_BYTES,
     adobe_pdf_enabled: bool = True,
+    adobe_pdf_timeout_seconds: int = DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
 ) -> ArticleFetchResult:
     """Fetch the exact file behind a standard public GitHub blob URL."""
     raw_url = _github_raw_url(owner, repository, ref, path)
@@ -159,6 +161,7 @@ def fetch_github_blob(
             pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
             pdf_address_space_bytes=pdf_address_space_bytes,
             adobe_pdf_enabled=adobe_pdf_enabled,
+            adobe_pdf_timeout_seconds=adobe_pdf_timeout_seconds,
             expects_pdf=expects_pdf,
             allow_octet_stream_pdf=True,
         )

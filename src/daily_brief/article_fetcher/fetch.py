@@ -178,6 +178,7 @@ def fetch_article(
             pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
             pdf_address_space_bytes=pdf_address_space_bytes,
             adobe_pdf_enabled=policy.adobe_pdf_enabled,
+            adobe_pdf_timeout_seconds=policy.adobe_pdf_timeout_seconds,
         )
 
     direct_request = Request(
@@ -218,6 +219,7 @@ def fetch_article(
                 pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
                 pdf_address_space_bytes=pdf_address_space_bytes,
                 adobe_pdf_enabled=policy.adobe_pdf_enabled,
+                adobe_pdf_timeout_seconds=policy.adobe_pdf_timeout_seconds,
             )
         except HTTPError as exc:
             fallback_reason = _http_fallback_reason(exc)

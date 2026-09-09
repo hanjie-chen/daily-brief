@@ -18,9 +18,12 @@ summary generation remain outside this package.
 bounded flow:
 
 1. Validate that the requested URL resolves to public HTTP(S) addresses.
-2. Route supported YouTube and GitHub URLs to their specialized transports.
+2. Route supported YouTube and GitHub URLs to their specialized transports;
+   GitHub PDF blobs retain the same PDF extraction policy.
 3. Otherwise perform the direct request, validate redirects and the final URL,
-   and extract bounded HTML, text, or PDF content.
+   and extract bounded HTML, text, or PDF content. Public PDFs use Adobe
+   PDF-to-Markdown first when configured, with policy-specific hard timeouts and
+   an explicit, logged local `pypdf` fallback.
 4. Retry a direct network timeout only when the policy permits it.
 5. For eligible failures, try Jina Reader and then, for eligible browser
    challenges only, a validated Wayback capture.
