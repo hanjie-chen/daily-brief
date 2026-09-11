@@ -23,9 +23,10 @@ bounded flow:
 3. Otherwise perform the direct request, validate redirects and the final URL,
    and extract bounded HTML, text, or PDF content. HTML extraction includes
    separately labeled publisher metadata (title, description, og:description)
-   and body text. Metadata is bounded and deduplicated; metadata-only pages can
-   proceed to semantic summary assessment. Nonempty extraction is a retrieval
-   result, not a guarantee of sufficient evidence. No scripts or browser
+   and body text. Metadata is bounded and deduplicated, and only supplements
+   nonempty body text. Empty bodies still raise `empty_content` and follow the
+   existing policy-controlled Jina recovery path, even when metadata is present.
+   Nonempty extraction is a retrieval result, not a guarantee of sufficient evidence. No scripts or browser
    interactions are executed. Public PDFs use Adobe
    PDF-to-Markdown first when configured, with one bounded hard timeout across
    classification and summary retrieval, duration logging, and an explicit,

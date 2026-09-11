@@ -22,6 +22,9 @@ def extract_html(markup: str) -> str:
         include_tables=True,
     )
     body = _normalize_extracted_blocks(extracted or "")
+    # Metadata supplements body text; it must not suppress empty-body recovery.
+    if not body:
+        return ""
     metadata = _extract_page_metadata(markup)
     if not metadata:
         return body
@@ -29,7 +32,7 @@ def extract_html(markup: str) -> str:
         "Page metadata (publisher-provided context, not article body):\n"
         + "\n".join(metadata)
         + "\n\nExtracted body:\n"
-        + (body or "[No extractable body text]")
+        + body
     )
 
 

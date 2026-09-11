@@ -190,7 +190,7 @@ def test_extract_html_keeps_distinct_descriptions_and_bounds_metadata():
     <meta name="DESCRIPTION" content="{'D' * 3000}">
     <meta property="OG:DESCRIPTION" content="  A   different description.  ">
     <meta name="description" content="Ignored duplicate field">
-    </head><body></body></html>"""
+    </head><body><p>A substantive body describing the project.</p></body></html>"""
 
     text = extract_html(markup)
 
@@ -200,24 +200,24 @@ def test_extract_html_keeps_distinct_descriptions_and_bounds_metadata():
     assert "Ignored duplicate field" not in text
 
 
-def test_fetch_article_accepts_description_without_body_for_semantic_assessment():
-    markup = b'''<html><head><meta name="description"
+def test_fetch_article_metadata_without_body_preserves_empty_content():
+    markup = b'''<html><head><title>Interactive app</title><meta name="description"
         content="A game about an assistant that cannot follow a simple edit request.">
         </head><body><div id="app"></div></body></html>'''
-    result = fetch_article(
-        "https://example.com/article",
-        opener=lambda request, timeout: FakeResponse(markup),
-        resolver=resolver_for({}),
-    )
-
-    assert "description: A game about an assistant" in result.text
-    assert "[No extractable body text]" in result.text
-    assert result.method == "direct"
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            "https://example.com/article",
+            opener=lambda request, timeout: FakeResponse(markup),
+            resolver=resolver_for({}),
+            policy=CLASSIFICATION_FETCH_POLICY,
+        )
+    assert caught.value.error_code == "empty_content"
+    assert caught.value.method == "direct"
 
 
 def test_fetch_article_metadata_does_not_bypass_extracted_size_limit():
     markup = b'''<html><head><meta name="description"
-        content="An interactive comedy about AI assistants."></head><body></body></html>'''
+        content="An interactive comedy about AI assistants."></head><body><p>Make the button blue.</p></body></html>'''
     with pytest.raises(ArticleFetchError) as caught:
         fetch_article(
             "https://example.com/article",
@@ -662,13 +662,17 @@ def test_html_extraction_excludes_page_chrome_scripts_and_comments():
 
 
 @pytest.mark.parametrize("provider_status", [200, 20000])
-def test_empty_trafilatura_result_uses_jina_once(monkeypatch, provider_status, caplog):
+@pytest.mark.parametrize("head", [
+    "", "<title>Interactive app</title>",
+    '<title>Interactive app</title><meta name="description" content="An interactive comedy.">',
+])
+def test_empty_trafilatura_result_uses_jina_once(monkeypatch, provider_status, caplog, head):
     monkeypatch.setattr(
         "daily_brief.article_fetcher.extract.trafilatura.extract",
         lambda *args, **kwargs: None,
     )
     direct_response = FakeResponse(
-        b"<html><body><nav>Navigation must not become article text.</nav></body></html>"
+        f"<html><head>{head}</head><body><nav>Navigation must not become article text.</nav></body></html>".encode()
     )
     jina_response = FakeResponse(
         make_jina_payload("Grounded Jina article facts.", status=provider_status),
@@ -2531,7 +2535,7 @@ def test_empty_trafilatura_and_jina_failure_preserve_combined_provenance(
         "daily_brief.article_fetcher.extract.trafilatura.extract",
         lambda *args, **kwargs: None,
     )
-    direct_response = FakeResponse(b"<html><body>Client shell</body></html>")
+    direct_response = FakeResponse(b'<html><head><title>App</title><meta name="description" content="Interactive app."></head><body>Client shell</body></html>')
     jina_response = FakeResponse(
         b"not-json",
         content_type="application/json",

@@ -599,7 +599,7 @@ def _generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
         )
         if candidate.summary_basis != "hn_comments":
             candidate.source_material_status = "insufficient"
-            candidate.source_material_reason = " ".join(exc.reason.split())[:500]
+            candidate.source_material_reason = exc.reason
             candidate.source_summary_generation = deepcopy(candidate.summary_generation)
         candidate.summary = _unavailable_material_summary(candidate)
         candidate.summary_status = "insufficient"
