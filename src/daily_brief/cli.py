@@ -79,6 +79,8 @@ from .summarizer import (
     build_summary_context,
     fallback_summary,
     has_discussion_source,
+    ALTERNATE_REPORTING_SUMMARY_PREFIX,
+    HN_DISCUSSION_SUMMARY_PREFIX,
     normalize_summary_text,
     route_summary_mode,
 )
@@ -97,8 +99,6 @@ from .time_window import TimeWindow, daily_window
 LOGGER = logging.getLogger(__name__)
 RETRIEVAL_MODE_CLASSIFICATION = "classification"
 RETRIEVAL_MODE_SUMMARY = "summary"
-ALTERNATE_REPORTING_SUMMARY_PREFIX = "据 Reuters 对同一事件的报道："
-HN_DISCUSSION_SUMMARY_PREFIX = "根据 Hacker News 讨论（不代表原文观点）："
 MIN_DISCUSSION_COMMENTS = 3
 MIN_DISCUSSION_CHARS = 500
 

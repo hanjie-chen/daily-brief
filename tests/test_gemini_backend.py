@@ -678,10 +678,10 @@ def test_combined_summary_enforces_separate_source_labels(source, discussion):
     item.summary_basis = "hn_comments"
     item.discussion_text = "Commenters disagree."
     result = backend.summarize(item)
-    assert ("已有材料：" in result) == bool(source)
+    assert ("根据网页内容：" in result) == bool(source)
     assert ("根据 Hacker News 讨论（不代表原文观点）：" in result) == bool(discussion)
     if source:
-        assert result.startswith("已有材料：" + source)
+        assert result.startswith("根据网页内容：" + source)
 
 
 def test_combined_insufficient_cannot_include_source_claims():

@@ -19,6 +19,8 @@ from .summarizer import (
     InsufficientSummaryMaterial,
     build_summary_prompt,
     has_discussion_source,
+    HN_DISCUSSION_SUMMARY_PREFIX,
+    source_summary_prefix,
 )
 from .topic_classifier import (
     TOPIC_CLASSIFIER_SYSTEM_INSTRUCTION,
@@ -332,14 +334,9 @@ class GeminiBackend:
         if combined:
             parts = []
             if source_summary:
-                source_prefix = (
-                    "据 Reuters 对同一事件的报道："
-                    if candidate.article_retrieval.material_origin == "alternate_reporting"
-                    else "已有材料："
-                )
-                parts.append(source_prefix + source_summary)
+                parts.append(source_summary_prefix(candidate) + source_summary)
             if summary:
-                parts.append("根据 Hacker News 讨论（不代表原文观点）：" + summary)
+                parts.append(HN_DISCUSSION_SUMMARY_PREFIX + summary)
             summary = " ".join(parts)
         if len(summary) > MAX_SUMMARY_CHARS:
             raise GeminiResponseError("Gemini summarizer returned an oversized summary")

@@ -127,8 +127,8 @@ def test_summary_prompt_contains_grounding_and_untrusted_content_boundaries():
     assert "不要推断" in prompt
     assert "默认使用一至两句话" in prompt
     assert "使用两句话，不得为了压缩成一句而省略关键事实" in prompt
-    assert "直接陈述最有区分度的事实" in prompt
-    assert "不得只列出材料涉及的主题" in prompt
+    assert "直接陈述材料支持的信息" in prompt
+    assert "材料只有简短介绍时" in prompt
     assert "“本文介绍了”“本文探讨了”" in prompt
     assert "至少保留其中两个正文支持的具体事实" in prompt
     assert "先识别材料最核心的结论" in prompt
@@ -207,7 +207,7 @@ def test_hn_discussion_summary_preserves_source_with_separate_attribution():
     assert item.discussion_text in context.text
     assert "ARTICLE_SENTINEL" in prompt
     assert "ARCHIVE_LINK_SENTINEL" not in prompt
-    assert "source_summary 只用已有页面材料" in prompt
+    assert "source_summary 只用原来源材料" in prompt
     assert "summary 只概括 HN 评论" in prompt
     assert "两个字段都没有依据时返回 insufficient" in prompt
 
@@ -482,11 +482,11 @@ def test_wolfram_memorial_routes_and_meat_proxy_stays_generic():
 
 def test_summary_prompt_assesses_semantics_and_bounds_page_description_claims():
     prompt = build_summary_prompt(candidate(story_text="Change the button to blue."))
-    assert "短材料也可能足够，不按字符数判定" in prompt
-    assert "超出标题复述的具体信息" in prompt
+    assert "不要求材料完整、达到某个字数" in prompt
+    assert "无法从材料写出任何有用介绍" in prompt
     assert "description / og:description" in prompt
-    assert "网站的自我介绍，不是独立验证的事实" in prompt
-    assert "不得根据介绍推断未取得的交互剧情" in prompt
+    assert "是网站自述" in prompt
+    assert "不得推断未取得的剧情" in prompt
     assert 'status="insufficient", summary=""' in prompt
     assert "正文不可用时，只概括标题" not in prompt
 
@@ -499,3 +499,24 @@ def test_discussion_prompt_assesses_comment_evidence_without_requiring_article()
     assert "仅有无实质内容的赞叹" in prompt
     assert "评论不必足以重建原文" in prompt
     assert 'status="insufficient", summary=""' in prompt
+
+
+def test_source_sufficiency_standard_is_shared_and_not_case_specific():
+    from daily_brief.summarizer import SUMMARY_SUFFICIENCY_INSTRUCTION
+    item = candidate(fetched_text="A small utility for comparing folders.")
+    assert SUMMARY_SUFFICIENCY_INSTRUCTION in build_summary_prompt(item)
+    item.summary_basis = "hn_comments"
+    item.discussion_text = "A user discusses folder comparisons."
+    assert SUMMARY_SUFFICIENCY_INSTRUCTION in build_summary_prompt(item)
+    assert "互动喜剧" not in SUMMARY_SUFFICIENCY_INSTRUCTION
+    assert "必须明确写" in SUMMARY_SUFFICIENCY_INSTRUCTION
+
+
+def test_combined_self_post_is_labeled_as_hn_post_not_retrieved_webpage():
+    from daily_brief.summarizer import source_summary_prefix
+    item = candidate(story_text="How do teams review patches?", fetched_text="")
+    item.summary_basis = "hn_comments"
+    item.discussion_text = "We use peer reviews."
+    assert "HN 帖子正文" in build_summary_context(item).text
+    assert "retrieved" not in build_summary_context(item).text
+    assert source_summary_prefix(item) == "根据 HN 帖子正文："

@@ -80,7 +80,11 @@ requires separate `source_summary` and comment `summary` fields and applies sour
 labels in code; either can be empty, but a sufficient result needs at least one.
 Pure discussion fallback keeps its existing schema and attribution. A page
 introduction explaining a work's type and theme can suffice without its full
-interaction or implementation details.
+interaction or implementation details. Both source-only and combined prompts use
+the same shared sufficiency rule: insufficient means no useful grounded
+introduction can be written. Metadata-derived statements always require explicit
+website self-description attribution. Combined output distinguishes web content
+from HN self-post text; source prefixes are defined in one shared location.
 
 ## Module Map
 

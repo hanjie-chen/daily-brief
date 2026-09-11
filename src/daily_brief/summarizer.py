@@ -32,16 +32,29 @@ and a specific nonempty reason of at most 300 characters. Never return a title-o
 paraphrase as a sufficient summary. Assess sufficiency and summarize in this one call.
 """
 
-SUMMARY_SUFFICIENCY_INSTRUCTION = """先判断现有材料是否足以说明这个条目是什么，并提供至少一个超出标题复述的具体信息，
-例如用途、变化、观点、结果或作品的玩法与主题。短材料也可能足够，不按字符数判定；
-只有标题、开场任务指令、按钮、导航或登录提示，且缺少解释对象本身的信息时，应返回
-insufficient，不得勉强生成摘要。页面介绍可以补足语境，但 description / og:description
-是网站的自我介绍，不是独立验证的事实；必要时归因于网站，不得将宣传性说法当成事实。
-页面介绍本身也是有效材料：只要说明作品的类型和主题、或工具的用途，就可以足够。
-例如介绍明确说这是关于 AI 助手无法只完成指定修改的互动喜剧，即可据此写简短摘要；
-不要求取得具体机制、互动过程、完整剧情或技术实现。不得以缺少这些细节为由判为不足。
-不得根据介绍推断未取得的交互剧情、操作结果、真实模型调用或技术实现。
+SUMMARY_SUFFICIENCY_INSTRUCTION = """统一材料判断标准（首次摘要与补充评论后的来源摘要使用同一标准）：
+只使用所提供的材料，写出能帮助读者了解条目的简短摘要。材料能交代对象的性质、用途、
+主题、变化或观点中的任一项，就可以足够；不要求材料完整、达到某个字数或解释所有细节。
+只有无法从材料写出任何有用介绍时才返回 insufficient，例如只有标题、导航、登录提示，
+或缺少对象语境的操作指令。不得仅因希望获得更多细节而判不足，也不得用标题或常识补写。
+页面 description / og:description 是网站自述。凡依据这些介绍作出的陈述，必须明确写
+“网站介绍称……”或“网站自述……”，包括整段摘要都来自介绍的情况；不能当作独立验证的事实。
+对其余来源也只陈述有依据的信息，不得推断未取得的剧情、操作结果或技术实现。
 """
+
+ALTERNATE_REPORTING_SUMMARY_PREFIX = "据 Reuters 对同一事件的报道："
+HN_DISCUSSION_SUMMARY_PREFIX = "根据 Hacker News 讨论（不代表原文观点）："
+
+
+def source_material_label(candidate: Candidate) -> str:
+    return "网页内容" if candidate.story.fetched_text.strip() else "HN 帖子正文"
+
+
+def source_summary_prefix(candidate: Candidate) -> str:
+    if candidate.article_retrieval.material_origin == "alternate_reporting":
+        return ALTERNATE_REPORTING_SUMMARY_PREFIX
+    return "根据网页内容：" if candidate.story.fetched_text.strip() else "根据 HN 帖子正文："
+
 
 SUMMARY_MODE_NOT_ROUTED = "not_routed"
 SUMMARY_MODE_GENERIC = "generic"
@@ -237,7 +250,7 @@ def build_summary_context(candidate: Candidate) -> SummaryContext:
         discussion_text = candidate.discussion_text.strip()
         if has_discussion_source(candidate):
             source = candidate.story.fetched_text.strip() or candidate.story.story_text.strip()
-            text = f"Untrusted retrieved source material:\n{source}\n\nUntrusted HN comments:\n{discussion_text}"
+            text = f"Untrusted source material ({source_material_label(candidate)}):\n{source}\n\nUntrusted HN comments:\n{discussion_text}"
             return SummaryContext(
                 text=text, strategy="source_and_hn_comments",
                 source_chars=len(source) + len(discussion_text),
@@ -364,11 +377,10 @@ def build_summary_prompt(candidate: Candidate) -> str:
     body = context.text
     summary_mode = route_summary_mode(candidate)
     if has_discussion_source(candidate):
-        return f"""请结合已有页面材料和 HN 评论，用中文提供最多两句话，帮助读者判断是否值得打开原文。
-材料不足表示需要补充，不表示已有材料无效。页面材料与评论是两种独立来源，必须分开输出。
-source_summary 只用已有页面材料交代对象是什么、用途或主题。页面介绍也是有效材料；
-可以只写简短介绍，不要求知道完整互动过程。无法从页面材料得到有用事实时留空，
-绝不能用评论补写这一字段。网站宣传须归因，不得当作独立验证的事实。
+        return f"""请用以下分别标注的来源写最多两句话。原来源的判断标准不因补充评论而改变。
+{SUMMARY_SUFFICIENCY_INSTRUCTION}
+source_summary 只用原来源材料写介绍，使用上述统一标准；无法写出有用介绍时留空，
+绝不能用评论补写这一字段。此前判断不足不要求此时一定输出介绍；不得为了凑齐两部分而补写。
 summary 只概括 HN 评论中的具体观点或分歧，须明确写“评论者认为”等归因，不得把评论
 当成作品事实、作者观点或真实实验结果。评论离题、仅有赞叹时留空。来源冲突时保留归因，
 不得将两种来源合成一个未经支持的结论。两个字段都不要加来源前缀，程序会分别添加。
@@ -420,7 +432,7 @@ Untrusted HN comments:
 读者理解的机制、结果、限制或行动建议时，使用两句话，不得为了压缩成一句而省略关键事实。
 重要的英文技术术语首次出现时可以保留英文。
 
-直接陈述最有区分度的事实，不得只列出材料涉及的主题，也不得用“本文介绍了”“本文探讨了”
+直接陈述材料支持的信息；材料只有简短介绍时，说明对象的性质、主题或用途即可。不要用“本文介绍了”“本文探讨了”
 或“本文分享了”等空泛表述代替具体结论。当正文明确提供多个机制、结果、限制或行动建议时，
 至少保留其中两个正文支持的具体事实。
 
