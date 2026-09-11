@@ -18,6 +18,7 @@ from .summarizer import (
     SUMMARY_SYSTEM_INSTRUCTION,
     InsufficientSummaryMaterial,
     build_summary_prompt,
+    has_discussion_source,
 )
 from .topic_classifier import (
     TOPIC_CLASSIFIER_SYSTEM_INSTRUCTION,
@@ -278,6 +279,7 @@ class GeminiBackend:
 
     def summarize(self, candidate: Candidate) -> str:
         self._reset_request_diagnostics(self.summarizer_model)
+        combined = has_discussion_source(candidate)
         output = self._interact(
             task="summarize",
             model=self.summarizer_model,
@@ -286,6 +288,7 @@ class GeminiBackend:
             schema={
                 "type": "object",
                 "properties": {
+                    **({"source_summary": {"type": "string"}} if combined else {}),
                     "status": {
                         "type": "string",
                         "enum": ["sufficient", "insufficient"],
@@ -300,7 +303,7 @@ class GeminiBackend:
                         "description": "Why material is insufficient; empty if sufficient.",
                     },
                 },
-                "required": ["status", "summary", "reason"],
+                "required": ["status", "summary", "reason"] + (["source_summary"] if combined else []),
                 "additionalProperties": False,
             },
             max_output_tokens=SUMMARY_MAX_OUTPUT_TOKENS,
@@ -308,23 +311,36 @@ class GeminiBackend:
             incomplete_retries=SUMMARY_INCOMPLETE_RETRIES,
         )
         if (
-            set(output) != {"status", "summary", "reason"}
+            set(output) != ({"status", "summary", "reason"} | ({"source_summary"} if combined else set()))
             or not all(isinstance(value, str) for value in output.values())
             or output["status"] not in {"sufficient", "insufficient"}
         ):
             raise GeminiResponseError("Gemini summarizer returned an invalid object")
         summary = output["summary"].strip()
+        source_summary = output.get("source_summary", "").strip()
         reason = output["reason"].strip()
         if len(output["reason"]) > MAX_INSUFFICIENT_REASON_CHARS:
             raise GeminiResponseError("Gemini summarizer returned an oversized reason")
         if output["status"] == "insufficient":
-            if summary or not reason:
+            if summary or source_summary or not reason:
                 raise GeminiResponseError("Gemini summarizer returned an inconsistent decision")
             raise InsufficientSummaryMaterial(reason)
         if reason:
             raise GeminiResponseError("Gemini summarizer returned an inconsistent decision")
-        if not summary:
+        if not summary and not source_summary:
             raise GeminiResponseError("Gemini summarizer returned an empty summary")
+        if combined:
+            parts = []
+            if source_summary:
+                source_prefix = (
+                    "据 Reuters 对同一事件的报道："
+                    if candidate.article_retrieval.material_origin == "alternate_reporting"
+                    else "已有材料："
+                )
+                parts.append(source_prefix + source_summary)
+            if summary:
+                parts.append("根据 Hacker News 讨论（不代表原文观点）：" + summary)
+            summary = " ".join(parts)
         if len(summary) > MAX_SUMMARY_CHARS:
             raise GeminiResponseError("Gemini summarizer returned an oversized summary")
         return summary

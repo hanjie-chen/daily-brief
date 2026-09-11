@@ -78,6 +78,7 @@ from .summarizer import (
     article_fetch_failure_summary,
     build_summary_context,
     fallback_summary,
+    has_discussion_source,
     normalize_summary_text,
     route_summary_mode,
 )
@@ -563,7 +564,8 @@ def _generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
             summary_client.summarize(candidate)
         )
         if candidate.summary_basis == "hn_comments":
-            candidate.summary = HN_DISCUSSION_SUMMARY_PREFIX + candidate.summary
+            if not has_discussion_source(candidate):
+                candidate.summary = HN_DISCUSSION_SUMMARY_PREFIX + candidate.summary
         elif candidate.article_retrieval.material_origin == "alternate_reporting":
             candidate.summary = (
                 ALTERNATE_REPORTING_SUMMARY_PREFIX + candidate.summary

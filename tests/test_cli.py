@@ -3114,7 +3114,7 @@ def test_insufficient_source_material_uses_bounded_discussion_fallback(tmp_path,
                 raise RuntimeError("provider unavailable")
             if fallback == "insufficient":
                 raise InsufficientSummaryMaterial("Comments are unrelated.")
-            return "评论者讨论了助手反复修改无关内容的问题。"
+            return "已有材料：页面要求把按钮改蓝。 根据 Hacker News 讨论（不代表原文观点）：评论者讨论了助手反复修改无关内容的问题。"
 
     def fetch_discussion(item_id):
         discussion_calls.append(item_id)
@@ -3152,7 +3152,8 @@ def test_insufficient_source_material_uses_bounded_discussion_fallback(tmp_path,
     assert captured[0].discussion_text == ""
     assert captured[0].story.fetched_text == "Make the button blue."
     if fallback == "success":
-        assert public["summary"].startswith("根据 Hacker News 讨论（不代表原文观点）：")
+        assert public["summary"].startswith("已有材料：")
+        assert public["summary"].count("根据 Hacker News 讨论（不代表原文观点）：") == 1
         assert public["content_status"] == "ok"
         assert "Discussion fallback — 页面材料不足" in result.brief_path.read_text()
     else:

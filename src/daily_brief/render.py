@@ -211,7 +211,7 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
             if item.summary_basis == "hn_comments" and item.summary_status == "success":
                 lines.append(
                     "- Content: Discussion fallback — 页面材料不足；"
-                    "摘要依据 Hacker News 评论，不代表原文观点。"
+                    "保留已有材料并补充 HN 讨论，评论观点另行标注。"
                 )
             else:
                 lines.append("- Content: 页面材料不足，未生成可靠摘要。")

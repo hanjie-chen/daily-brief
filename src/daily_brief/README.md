@@ -74,6 +74,13 @@ Retrieval status remains independent. Public schema stays compatible: an availab
 discussion overview after source insufficiency has `ok` and a fixed attribution;
 when no summary is available, `summary_failed` carries the material-insufficient
 reader message. Each item can proceed from source to discussion only once.
+When discussion fallback has existing source text, context strategy
+`source_and_hn_comments` preserves both separately labeled inputs. The backend
+requires separate `source_summary` and comment `summary` fields and applies source
+labels in code; either can be empty, but a sufficient result needs at least one.
+Pure discussion fallback keeps its existing schema and attribution. A page
+introduction explaining a work's type and theme can suffice without its full
+interaction or implementation details.
 
 ## Module Map
 

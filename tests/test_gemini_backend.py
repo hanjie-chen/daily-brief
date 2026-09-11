@@ -661,3 +661,35 @@ def test_summarizer_rejects_malformed_sufficiency_decisions(output):
     )
     with pytest.raises(GeminiResponseError):
         backend.summarize(candidate("1", "AI tool"))
+
+
+@pytest.mark.parametrize("source,discussion", [
+    ("页面描述了一个讽刺小游戏。", "一些评论者对此表示共鸣。"),
+    ("页面描述了一个讽刺小游戏。", ""),
+    ("", "一些评论者对此表示共鸣。"),
+])
+def test_combined_summary_enforces_separate_source_labels(source, discussion):
+    opener = RecordingOpener(FakeResponse(interaction({
+        "status": "sufficient", "source_summary": source,
+        "summary": discussion, "reason": "",
+    })))
+    backend = GeminiBackend(api_key="secret-key", opener=opener)
+    item = candidate("1", "Button", fetched_text="A parody game about unwanted edits.")
+    item.summary_basis = "hn_comments"
+    item.discussion_text = "Commenters disagree."
+    result = backend.summarize(item)
+    assert ("已有材料：" in result) == bool(source)
+    assert ("根据 Hacker News 讨论（不代表原文观点）：" in result) == bool(discussion)
+    if source:
+        assert result.startswith("已有材料：" + source)
+
+
+def test_combined_insufficient_cannot_include_source_claims():
+    backend = GeminiBackend(api_key="secret-key", opener=RecordingOpener(
+        FakeResponse(interaction({"status": "insufficient", "source_summary": "Claim",
+                                  "summary": "", "reason": "Not enough"}))
+    ))
+    item = candidate("1", "Button", fetched_text="Source")
+    item.summary_basis = "hn_comments"
+    with pytest.raises(GeminiResponseError):
+        backend.summarize(item)
