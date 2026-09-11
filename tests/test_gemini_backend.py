@@ -208,7 +208,7 @@ def test_request_intervals_are_independent_for_different_models():
         FakeResponse(
             interaction({"decisions": [{"id": "1", "label": "core_non_ai"}]})
         ),
-        FakeResponse(interaction({"summary": "摘要。"})),
+        FakeResponse(interaction({"status": "sufficient", "reason": "", "summary": "摘要。"})),
         FakeResponse(
             interaction({"decisions": [{"id": "2", "label": "core_non_ai"}]})
         ),
@@ -238,7 +238,7 @@ def test_same_model_uses_more_conservative_request_interval():
         FakeResponse(
             interaction({"decisions": [{"id": "1", "label": "core_non_ai"}]})
         ),
-        FakeResponse(interaction({"summary": "摘要。"})),
+        FakeResponse(interaction({"status": "sufficient", "reason": "", "summary": "摘要。"})),
     )
     backend = GeminiBackend(
         api_key="secret-key",
@@ -287,7 +287,7 @@ def test_summarizer_uses_fetched_text_and_logs_usage(caplog):
     opener = RecordingOpener(
         FakeResponse(
             interaction(
-                {"summary": " 中文摘要。 "},
+                {"status": "sufficient", "reason": "", "summary": " 中文摘要。 "},
                 usage={
                     "total_input_tokens": 100,
                     "total_output_tokens": 20,
@@ -308,7 +308,7 @@ def test_summarizer_uses_fetched_text_and_logs_usage(caplog):
     payload = request_payload(opener)
     assert payload["model"] == DEFAULT_SUMMARIZER_MODEL
     assert "Grounded article facts." in payload["input"]
-    assert payload["response_format"]["schema"]["required"] == ["summary"]
+    assert payload["response_format"]["schema"]["required"] == ["status", "summary", "reason"]
     assert payload["generation_config"] == {
         "max_output_tokens": 8192,
         "thinking_level": "high",
@@ -451,10 +451,10 @@ def test_classifier_rejects_invalid_structured_results(output, message):
 @pytest.mark.parametrize(
     ("output", "message"),
     [
-        ({"summary": ""}, "empty summary"),
-        ({"summary": "x" * (MAX_SUMMARY_CHARS + 1)}, "oversized summary"),
-        ({"summary": 42}, "invalid object"),
-        ({"summary": "valid", "extra": True}, "invalid object"),
+        ({"status": "sufficient", "reason": "", "summary": ""}, "empty summary"),
+        ({"status": "sufficient", "reason": "", "summary": "x" * (MAX_SUMMARY_CHARS + 1)}, "oversized summary"),
+        ({"status": "sufficient", "reason": "", "summary": 42}, "invalid object"),
+        ({"status": "sufficient", "reason": "", "summary": "valid", "extra": True}, "invalid object"),
     ],
 )
 def test_summarizer_rejects_invalid_structured_results(output, message):
@@ -467,7 +467,7 @@ def test_summarizer_rejects_invalid_structured_results(output, message):
 
 def test_failed_interaction_is_rejected_without_retry():
     opener = RecordingOpener(
-        FakeResponse(interaction({"summary": "摘要"}, status="failed"))
+        FakeResponse(interaction({"status": "sufficient", "reason": "", "summary": "摘要"}, status="failed"))
     )
     backend = GeminiBackend(api_key="secret-key", opener=opener)
 
@@ -484,7 +484,7 @@ def test_incomplete_summary_interaction_retries_once_and_succeeds(caplog):
     opener = RecordingOpener(
         FakeResponse(
             interaction(
-                {"summary": "partial"},
+                {"status": "sufficient", "reason": "", "summary": "partial"},
                 status="incomplete",
                 usage={
                     "total_input_tokens": 100,
@@ -496,7 +496,7 @@ def test_incomplete_summary_interaction_retries_once_and_succeeds(caplog):
         ),
         FakeResponse(
             interaction(
-                {"summary": "完整摘要。"},
+                {"status": "sufficient", "reason": "", "summary": "完整摘要。"},
                 usage={
                     "total_input_tokens": 100,
                     "total_output_tokens": 20,
@@ -529,7 +529,7 @@ def test_incomplete_summary_interaction_retries_once_and_succeeds(caplog):
 
 def test_incomplete_summary_interaction_stops_after_one_retry(caplog):
     incomplete = interaction(
-        {"summary": "partial"},
+        {"status": "sufficient", "reason": "", "summary": "partial"},
         status="incomplete",
         usage={
             "total_input_tokens": 100,
@@ -627,3 +627,37 @@ def test_from_environment_rejects_non_numeric_request_interval(name):
 def test_invalid_configuration_is_rejected(kwargs):
     with pytest.raises(GeminiConfigurationError):
         GeminiBackend(**kwargs)
+
+
+@pytest.mark.parametrize("basis", ["original", "hn_comments"])
+def test_summarizer_returns_insufficient_as_completed_material_decision(basis):
+    from daily_brief.summarizer import InsufficientSummaryMaterial
+
+    opener = RecordingOpener(FakeResponse(interaction({
+        "status": "insufficient", "summary": "", "reason": "仅有开场指令。"
+    })))
+    backend = GeminiBackend(api_key="secret-key", opener=opener)
+    item = candidate("1", "Change the button to blue")
+    item.summary_basis = basis
+    with pytest.raises(InsufficientSummaryMaterial) as caught:
+        backend.summarize(item)
+    assert caught.value.reason == "仅有开场指令。"
+    assert backend.last_summary_provider_status == "completed"
+    assert backend.last_summary_attempts == 1
+
+
+@pytest.mark.parametrize("output", [
+    {"summary": "Legacy output"},
+    {"status": "unknown", "summary": "", "reason": "Missing body"},
+    {"status": "insufficient", "summary": "Invented summary", "reason": "Missing body"},
+    {"status": "insufficient", "summary": "", "reason": "  "},
+    {"status": "sufficient", "summary": "Valid summary", "reason": "Missing body"},
+    {"status": "insufficient", "summary": "", "reason": "x" * 301},
+    {"status": "insufficient", "summary": "", "reason": 42},
+])
+def test_summarizer_rejects_malformed_sufficiency_decisions(output):
+    backend = GeminiBackend(
+        api_key="secret-key", opener=RecordingOpener(FakeResponse(interaction(output)))
+    )
+    with pytest.raises(GeminiResponseError):
+        backend.summarize(candidate("1", "AI tool"))

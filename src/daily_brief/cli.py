@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import json
 import logging
 import os
@@ -73,6 +74,7 @@ from .selection import (
     select_exploration_candidates,
 )
 from .summarizer import (
+    InsufficientSummaryMaterial,
     article_fetch_failure_summary,
     build_summary_context,
     fallback_summary,
@@ -528,79 +530,120 @@ def _summarize_selected_candidates(
             ):
                 candidate.summary_generation = SummaryGeneration(status="skipped")
                 continue
-        candidate.summary_mode = route_summary_mode(candidate)
-        summary_context = build_summary_context(candidate)
-        candidate.summary_context_strategy = summary_context.strategy
-        candidate.summary_context_source_chars = summary_context.source_chars
-        candidate.summary_context_selected_chars = summary_context.selected_chars
-        candidate.summary_context_sections = list(summary_context.sections)
-        summarization_inputs.append(candidate)
-        provider = _summary_provider(summary_client)
-        model = _summary_model(summary_client)
-        try:
-            candidate.summary = normalize_summary_text(
-                summary_client.summarize(candidate)
-            )
-            if candidate.article_retrieval.material_origin == "alternate_reporting":
-                candidate.summary = (
-                    ALTERNATE_REPORTING_SUMMARY_PREFIX + candidate.summary
-                )
-            elif candidate.summary_basis == "hn_comments":
-                candidate.summary = HN_DISCUSSION_SUMMARY_PREFIX + candidate.summary
-            candidate.summary_status = "success"
-            summary_usage = _summary_usage(summary_client)
-            candidate.summary_generation = SummaryGeneration(
-                status="success",
-                provider=provider,
-                model=model,
-                attempts=_summary_attempts(summary_client),
-                provider_status=_summary_provider_status(summary_client),
-                **summary_usage,
-            )
-            LOGGER.info(
-                "component=summary_generation item_id=%s status=success "
-                "provider=%s model=%s attempts=%d",
-                candidate.story.hn_item_id,
-                provider or "unknown",
-                model or "unknown",
-                candidate.summary_generation.attempts,
-            )
-        except Exception as exc:
-            error_message = _bounded_error_message(exc)
-            summary_usage = _summary_usage(summary_client)
-            candidate.summary_generation = SummaryGeneration(
-                status="failed",
-                provider=provider,
-                model=model,
-                attempts=_summary_attempts(summary_client),
-                provider_status=_summary_provider_status(summary_client, exc),
-                **summary_usage,
-                error_type=type(exc).__name__,
-                error_code=_summary_error_code(exc),
-                http_status=_summary_http_status(exc),
-                error_message=error_message,
-            )
-            LOGGER.error(
-                "component=summary_generation item_id=%s status=failed "
-                "provider=%s model=%s attempts=%d error=%s code=%s "
-                "http_status=%s message=%s",
-                candidate.story.hn_item_id,
-                provider or "unknown",
-                model or "unknown",
-                candidate.summary_generation.attempts,
-                candidate.summary_generation.error_type,
-                candidate.summary_generation.error_code,
-                candidate.summary_generation.http_status or "none",
-                error_message,
-            )
-            candidate.summary = (
-                article_fetch_failure_summary(candidate)
-                if candidate.summary_basis == "hn_comments"
-                else fallback_summary(candidate)
-            )
-            candidate.summary_status = "failed"
+        # At most one source call and one discussion call; never recurse on comments.
+        for _ in range(2):
+            candidate.summary_mode = route_summary_mode(candidate)
+            summary_context = build_summary_context(candidate)
+            candidate.summary_context_strategy = summary_context.strategy
+            candidate.summary_context_source_chars = summary_context.source_chars
+            candidate.summary_context_selected_chars = summary_context.selected_chars
+            candidate.summary_context_sections = list(summary_context.sections)
+            summarization_inputs.append(deepcopy(candidate))
+            insufficient = _generate_candidate_summary(candidate, summary_client)
+            if not insufficient or candidate.summary_basis == "hn_comments":
+                break
+            if not _prepare_hn_discussion_material(candidate, hn_discussion_fetcher):
+                break
 
     return summarization_inputs
+
+
+def _unavailable_material_summary(candidate: Candidate) -> str:
+    if candidate.source_material_status == "insufficient":
+        return "页面材料不足，未生成可靠摘要；请查看原文或讨论。"
+    return article_fetch_failure_summary(candidate)
+
+
+def _generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
+    """Return whether the model explicitly found the supplied material insufficient."""
+    provider = _summary_provider(summary_client)
+    model = _summary_model(summary_client)
+    try:
+        candidate.summary = normalize_summary_text(
+            summary_client.summarize(candidate)
+        )
+        if candidate.summary_basis == "hn_comments":
+            candidate.summary = HN_DISCUSSION_SUMMARY_PREFIX + candidate.summary
+        elif candidate.article_retrieval.material_origin == "alternate_reporting":
+            candidate.summary = (
+                ALTERNATE_REPORTING_SUMMARY_PREFIX + candidate.summary
+            )
+        if candidate.summary_basis != "hn_comments":
+            candidate.source_material_status = "sufficient"
+        candidate.summary_status = "success"
+        summary_usage = _summary_usage(summary_client)
+        candidate.summary_generation = SummaryGeneration(
+            status="success",
+            provider=provider,
+            model=model,
+            attempts=_summary_attempts(summary_client),
+            provider_status=_summary_provider_status(summary_client),
+            **summary_usage,
+        )
+        LOGGER.info(
+            "component=summary_generation item_id=%s status=success "
+            "provider=%s model=%s attempts=%d",
+            candidate.story.hn_item_id,
+            provider or "unknown",
+            model or "unknown",
+            candidate.summary_generation.attempts,
+        )
+    except InsufficientSummaryMaterial as exc:
+        candidate.summary_generation = SummaryGeneration(
+            status="insufficient",
+            provider=provider,
+            model=model,
+            attempts=_summary_attempts(summary_client),
+            provider_status=_summary_provider_status(summary_client),
+            **_summary_usage(summary_client),
+        )
+        if candidate.summary_basis != "hn_comments":
+            candidate.source_material_status = "insufficient"
+            candidate.source_material_reason = " ".join(exc.reason.split())[:500]
+            candidate.source_summary_generation = deepcopy(candidate.summary_generation)
+        candidate.summary = _unavailable_material_summary(candidate)
+        candidate.summary_status = "insufficient"
+        LOGGER.info(
+            "component=summary_generation item_id=%s status=insufficient basis=%s",
+            candidate.story.hn_item_id, candidate.summary_basis,
+        )
+        return True
+    except Exception as exc:
+        error_message = _bounded_error_message(exc)
+        summary_usage = _summary_usage(summary_client)
+        candidate.summary_generation = SummaryGeneration(
+            status="failed",
+            provider=provider,
+            model=model,
+            attempts=_summary_attempts(summary_client),
+            provider_status=_summary_provider_status(summary_client, exc),
+            **summary_usage,
+            error_type=type(exc).__name__,
+            error_code=_summary_error_code(exc),
+            http_status=_summary_http_status(exc),
+            error_message=error_message,
+        )
+        LOGGER.error(
+            "component=summary_generation item_id=%s status=failed "
+            "provider=%s model=%s attempts=%d error=%s code=%s "
+            "http_status=%s message=%s",
+            candidate.story.hn_item_id,
+            provider or "unknown",
+            model or "unknown",
+            candidate.summary_generation.attempts,
+            candidate.summary_generation.error_type,
+            candidate.summary_generation.error_code,
+            candidate.summary_generation.http_status or "none",
+            error_message,
+        )
+        candidate.summary = (
+            _unavailable_material_summary(candidate)
+            if candidate.summary_basis == "hn_comments"
+            else fallback_summary(candidate)
+        )
+        candidate.summary_status = "failed"
+
+    return False
 
 
 def _persist_generation(

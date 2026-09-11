@@ -18,10 +18,11 @@ from .config import (
 )
 from .model_backend import ModelBackend, ensure_topic_decisions
 from .models import Candidate, Story
-from .summarizer import normalize_summary_text
+from .summarizer import InsufficientSummaryMaterial, normalize_summary_text
 
-SCHEMA_VERSION = 3
-MAX_SUMMARY_CANDIDATES = AI_MAX_ITEMS + NON_AI_MAX_ITEMS
+SCHEMA_VERSION = 4
+MAX_SUMMARY_ITEMS = AI_MAX_ITEMS + NON_AI_MAX_ITEMS
+MAX_SUMMARY_CANDIDATES = 2 * MAX_SUMMARY_ITEMS
 MAX_TEXT_LENGTH = 256 * 1024
 BACKEND_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 SUMMARY_BASES = frozenset(
@@ -88,7 +89,7 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
         "exploration_classification_batches",
         "summary_candidates",
     }
-    if set(payload) != expected_keys or payload["schema_version"] != SCHEMA_VERSION:
+    if set(payload) != expected_keys or payload["schema_version"] not in (3, SCHEMA_VERSION):
         raise ModelEvaluationInputError("unsupported evaluation input schema")
 
     date_label = payload["date"]
@@ -106,7 +107,8 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
     summary_candidates = _parse_candidate_list(
         payload["summary_candidates"],
         "summary_candidates",
-        MAX_SUMMARY_CANDIDATES,
+        MAX_SUMMARY_CANDIDATES if payload["schema_version"] == 4 else MAX_SUMMARY_ITEMS,
+        allow_discussion_retry=payload["schema_version"] == 4,
     )
     return ModelEvaluationInput(
         date_label=date_label,
@@ -165,11 +167,24 @@ def run_model_evaluation(
             summary = normalize_summary_text(backend.summarize(candidate))
             if not summary:
                 raise RuntimeError("model backend returned an empty summary")
+        except InsufficientSummaryMaterial as exc:
+            summary_results.append(
+                {
+                    "hn_item_id": candidate.story.hn_item_id,
+                    "summary_basis": candidate.summary_basis,
+                    "status": "insufficient",
+                    "duration_seconds": round(clock() - summary_started, 3),
+                    "summary": "",
+                    "reason": exc.reason,
+                    "error": "",
+                }
+            )
         except Exception as exc:
             failures += 1
             summary_results.append(
                 {
                     "hn_item_id": candidate.story.hn_item_id,
+                    "summary_basis": candidate.summary_basis,
                     "status": "failed",
                     "duration_seconds": round(clock() - summary_started, 3),
                     "summary": "",
@@ -180,6 +195,7 @@ def run_model_evaluation(
             summary_results.append(
                 {
                     "hn_item_id": candidate.story.hn_item_id,
+                    "summary_basis": candidate.summary_basis,
                     "status": "success",
                     "duration_seconds": round(clock() - summary_started, 3),
                     "summary": summary,
@@ -221,14 +237,33 @@ def _serialize_candidate(candidate: Candidate) -> dict:
     }
 
 
-def _parse_candidate_list(value, field_name: str, maximum: int) -> list[Candidate]:
+def _parse_candidate_list(
+    value, field_name: str, maximum: int, *, allow_discussion_retry: bool = False
+) -> list[Candidate]:
     if not isinstance(value, list) or len(value) > maximum:
         raise ModelEvaluationInputError(
             f"{field_name} must be an array with at most {maximum} items"
         )
     candidates = [_parse_candidate(item, field_name) for item in value]
     item_ids = [candidate.story.hn_item_id for candidate in candidates]
-    if len(set(item_ids)) != len(item_ids):
+    if allow_discussion_retry:
+        if len(set(item_ids)) > MAX_SUMMARY_ITEMS:
+            raise ModelEvaluationInputError(
+                f"{field_name} contains more than {MAX_SUMMARY_ITEMS} distinct items"
+            )
+        bases_by_id: dict[str, list[str]] = {}
+        for candidate in candidates:
+            bases = bases_by_id.setdefault(candidate.story.hn_item_id, [])
+            bases.append(candidate.summary_basis)
+            if len(bases) > 1 and not (
+                len(bases) == 2
+                and bases[0] in {"fetched_article", "youtube_caption", "story_text", "title_only"}
+                and bases[1] == "hn_comments"
+            ):
+                raise ModelEvaluationInputError(
+                    f"{field_name} duplicate item IDs require source then hn_comments"
+                )
+    elif len(set(item_ids)) != len(item_ids):
         raise ModelEvaluationInputError(f"{field_name} contains duplicate item IDs")
     return candidates
 

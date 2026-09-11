@@ -45,8 +45,8 @@ Production generation spans CLI setup and `cli.run_generate(...)`:
    retrieval interface; recovery material is accepted only after deterministic
    validation.
 8. If every external-source retrieval and recovery path fails for a selected
-   story, `cli.py` asks `hn_client.py` for a bounded HN discussion sample as the
-   final fallback.
+   story, or its summary call explicitly finds the retrieved material insufficient,
+   `cli.py` asks `hn_client.py` for a bounded HN discussion sample as the final fallback.
    `summarizer.py` selects the generic, memorial, research, or HN-discussion route
    from available evidence. An external-source retrieval failure never becomes a
    title- or model-knowledge-based article summary.
@@ -60,7 +60,20 @@ Production generation spans CLI setup and `cli.run_generate(...)`:
 Model comparison is intentionally separate from generation. A generation run can
 capture the exact classifier and summarizer inputs, and `evaluate-model` can
 replay that immutable input without fetching sources, rendering a brief, or
-modifying recommendation and publishing state.
+modifying recommendation and publishing state. Capture schema 4 preserves immutable
+source and HN-discussion inputs when both are attempted for one item; schema 3
+captures remain readable. Replay records insufficient material separately from
+provider failures and does not retrieve fallback material.
+
+The existing summary call returns a validated sufficient/insufficient decision.
+The backend returns summary text or raises `InsufficientSummaryMaterial`; this is
+a completed semantic decision, not a provider error. No character minimum is used
+for source sufficiency. `source_material` in candidate audit preserves the original
+assessment and its call diagnostics if discussion fallback replaces the summary.
+Retrieval status remains independent. Public schema stays compatible: an available
+discussion overview after source insufficiency has `ok` and a fixed attribution;
+when no summary is available, `summary_failed` carries the material-insufficient
+reader message. Each item can proceed from source to discussion only once.
 
 ## Module Map
 

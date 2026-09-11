@@ -21,7 +21,12 @@ bounded flow:
 2. Route supported YouTube and GitHub URLs to their specialized transports;
    GitHub PDF blobs retain the same PDF extraction policy.
 3. Otherwise perform the direct request, validate redirects and the final URL,
-   and extract bounded HTML, text, or PDF content. Public PDFs use Adobe
+   and extract bounded HTML, text, or PDF content. HTML extraction includes
+   separately labeled publisher metadata (title, description, og:description)
+   and body text. Metadata is bounded and deduplicated; metadata-only pages can
+   proceed to semantic summary assessment. Nonempty extraction is a retrieval
+   result, not a guarantee of sufficient evidence. No scripts or browser
+   interactions are executed. Public PDFs use Adobe
    PDF-to-Markdown first when configured, with one bounded hard timeout across
    classification and summary retrieval, duration logging, and an explicit,
    logged local `pypdf` fallback.

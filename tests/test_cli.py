@@ -1694,7 +1694,7 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
 
     assert result.model_input_path == data_dir / "model-eval-inputs/2026-07-20.json"
     payload = json.loads(result.model_input_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert [
         batch[0]["hn_item_id"]
         for batch in payload["exploration_classification_batches"]
@@ -3090,3 +3090,89 @@ def story(
         comments=comments,
         story_text=story_text,
     )
+
+
+@pytest.mark.parametrize("fallback", ["success", "too_short", "fetch_error", "model_error", "insufficient"])
+def test_insufficient_source_material_uses_bounded_discussion_fallback(tmp_path, fallback):
+    from daily_brief.summarizer import InsufficientSummaryMaterial
+    from daily_brief.model_evaluation import load_model_evaluation_input
+
+    calls = []
+    discussion_calls = []
+    discussion = "A commenter explains the repeated unrelated edits. " * 20
+
+    class AssessingSummarizer:
+        name = "fake"
+        last_summary_attempts = 1
+        last_summary_usage = {"input_tokens": 123, "output_tokens": 20}
+
+        def summarize(self, candidate):
+            calls.append(candidate.summary_basis)
+            if candidate.summary_basis != "hn_comments":
+                raise InsufficientSummaryMaterial("Only an opening instruction is available.")
+            if fallback == "model_error":
+                raise RuntimeError("provider unavailable")
+            if fallback == "insufficient":
+                raise InsufficientSummaryMaterial("Comments are unrelated.")
+            return "评论者讨论了助手反复修改无关内容的问题。"
+
+    def fetch_discussion(item_id):
+        discussion_calls.append(item_id)
+        if fallback == "fetch_error":
+            raise RuntimeError("discussion unavailable")
+        return HNDiscussionResult(
+            text=discussion if fallback != "too_short" else "Short",
+            comments=3 if fallback != "too_short" else 1,
+            chars=len(discussion) if fallback != "too_short" else 5,
+            requested_items=4,
+            failed_items=0,
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs", data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude button", points=40, comments=8)],
+        hot_stories=[], article_fetcher=lambda url, **kwargs: "Make the button blue.",
+        hn_discussion_fetcher=fetch_discussion, summarizer=AssessingSummarizer(),
+        capture_model_inputs=True,
+    )
+    audit = json.loads(result.data_path.read_text())[0]
+    public = json.loads(result.public_json_path.read_text())["sections"]["ai"]["items"][0]
+    assert audit["article_retrieval"]["status"] == "success"
+    assert audit["source_material"]["status"] == "insufficient"
+    assert audit["source_material"]["reason"] == "Only an opening instruction is available."
+    assert audit["source_material"]["summary_generation"]["input_tokens"] == 123
+    assert discussion_calls == ["1"]
+    expected_calls = ["fetched_article"]
+    if fallback not in {"too_short", "fetch_error"}:
+        expected_calls.append("hn_comments")
+    assert calls == expected_calls
+    captured = load_model_evaluation_input(result.model_input_path).summary_candidates
+    assert [item.summary_basis for item in captured] == expected_calls
+    assert captured[0].discussion_text == ""
+    assert captured[0].story.fetched_text == "Make the button blue."
+    if fallback == "success":
+        assert public["summary"].startswith("根据 Hacker News 讨论（不代表原文观点）：")
+        assert public["content_status"] == "ok"
+        assert "Discussion fallback — 页面材料不足" in result.brief_path.read_text()
+    else:
+        assert public["summary"] == "页面材料不足，未生成可靠摘要；请查看原文或讨论。"
+        assert public["content_status"] == "summary_failed"
+    assert "source_material" not in public
+    assert "Only an opening instruction" not in result.brief_path.read_text()
+
+
+def test_short_sufficient_material_does_not_fetch_discussion(tmp_path):
+    def unexpected_discussion(item_id):
+        pytest.fail("Sufficient source must not trigger discussion retrieval")
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs", data_dir=tmp_path / "data",
+        date_label="2026-07-20",
+        algolia_stories=[story("1", "Claude tool", points=40, comments=8)],
+        hot_stories=[], article_fetcher=lambda url, **kwargs: "A game about unwanted edits.",
+        hn_discussion_fetcher=unexpected_discussion, summarizer=FakeSummarizer(),
+    )
+    audit = json.loads(result.data_path.read_text())[0]
+    assert audit["source_material"]["status"] == "sufficient"
+    assert audit["discussion_retrieval"]["status"] == "not_attempted"

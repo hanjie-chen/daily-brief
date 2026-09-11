@@ -100,6 +100,7 @@ def test_render_candidates_json_uses_snake_case_fields():
         "summary_basis",
         "summary_status",
         "summary_generation",
+        "source_material",
     }
     assert data[0]["source"] == "algolia"
     assert data[0]["hn_item_id"] == "1"

@@ -481,3 +481,24 @@ def test_wolfram_memorial_routes_and_meat_proxy_stays_generic():
 
     assert route_summary_mode(wolfram) == SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY
     assert route_summary_mode(meat_proxy) == SUMMARY_MODE_GENERIC
+
+
+def test_summary_prompt_assesses_semantics_and_bounds_page_description_claims():
+    prompt = build_summary_prompt(candidate(story_text="Change the button to blue."))
+    assert "短材料也可能足够，不按字符数判定" in prompt
+    assert "超出标题复述的具体信息" in prompt
+    assert "description / og:description" in prompt
+    assert "网站的自我介绍，不是独立验证的事实" in prompt
+    assert "不得根据介绍推断未取得的交互剧情" in prompt
+    assert 'status="insufficient", summary=""' in prompt
+    assert "正文不可用时，只概括标题" not in prompt
+
+
+def test_discussion_prompt_assesses_comment_evidence_without_requiring_article():
+    item = candidate()
+    item.summary_basis = "hn_comments"
+    item.discussion_text = "Cool!"
+    prompt = build_summary_prompt(item)
+    assert "仅有无实质内容的赞叹" in prompt
+    assert "评论不必足以重建原文" in prompt
+    assert 'status="insufficient", summary=""' in prompt

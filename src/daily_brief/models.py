@@ -149,4 +149,7 @@ class Candidate:
     )
     summary_basis: str = "not_generated"
     summary_status: str = "not_generated"
+    source_material_status: str = "not_assessed"
+    source_material_reason: str = ""
+    source_summary_generation: SummaryGeneration | None = None
     summary_generation: SummaryGeneration = field(default_factory=SummaryGeneration)

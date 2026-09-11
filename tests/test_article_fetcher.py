@@ -167,6 +167,84 @@ def test_extract_html_removes_non_content_and_collapses_whitespace():
     assert extract_html(markup) == "Hello world"
 
 
+def test_extract_html_labels_interactive_page_metadata_and_deduplicates_descriptions():
+    markup = """<html><head><title>Button game</title>
+    <meta name="description" content="An interactive comedy about an AI assistant &amp; scope creep.">
+    <meta property="og:description" content="An interactive comedy about an AI assistant &amp; scope creep.">
+    </head><body><main><p>Make the button blue. Change nothing else.</p></main>
+    <script>Secret later game dialogue.</script></body></html>"""
+
+    text = extract_html(markup)
+
+    metadata, body = text.split("\n\nExtracted body:\n")
+    assert "publisher-provided context, not article body" in metadata
+    assert "title: Button game" in metadata
+    assert metadata.count("An interactive comedy") == 1
+    assert "AI assistant & scope creep" in metadata
+    assert "Make the button blue" in body
+    assert "Secret later game dialogue" not in text
+
+
+def test_extract_html_keeps_distinct_descriptions_and_bounds_metadata():
+    markup = f"""<html><head><title>{'T' * 1000}</title>
+    <meta name="DESCRIPTION" content="{'D' * 3000}">
+    <meta property="OG:DESCRIPTION" content="  A   different description.  ">
+    <meta name="description" content="Ignored duplicate field">
+    </head><body></body></html>"""
+
+    text = extract_html(markup)
+
+    assert f"title: {'T' * 512}\n" in text
+    assert f"description: {'D' * 2000}\n" in text
+    assert "og:description: A different description." in text
+    assert "Ignored duplicate field" not in text
+
+
+def test_fetch_article_accepts_description_without_body_for_semantic_assessment():
+    markup = b'''<html><head><meta name="description"
+        content="A game about an assistant that cannot follow a simple edit request.">
+        </head><body><div id="app"></div></body></html>'''
+    result = fetch_article(
+        "https://example.com/article",
+        opener=lambda request, timeout: FakeResponse(markup),
+        resolver=resolver_for({}),
+    )
+
+    assert "description: A game about an assistant" in result.text
+    assert "[No extractable body text]" in result.text
+    assert result.method == "direct"
+
+
+def test_fetch_article_metadata_does_not_bypass_extracted_size_limit():
+    markup = b'''<html><head><meta name="description"
+        content="An interactive comedy about AI assistants."></head><body></body></html>'''
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            "https://example.com/article",
+            opener=lambda request, timeout: FakeResponse(markup),
+            resolver=resolver_for({}),
+            extracted_max_bytes=50,
+            policy=CLASSIFICATION_FETCH_POLICY,
+        )
+
+    assert caught.value.error_code == "extracted_content_too_large"
+
+
+def test_fetch_article_metadata_does_not_bypass_challenge_detection():
+    markup = b'''<html><head><meta name="description"
+        content="An interactive comedy about AI assistants."></head>
+        <body><p>Vercel Security Checkpoint. Verifying your browser.</p></body></html>'''
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            "https://example.com/article",
+            opener=lambda request, timeout: FakeResponse(markup),
+            resolver=resolver_for({}),
+            policy=CLASSIFICATION_FETCH_POLICY,
+        )
+
+    assert caught.value.error_code == "challenge_page"
+
+
 def test_extract_html_preserves_content_block_boundaries():
     markup = """
     <html><body><article>

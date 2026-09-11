@@ -276,3 +276,88 @@ def test_load_rejects_discussion_text_without_matching_summary_basis(tmp_path):
         match="discussion_text must match summary_basis",
     ):
         load_model_evaluation_input(input_path)
+
+
+def test_source_and_discussion_attempts_replay_independently(tmp_path):
+    from copy import deepcopy
+    from daily_brief.summarizer import InsufficientSummaryMaterial
+
+    source = candidate("1", "Interactive game", fetched_text="Click to start")
+    source.summary_basis = "fetched_article"
+    discussion = deepcopy(source)
+    discussion.summary_basis = "hn_comments"
+    discussion.discussion_text = "Readers describe the game's theme."
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", [], [source, discussion])
+    original_bytes = input_path.read_bytes()
+    loaded = load_model_evaluation_input(input_path)
+    assert [build_summary_prompt(item) for item in loaded.summary_candidates] == [
+        build_summary_prompt(source), build_summary_prompt(discussion)
+    ]
+
+    class EvidenceBackend(FakeBackend):
+        def summarize(self, item):
+            self.summary_ids.append((item.story.hn_item_id, item.summary_basis))
+            if item.summary_basis != "hn_comments":
+                raise InsufficientSummaryMaterial("Only an opening instruction")
+            return "读者讨论了游戏的主题。"
+
+    backend = EvidenceBackend()
+    result = run_model_evaluation(input_path, tmp_path / "results", backend)
+    payload = json.loads(result.output_path.read_text())
+    assert result.failures == 0
+    assert backend.summary_ids == [("1", "fetched_article"), ("1", "hn_comments")]
+    assert [item["status"] for item in payload["summaries"]] == ["insufficient", "success"]
+    assert [item["summary_basis"] for item in payload["summaries"]] == [
+        "fetched_article", "hn_comments"
+    ]
+    assert payload["summaries"][0]["reason"] == "Only an opening instruction"
+    assert payload["summaries"][0]["error"] == ""
+    assert input_path.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize("bases", [
+    ["fetched_article", "fetched_article"],
+    ["hn_comments", "fetched_article"],
+    ["fetched_article", "hn_comments", "hn_comments"],
+])
+def test_load_rejects_invalid_repeated_summary_attempts(tmp_path, bases):
+    attempts = []
+    for basis in bases:
+        item = candidate("1", "Game")
+        item.summary_basis = basis
+        item.discussion_text = "Comment sample" if basis == "hn_comments" else ""
+        attempts.append(item)
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", [], attempts)
+    with pytest.raises(ModelEvaluationInputError, match="duplicate item IDs"):
+        load_model_evaluation_input(input_path)
+
+
+def test_load_accepts_version_three_and_keeps_its_unique_id_constraint(tmp_path):
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", [], [candidate("1", "Old input")])
+    payload = json.loads(input_path.read_text())
+    payload["schema_version"] = 3
+    input_path.write_text(json.dumps(payload))
+    assert load_model_evaluation_input(input_path).summary_candidates[0].story.title == "Old input"
+    payload["summary_candidates"] *= 2
+    input_path.write_text(json.dumps(payload))
+    with pytest.raises(ModelEvaluationInputError, match="duplicate item IDs"):
+        load_model_evaluation_input(input_path)
+
+
+def test_capture_supports_two_attempts_for_every_selected_item(tmp_path):
+    from daily_brief.model_evaluation import MAX_SUMMARY_ITEMS
+
+    attempts = []
+    for index in range(MAX_SUMMARY_ITEMS):
+        source = candidate(str(index), "Game")
+        source.summary_basis = "fetched_article"
+        discussion = candidate(str(index), "Game")
+        discussion.summary_basis = "hn_comments"
+        discussion.discussion_text = "Comment sample"
+        attempts.extend([source, discussion])
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", [], attempts)
+    assert len(load_model_evaluation_input(input_path).summary_candidates) == 2 * MAX_SUMMARY_ITEMS

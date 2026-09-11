@@ -9,17 +9,63 @@ import trafilatura
 
 _TABLE_TAG_PATTERN = re.compile(r"<table(?:\s|>)", re.IGNORECASE)
 _IMPORTANT_SUFFIX_PATTERN = re.compile(r"\s*!\s*important\s*$", re.IGNORECASE)
+_METADATA_TITLE_MAX_CHARS = 512
+_METADATA_DESCRIPTION_MAX_CHARS = 2000
 
 
 def extract_html(markup: str) -> str:
-    """Extract article body text from HTML with the production settings."""
+    """Extract body text and separately labeled, bounded publisher metadata."""
     extracted = trafilatura.extract(
         _normalize_semantic_tables(markup),
         include_comments=False,
         favor_precision=True,
         include_tables=True,
     )
-    return _normalize_extracted_blocks(extracted or "")
+    body = _normalize_extracted_blocks(extracted or "")
+    metadata = _extract_page_metadata(markup)
+    if not metadata:
+        return body
+    return (
+        "Page metadata (publisher-provided context, not article body):\n"
+        + "\n".join(metadata)
+        + "\n\nExtracted body:\n"
+        + (body or "[No extractable body text]")
+    )
+
+
+def _extract_page_metadata(markup: str) -> list[str]:
+    parser = lxml_html.HTMLParser(
+        encoding="utf-8", no_network=True, huge_tree=False,
+    )
+    try:
+        document = lxml_html.document_fromstring(markup.encode("utf-8"), parser=parser)
+    except (etree.ParserError, etree.XMLSyntaxError):
+        return []
+
+    fields: dict[str, str] = {}
+    for element in document.xpath("./head/title | ./head/meta"):
+        if element.tag == "title":
+            name = "title"
+            value = element.text_content()
+            limit = _METADATA_TITLE_MAX_CHARS
+        else:
+            name = (element.get("name") or element.get("property") or "").strip().casefold()
+            if name not in {"description", "og:description"}:
+                continue
+            value = element.get("content") or ""
+            limit = _METADATA_DESCRIPTION_MAX_CHARS
+        value = " ".join(value.split())[:limit]
+        if value and name not in fields:
+            fields[name] = value
+
+    result = []
+    seen: set[str] = set()
+    for name in ("title", "description", "og:description"):
+        value = fields.get(name, "")
+        if value and value.casefold() not in seen:
+            result.append(f"{name}: {value}")
+            seen.add(value.casefold())
+    return result
 
 
 def _normalize_semantic_tables(markup: str) -> str:

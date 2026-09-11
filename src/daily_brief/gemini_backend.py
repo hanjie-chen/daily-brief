@@ -13,7 +13,12 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .models import Candidate
-from .summarizer import SUMMARY_SYSTEM_INSTRUCTION, build_summary_prompt
+from .summarizer import (
+    MAX_INSUFFICIENT_REASON_CHARS,
+    SUMMARY_SYSTEM_INSTRUCTION,
+    InsufficientSummaryMaterial,
+    build_summary_prompt,
+)
 from .topic_classifier import (
     TOPIC_CLASSIFIER_SYSTEM_INSTRUCTION,
     build_topic_classifier_prompt,
@@ -281,21 +286,43 @@ class GeminiBackend:
             schema={
                 "type": "object",
                 "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["sufficient", "insufficient"],
+                    },
                     "summary": {
                         "type": "string",
-                        "description": "A concise 1-2 sentence Chinese summary.",
-                    }
+                        "description": "A concise Chinese summary, or empty if insufficient.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "maxLength": MAX_INSUFFICIENT_REASON_CHARS,
+                        "description": "Why material is insufficient; empty if sufficient.",
+                    },
                 },
-                "required": ["summary"],
+                "required": ["status", "summary", "reason"],
                 "additionalProperties": False,
             },
             max_output_tokens=SUMMARY_MAX_OUTPUT_TOKENS,
             thinking_level=SUMMARY_THINKING_LEVEL,
             incomplete_retries=SUMMARY_INCOMPLETE_RETRIES,
         )
-        if set(output) != {"summary"} or not isinstance(output["summary"], str):
+        if (
+            set(output) != {"status", "summary", "reason"}
+            or not all(isinstance(value, str) for value in output.values())
+            or output["status"] not in {"sufficient", "insufficient"}
+        ):
             raise GeminiResponseError("Gemini summarizer returned an invalid object")
         summary = output["summary"].strip()
+        reason = output["reason"].strip()
+        if len(output["reason"]) > MAX_INSUFFICIENT_REASON_CHARS:
+            raise GeminiResponseError("Gemini summarizer returned an oversized reason")
+        if output["status"] == "insufficient":
+            if summary or not reason:
+                raise GeminiResponseError("Gemini summarizer returned an inconsistent decision")
+            raise InsufficientSummaryMaterial(reason)
+        if reason:
+            raise GeminiResponseError("Gemini summarizer returned an inconsistent decision")
         if not summary:
             raise GeminiResponseError("Gemini summarizer returned an empty summary")
         if len(summary) > MAX_SUMMARY_CHARS:

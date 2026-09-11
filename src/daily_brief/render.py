@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 from .models import Candidate
 from .public_schema import PUBLIC_BRIEF_SCHEMA_VERSION
@@ -115,6 +116,14 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 },
                 "summary_basis": candidate.summary_basis,
                 "summary_status": candidate.summary_status,
+                "source_material": {
+                    "status": candidate.source_material_status,
+                    "reason": candidate.source_material_reason,
+                    "summary_generation": (
+                        asdict(candidate.source_summary_generation)
+                        if candidate.source_summary_generation is not None else None
+                    ),
+                },
                 "summary_generation": {
                     "status": candidate.summary_generation.status,
                     "provider": candidate.summary_generation.provider,
@@ -198,6 +207,14 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
                     "- Content: Error — 原文抓取失败"
                     f"（{_single_line_display_text(error_code)}）。"
                 )
+        elif item.source_material_status == "insufficient":
+            if item.summary_basis == "hn_comments" and item.summary_status == "success":
+                lines.append(
+                    "- Content: Discussion fallback — 页面材料不足；"
+                    "摘要依据 Hacker News 评论，不代表原文观点。"
+                )
+            else:
+                lines.append("- Content: 页面材料不足，未生成可靠摘要。")
         elif item.summary_status == "failed":
             error_code = item.summary_generation.error_code or "summary_failed"
             lines.append(
@@ -253,7 +270,7 @@ def _public_item(candidate: Candidate) -> dict:
 def _public_content_status(candidate: Candidate) -> str:
     if candidate.article_retrieval.status == "failed":
         return "fetch_failed"
-    if candidate.summary_status == "failed":
+    if candidate.summary_status in {"failed", "insufficient"}:
         return "summary_failed"
     if candidate.summary_basis == "title_only":
         return "title_only"
