@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import gzip
+import io
 import json
 import os
 import subprocess
 import sys
+import zlib
 from time import monotonic
 from urllib.parse import urlparse
 from urllib.request import Request
@@ -36,14 +39,27 @@ PDF_CONTENT_TYPES = {
 }
 
 
-def _reject_encoded_wayback_response(headers) -> None:
-    content_encoding = headers.get("Content-Encoding", "").strip().lower()
-    if content_encoding not in {"", "identity"}:
+def _read_wayback_response(response, max_bytes: int) -> bytes:
+    """Bound both wire bytes and decoded bytes, even if identity was requested."""
+    content_encoding = response.headers.get("Content-Encoding", "").strip().lower()
+    if content_encoding not in {"", "identity", "gzip"}:
         raise ArticleFetchError(
-            "Wayback returned an unsupported content encoding",
+            f"Wayback returned an unsupported content encoding: {content_encoding[:80]!r}",
             error_code="wayback_unsupported_content_encoding",
             method="wayback",
         )
+    payload = _read_bounded(response, max_bytes)
+    if content_encoding != "gzip":
+        return payload
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(payload)) as decoded:
+            return _read_bounded(decoded, max_bytes)
+    except (OSError, EOFError, zlib.error) as exc:
+        raise ArticleFetchError(
+            "Wayback returned invalid or truncated gzip content",
+            error_code="wayback_invalid_content_encoding",
+            method="wayback",
+        ) from exc
 
 
 def _fetch_direct_response(
@@ -60,14 +76,12 @@ def _fetch_direct_response(
     pdf_address_space_bytes: int,
     adobe_pdf_enabled: bool = True,
     adobe_pdf_timeout_seconds: int = DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
-    require_identity_encoding: bool = False,
+    decode_wayback_encoding: bool = False,
 ) -> ArticleFetchResult:
     expects_pdf = urlparse(request.full_url).path.lower().endswith(".pdf")
     with opener(request, timeout=timeout_seconds) as response:
         final_url = response.geturl()
         _validate_public_http_url(final_url, resolver)
-        if require_identity_encoding:
-            _reject_encoded_wayback_response(response.headers)
         header_challenge = _challenge_from_headers(response.headers)
         if header_challenge:
             raise ArticleFetchError(
@@ -88,7 +102,11 @@ def _fetch_direct_response(
                 f"unsupported article content type: {content_type}",
                 error_code="unsupported_content_type",
             )
-        payload = _read_bounded(response, raw_limit)
+        payload = (
+            _read_wayback_response(response, raw_limit)
+            if decode_wayback_encoding
+            else _read_bounded(response, raw_limit)
+        )
         charset = response.headers.get_content_charset() or "utf-8"
 
     if content_type == "text/html":

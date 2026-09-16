@@ -26,6 +26,11 @@ bounded flow:
    and body text. Metadata is bounded and deduplicated, and only supplements
    nonempty body text. Empty bodies still raise `empty_content` and follow the
    existing policy-controlled Jina recovery path, even when metadata is present.
+   Recognizable LessWrong post markup is normalized before extraction: the
+   article's `commentOnSelection` wrapper must not cause it to be discarded as
+   a discussion comment. A linkpost introduction is retained as page text;
+   its outbound link is not automatically followed. Comment extraction remains
+   disabled.
    Nonempty extraction is a retrieval result, not a guarantee of sufficient evidence. No scripts or browser
    interactions are executed. Public PDFs use Adobe
    PDF-to-Markdown first when configured, with one bounded hard timeout across
@@ -33,7 +38,11 @@ bounded flow:
    logged local `pypdf` fallback.
 4. Retry a direct network timeout only when the policy permits it.
 5. For eligible failures, try Jina Reader and then, for eligible browser
-   challenges only, a validated Wayback capture.
+   challenges only, a validated Wayback capture. Wayback index and replay
+   requests prefer identity encoding, but also accept gzip. Both the downloaded
+   payload and the decompressed payload must fit the existing response byte
+   limit; corrupt gzip and unsupported encodings are rejected. Decoded replay
+   content still passes the normal challenge, source-identity, and extraction checks.
 6. Return `ArticleFetchResult` with transport, extractor, attempt count,
    retrieved URL, fallback reason, and material origin.
 

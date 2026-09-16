@@ -9,9 +9,9 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request
 
 from .contracts import ArticleFetchError, ArticleFetchResult
-from .http_safety import _read_bounded, _validate_public_http_url
+from .http_safety import _validate_public_http_url
 from .jina import JINA_JSON_CONTENT_TYPES
-from .responses import _fetch_direct_response, _reject_encoded_wayback_response
+from .responses import _fetch_direct_response, _read_wayback_response
 
 
 WAYBACK_CDX_BASE_URL = "https://web.archive.org/cdx/search/cdx"
@@ -73,7 +73,6 @@ def _find_wayback_capture(
     try:
         with opener(request, timeout=timeout_seconds) as response:
             _validate_wayback_cdx_response_url(response.geturl())
-            _reject_encoded_wayback_response(response.headers)
             content_type = response.headers.get_content_type().lower()
             if content_type not in JINA_JSON_CONTENT_TYPES:
                 raise ArticleFetchError(
@@ -81,7 +80,7 @@ def _find_wayback_capture(
                     error_code="wayback_unsupported_content_type",
                     method="wayback",
                 )
-            payload = _read_bounded(response, WAYBACK_METADATA_MAX_BYTES)
+            payload = _read_wayback_response(response, WAYBACK_METADATA_MAX_BYTES)
             charset = response.headers.get_content_charset() or "utf-8"
     except HTTPError as exc:
         raise ArticleFetchError(
@@ -172,7 +171,7 @@ def _fetch_wayback_capture(
             pdf_max_pages=pdf_max_pages,
             pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
             pdf_address_space_bytes=pdf_address_space_bytes,
-            require_identity_encoding=True,
+            decode_wayback_encoding=True,
         )
     except HTTPError as exc:
         raise ArticleFetchError(

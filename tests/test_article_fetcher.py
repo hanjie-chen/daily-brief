@@ -1,3 +1,4 @@
+import gzip
 import json
 import ssl
 import subprocess
@@ -1814,7 +1815,12 @@ def test_fetch_article_uses_jina_for_vercel_challenge_without_wayback(caplog):
     assert "fallback=wayback" not in caplog.text
 
 
-def test_vercel_and_jina_failures_use_recent_wayback_capture(caplog):
+@pytest.mark.parametrize(
+    "gzip_index,gzip_replay", [(False, False), (False, True), (True, True)]
+)
+def test_vercel_and_jina_failures_use_recent_wayback_capture(
+    caplog, gzip_index, gzip_replay
+):
     requests = []
     source_url = "https://www.felonybench.com/"
     capture_timestamp = "20260822062417"
@@ -1851,7 +1857,7 @@ def test_vercel_and_jina_failures_use_recent_wayback_capture(caplog):
                 final_url=f"https://r.jina.ai/{source_url}",
             )
         if request.full_url.startswith("https://web.archive.org/cdx/search/cdx?"):
-            return FakeResponse(
+            response = FakeResponse(
                 make_wayback_payload(
                     [
                         capture_timestamp,
@@ -1865,11 +1871,18 @@ def test_vercel_and_jina_failures_use_recent_wayback_capture(caplog):
                 content_type="application/json",
                 final_url=request.full_url,
             )
+            if gzip_index:
+                response.payload = gzip.compress(response.payload)
+                response.headers["Content-Encoding"] = "gzip"
+            return response
         assert request.full_url == replay_url
-        return FakeResponse(
-            archived_html,
+        response = FakeResponse(
+            gzip.compress(archived_html) if gzip_replay else archived_html,
             final_url=replay_url,
         )
+        if gzip_replay:
+            response.headers["Content-Encoding"] = "gzip"
+        return response
 
     with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
         result = fetch_article(

@@ -16,7 +16,7 @@ _METADATA_DESCRIPTION_MAX_CHARS = 2000
 def extract_html(markup: str) -> str:
     """Extract body text and separately labeled, bounded publisher metadata."""
     extracted = trafilatura.extract(
-        _normalize_semantic_tables(markup),
+        _normalize_semantic_tables(_normalize_lesswrong_post_markup(markup)),
         include_comments=False,
         favor_precision=True,
         include_tables=True,
@@ -34,6 +34,83 @@ def extract_html(markup: str) -> str:
         + "\n\nExtracted body:\n"
         + body
     )
+
+
+def _normalize_lesswrong_post_markup(markup: str) -> str:
+    """Expose a server-rendered LessWrong post without admitting its comments.
+
+    LessWrong puts the post body below a ``commentOnSelection`` wrapper.  That
+    class causes Trafilatura to discard the post along with real comments.  The
+    markup signature below is intentionally narrow: one post-page container,
+    one body node, and one wrapper.  Anything else keeps the ordinary path.
+    """
+    if "PostsPage-postContent" not in markup or "postContent" not in markup:
+        return markup
+    parser = lxml_html.HTMLParser(
+        encoding="utf-8",
+        no_network=True,
+        huge_tree=False,
+    )
+    try:
+        document = lxml_html.document_fromstring(
+            markup.encode("utf-8"),
+            parser=parser,
+        )
+    except (etree.ParserError, etree.XMLSyntaxError):
+        return markup
+
+    page_containers = document.xpath(
+        "//*[contains(concat(' ', normalize-space(@class), ' '), "
+        "' PostsPage-postContent ')]"
+    )
+    if len(page_containers) != 1:
+        return markup
+    page_container = page_containers[0]
+    post_bodies = page_container.xpath(".//*[@id='postContent']")
+    if len(post_bodies) != 1:
+        return markup
+    post_body = post_bodies[0]
+    wrappers = post_body.xpath(
+        "ancestor::*[contains(concat(' ', normalize-space(@class), ' '), "
+        "' commentOnSelection ')]"
+    )
+    if len(wrappers) != 1:
+        return markup
+
+    wrapper = wrappers[0]
+    wrapper.set(
+        "class",
+        " ".join(
+            class_name
+            for class_name in (wrapper.get("class") or "").split()
+            if class_name != "commentOnSelection"
+        ),
+    )
+
+    # The renderer occasionally uses empty nested spans. Trafilatura drops the
+    # wrapper and its tail, so flatten only spans without meaningful attributes
+    # inside the recognized post body.
+    for span in tuple(post_body.xpath(".//span")):
+        attributes = {
+            name: value
+            for name, value in span.attrib.items()
+            if name != "class" or value.strip()
+        }
+        if not attributes:
+            span.drop_tag()
+
+    linkpost_messages = page_container.xpath(
+        "./*[contains(concat(' ', normalize-space(@class), ' '), "
+        "' LinkPostMessage-root ')]"
+    )
+    if len(linkpost_messages) == 1:
+        introduction = " ".join(linkpost_messages[0].text_content().split())
+        if introduction:
+            introduction_element = lxml_html.Element("p")
+            introduction_element.text = introduction
+            post_body.insert(0, introduction_element)
+
+    return etree.tostring(document, encoding="unicode", method="html")
 
 
 def _extract_page_metadata(markup: str) -> list[str]:

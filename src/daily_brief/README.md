@@ -135,7 +135,10 @@ from HN self-post text; source prefixes are defined in one shared location.
 - Article retrieval accepts only validated public HTTP(S) destinations and
   preserves address validation across redirects and final responses. All network,
   subprocess, document, and extracted-text work remains bounded. Specialized
-  transports and recovery paths must not weaken these controls.
+  transports and recovery paths must not weaken these controls. Wayback gzip
+  responses are bounded both before and after decompression. LessWrong post
+  markup is narrowly normalized so comment filtering retains the article body
+  without enabling extraction of discussion comments.
 - Classification uses a stricter retrieval policy than selected-item
   summarization. A recovery path is eligible only for its documented failure
   conditions, cannot recurse, and must validate both source identity and usable
