@@ -20,9 +20,12 @@ from .model_backend import ModelBackend, ensure_topic_decisions
 from .models import Candidate, Story
 from .summarizer import InsufficientSummaryMaterial, normalize_summary_text
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 MAX_SUMMARY_ITEMS = AI_MAX_ITEMS + NON_AI_MAX_ITEMS
-MAX_SUMMARY_CANDIDATES = 2 * MAX_SUMMARY_ITEMS
+LEGACY_MAX_SUMMARY_CANDIDATES = 2 * MAX_SUMMARY_ITEMS
+MAX_SUMMARY_CANDIDATES = (
+    LEGACY_MAX_SUMMARY_CANDIDATES + EXPLORATION_CLASSIFIER_MAX_CANDIDATES
+)
 MAX_TEXT_LENGTH = 256 * 1024
 BACKEND_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 SUMMARY_BASES = frozenset(
@@ -35,6 +38,10 @@ SUMMARY_BASES = frozenset(
         "title_only",
         "hn_comments",
     }
+)
+CONTENT_KINDS = frozenset({"article", "community_roundup"})
+SOURCE_SUMMARY_BASES = frozenset(
+    {"fetched_article", "youtube_caption", "story_text", "title_only"}
 )
 
 
@@ -89,7 +96,8 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
         "exploration_classification_batches",
         "summary_candidates",
     }
-    if set(payload) != expected_keys or payload["schema_version"] not in (3, SCHEMA_VERSION):
+    schema_version = payload.get("schema_version")
+    if set(payload) != expected_keys or schema_version not in (3, 4, SCHEMA_VERSION):
         raise ModelEvaluationInputError("unsupported evaluation input schema")
 
     date_label = payload["date"]
@@ -103,12 +111,11 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
 
     classification_batches = _parse_classification_batches(
         payload["exploration_classification_batches"],
+        schema_version=schema_version,
     )
-    summary_candidates = _parse_candidate_list(
+    summary_candidates = _parse_summary_candidates(
         payload["summary_candidates"],
-        "summary_candidates",
-        MAX_SUMMARY_CANDIDATES if payload["schema_version"] == 4 else MAX_SUMMARY_ITEMS,
-        allow_discussion_retry=payload["schema_version"] == 4,
+        schema_version=schema_version,
     )
     return ModelEvaluationInput(
         date_label=date_label,
@@ -234,62 +241,140 @@ def _serialize_candidate(candidate: Candidate) -> dict:
         "fetched_text": story.fetched_text,
         "summary_basis": candidate.summary_basis,
         "discussion_text": candidate.discussion_text,
+        "content_kind": getattr(candidate, "content_kind", "article"),
     }
 
 
 def _parse_candidate_list(
-    value, field_name: str, maximum: int, *, allow_discussion_retry: bool = False
+    value, field_name: str, maximum: int, *, schema_version: int
 ) -> list[Candidate]:
     if not isinstance(value, list) or len(value) > maximum:
         raise ModelEvaluationInputError(
             f"{field_name} must be an array with at most {maximum} items"
         )
-    candidates = [_parse_candidate(item, field_name) for item in value]
-    item_ids = [candidate.story.hn_item_id for candidate in candidates]
-    if allow_discussion_retry:
-        if len(set(item_ids)) > MAX_SUMMARY_ITEMS:
-            raise ModelEvaluationInputError(
-                f"{field_name} contains more than {MAX_SUMMARY_ITEMS} distinct items"
-            )
-        bases_by_id: dict[str, list[str]] = {}
-        for candidate in candidates:
-            bases = bases_by_id.setdefault(candidate.story.hn_item_id, [])
-            bases.append(candidate.summary_basis)
-            if len(bases) > 1 and not (
-                len(bases) == 2
-                and bases[0] in {"fetched_article", "youtube_caption", "story_text", "title_only"}
-                and bases[1] == "hn_comments"
-            ):
-                raise ModelEvaluationInputError(
-                    f"{field_name} duplicate item IDs require source then hn_comments"
-                )
-    elif len(set(item_ids)) != len(item_ids):
-        raise ModelEvaluationInputError(f"{field_name} contains duplicate item IDs")
+    candidates = [
+        _parse_candidate(item, field_name, schema_version=schema_version)
+        for item in value
+    ]
     return candidates
 
 
-def _parse_classification_batches(value) -> list[list[Candidate]]:
+def _parse_summary_candidates(value, *, schema_version: int) -> list[Candidate]:
+    field_name = "summary_candidates"
+    if schema_version in (3, 4):
+        maximum = (
+            LEGACY_MAX_SUMMARY_CANDIDATES if schema_version == 4 else MAX_SUMMARY_ITEMS
+        )
+        candidates = _parse_candidate_list(
+            value, field_name, maximum, schema_version=schema_version
+        )
+        if schema_version == 3:
+            item_ids = [candidate.story.hn_item_id for candidate in candidates]
+            if len(item_ids) != len(set(item_ids)):
+                raise ModelEvaluationInputError(
+                    f"{field_name} contains duplicate item IDs"
+                )
+            return candidates
+        _validate_article_summary_retries(candidates, field_name, MAX_SUMMARY_ITEMS)
+        return candidates
+
+    candidates = _parse_candidate_list(
+        value, field_name, MAX_SUMMARY_CANDIDATES, schema_version=schema_version
+    )
+    articles = [item for item in candidates if item.content_kind == "article"]
+    roundups = [item for item in candidates if item.content_kind == "community_roundup"]
+    article_ids = {item.story.hn_item_id for item in articles}
+    _validate_article_summary_retries(articles, field_name, MAX_SUMMARY_ITEMS)
+    roundup_ids = [item.story.hn_item_id for item in roundups]
+    if article_ids.intersection(roundup_ids):
+        raise ModelEvaluationInputError(
+            f"{field_name} cannot mix article and community_roundup attempts for one item"
+        )
+    if len(roundup_ids) != len(set(roundup_ids)):
+        raise ModelEvaluationInputError(
+            f"{field_name} contains duplicate community_roundup item IDs"
+        )
+    if len(roundups) > EXPLORATION_CLASSIFIER_MAX_CANDIDATES:
+        raise ModelEvaluationInputError(
+            f"{field_name} contains more than "
+            f"{EXPLORATION_CLASSIFIER_MAX_CANDIDATES} community_roundup items"
+        )
+    return candidates
+
+
+def _validate_article_summary_retries(
+    candidates: list[Candidate], field_name: str, maximum_distinct: int
+) -> None:
+    item_ids = [candidate.story.hn_item_id for candidate in candidates]
+    if len(set(item_ids)) > maximum_distinct:
+        raise ModelEvaluationInputError(
+            f"{field_name} contains more than {maximum_distinct} distinct items"
+        )
+    bases_by_id: dict[str, list[str]] = {}
+    for candidate in candidates:
+        bases = bases_by_id.setdefault(candidate.story.hn_item_id, [])
+        bases.append(candidate.summary_basis)
+        if len(bases) > 1 and not (
+            len(bases) == 2
+            and bases[0] in SOURCE_SUMMARY_BASES
+            and bases[1] == "hn_comments"
+        ):
+            raise ModelEvaluationInputError(
+                f"{field_name} duplicate item IDs require source then hn_comments"
+            )
+
+
+def _parse_classification_batches(
+    value, *, schema_version: int
+) -> list[list[Candidate]]:
     field_name = "exploration_classification_batches"
-    if (
-        not isinstance(value, list)
-        or len(value) > EXPLORATION_CLASSIFIER_MAX_CANDIDATES
+    if not isinstance(value, list) or len(value) > (
+        2 * EXPLORATION_CLASSIFIER_MAX_CANDIDATES
+        if schema_version == 5
+        else EXPLORATION_CLASSIFIER_MAX_CANDIDATES
     ):
         raise ModelEvaluationInputError(
             f"{field_name} must contain at most "
-            f"{EXPLORATION_CLASSIFIER_MAX_CANDIDATES} batches"
+            f"{2 * EXPLORATION_CLASSIFIER_MAX_CANDIDATES if schema_version == 5 else EXPLORATION_CLASSIFIER_MAX_CANDIDATES} "
+            "batches"
         )
-    batches = [_parse_candidate_list(batch, field_name, 1) for batch in value]
+    batches = [
+        _parse_candidate_list(batch, field_name, 1, schema_version=schema_version)
+        for batch in value
+    ]
     if any(len(batch) != 1 for batch in batches):
         raise ModelEvaluationInputError(
             f"each {field_name} batch must contain exactly one item"
         )
-    item_ids = [batch[0].story.hn_item_id for batch in batches]
-    if len(set(item_ids)) != len(item_ids):
-        raise ModelEvaluationInputError(f"{field_name} contains duplicate item IDs")
+    candidates = [batch[0] for batch in batches]
+    item_ids = [candidate.story.hn_item_id for candidate in candidates]
+    if schema_version != 5:
+        if len(set(item_ids)) != len(item_ids):
+            raise ModelEvaluationInputError(f"{field_name} contains duplicate item IDs")
+        return batches
+    if len(set(item_ids)) > EXPLORATION_CLASSIFIER_MAX_CANDIDATES:
+        raise ModelEvaluationInputError(
+            f"{field_name} contains more than "
+            f"{EXPLORATION_CLASSIFIER_MAX_CANDIDATES} distinct items"
+        )
+    kinds_by_id: dict[str, list[Candidate]] = {}
+    for candidate in candidates:
+        kinds_by_id.setdefault(candidate.story.hn_item_id, []).append(candidate)
+    for attempts in kinds_by_id.values():
+        if len(attempts) > 1 and not (
+            len(attempts) == 2
+            and attempts[0].content_kind == "article"
+            and attempts[1].content_kind == "community_roundup"
+            and attempts[1].summary_basis == "hn_comments"
+        ):
+            raise ModelEvaluationInputError(
+                f"{field_name} duplicate item IDs require article then "
+                "community_roundup with hn_comments"
+            )
     return batches
 
 
-def _parse_candidate(value, field_name: str) -> Candidate:
+def _parse_candidate(value, field_name: str, *, schema_version: int) -> Candidate:
     expected_keys = {
         "source",
         "hn_item_id",
@@ -304,6 +389,8 @@ def _parse_candidate(value, field_name: str) -> Candidate:
         "summary_basis",
         "discussion_text",
     }
+    if schema_version == 5:
+        expected_keys.add("content_kind")
     if not isinstance(value, dict) or set(value) != expected_keys:
         raise ModelEvaluationInputError(f"invalid item in {field_name}")
 
@@ -335,11 +422,21 @@ def _parse_candidate(value, field_name: str) -> Candidate:
             raise ModelEvaluationInputError(f"invalid {key} in {field_name}")
     if value["summary_basis"] not in SUMMARY_BASES:
         raise ModelEvaluationInputError(f"invalid summary_basis in {field_name}")
-    if bool(value["discussion_text"]) != (
-        value["summary_basis"] == "hn_comments"
-    ):
+    if bool(value["discussion_text"]) != (value["summary_basis"] == "hn_comments"):
         raise ModelEvaluationInputError(
             f"discussion_text must match summary_basis in {field_name}"
+        )
+
+    content_kind = value.get("content_kind", "article")
+    if content_kind not in CONTENT_KINDS:
+        raise ModelEvaluationInputError(f"invalid content_kind in {field_name}")
+    if content_kind == "community_roundup" and (
+        not value["source_url"]
+        or value["source_url"] != value["hn_discussion_url"]
+        or value["summary_basis"] != "hn_comments"
+    ):
+        raise ModelEvaluationInputError(
+            f"community_roundup must be a self-post with hn_comments in {field_name}"
         )
 
     story_fields = {
@@ -357,11 +454,15 @@ def _parse_candidate(value, field_name: str) -> Candidate:
             "fetched_text",
         )
     }
-    return Candidate(
+    candidate = Candidate(
         story=Story(**story_fields),
         summary_basis=value["summary_basis"],
         discussion_text=value["discussion_text"],
     )
+    # Candidate gained this field in schema 5. Keeping the assignment here also
+    # makes schema 3/4 replay explicitly default to ordinary article prompts.
+    candidate.content_kind = content_kind
+    return candidate
 
 
 def _error_text(exc: Exception) -> str:

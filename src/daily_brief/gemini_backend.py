@@ -24,6 +24,7 @@ from .summarizer import (
 )
 from .topic_classifier import (
     TOPIC_CLASSIFIER_SYSTEM_INSTRUCTION,
+    TOPIC_LABELS,
     build_topic_classifier_prompt,
 )
 
@@ -46,6 +47,17 @@ RETRY_DELAY_PATTERN = re.compile(r"^(\d+)(?:\.(\d{1,9}))?s$")
 RETRY_MESSAGE_PATTERN = re.compile(
     r"(?:^|\s)Please retry in (\d+(?:\.\d{1,9})?)s(?:[.\s]|$)"
 )
+
+
+def _classifier_labels(candidates: list[Candidate]) -> set[str]:
+    labels = set(TOPIC_LABELS) - {"community_roundup"}
+    if any(
+        candidate.story.source_url == candidate.story.hn_discussion_url
+        and candidate.content_kind != "community_roundup"
+        for candidate in candidates
+    ):
+        labels.add("community_roundup")
+    return labels
 
 
 class GeminiConfigurationError(ValueError):
@@ -212,6 +224,7 @@ class GeminiBackend:
             return {}
         self._reset_request_diagnostics(self.classifier_model)
         allowed_ids = [candidate.story.hn_item_id for candidate in candidates]
+        allowed_labels = _classifier_labels(candidates)
         output = self._interact(
             task="classify",
             model=self.classifier_model,
@@ -235,12 +248,7 @@ class GeminiBackend:
                                 "id": {"type": "string", "enum": allowed_ids},
                                 "label": {
                                     "type": "string",
-                                    "enum": [
-                                        "ai",
-                                        "core_non_ai",
-                                        "outside",
-                                        "uncertain",
-                                    ],
+                                    "enum": sorted(allowed_labels),
                                 },
                             },
                             "required": ["id", "label"],
@@ -274,9 +282,19 @@ class GeminiBackend:
             raise GeminiResponseError("Gemini classifier returned unknown IDs")
         if set(decision_ids) != set(allowed_ids):
             raise GeminiResponseError("Gemini classifier omitted item IDs")
-        allowed_labels = {"ai", "core_non_ai", "outside", "uncertain"}
         if any(item["label"] not in allowed_labels for item in decisions):
             raise GeminiResponseError("Gemini classifier returned unknown labels")
+        candidates_by_id = {candidate.story.hn_item_id: candidate for candidate in candidates}
+        if any(
+            item["label"] == "community_roundup"
+            and (
+                candidates_by_id[item["id"]].story.source_url
+                != candidates_by_id[item["id"]].story.hn_discussion_url
+                or candidates_by_id[item["id"]].content_kind == "community_roundup"
+            )
+            for item in decisions
+        ):
+            raise GeminiResponseError("Gemini classifier returned invalid community roundup")
         return {item["id"]: item["label"] for item in decisions}
 
     def summarize(self, candidate: Candidate) -> str:

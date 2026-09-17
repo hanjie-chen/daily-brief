@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+from dataclasses import replace
 from email.message import Message
 from urllib.error import HTTPError, URLError
 
@@ -177,6 +178,51 @@ def test_classifier_uses_pinned_model_structured_output_and_header_key():
     assert "temperature" not in json.dumps(payload)
     assert "Qwen release" in payload["input"]
     assert "untrusted" in payload["input"].lower()
+
+
+def test_classifier_allows_roundup_only_for_eligible_self_posts():
+    item = candidate("1", "Ask HN: What are you working on?")
+    item.story = replace(item.story, source_url=item.story.hn_discussion_url)
+    opener = RecordingOpener(FakeResponse(interaction({
+        "decisions": [{"id": "1", "label": "community_roundup"}]
+    })))
+    backend = GeminiBackend(api_key="secret-key", opener=opener)
+
+    assert backend.classify([item]) == {"1": "community_roundup"}
+    labels = request_payload(opener)["response_format"]["schema"]["properties"]["decisions"]["items"]["properties"]["label"]["enum"]
+    assert labels == ["ai", "community_roundup", "core_non_ai", "outside", "uncertain"]
+
+
+def test_classifier_rejects_roundup_for_external_or_already_routed_item():
+    external = candidate("1", "Ask HN: What are you working on?")
+    self_post = candidate("2", "Ask HN: Tools?")
+    self_post.story = replace(self_post.story, source_url=self_post.story.hn_discussion_url)
+    opener = RecordingOpener(FakeResponse(interaction({
+        "decisions": [
+            {"id": "1", "label": "community_roundup"},
+            {"id": "2", "label": "core_non_ai"},
+        ]
+    })))
+    backend = GeminiBackend(api_key="secret-key", opener=opener)
+
+    with pytest.raises(GeminiResponseError, match="invalid community roundup"):
+        backend.classify([external, self_post])
+
+
+def test_community_roundup_summary_uses_standard_schema():
+    opener = RecordingOpener(FakeResponse(interaction({
+        "status": "sufficient", "summary": "一位开发者分享离线备份工具，另一位强调定期演练恢复流程。", "reason": ""
+    })))
+    backend = GeminiBackend(api_key="secret-key", opener=opener)
+    item = candidate("1", "Ask HN: What are you working on?", story_text="What are you making?")
+    item.content_kind = "community_roundup"
+    item.summary_basis = "hn_comments"
+    item.discussion_text = "Comments with concrete projects."
+
+    assert backend.summarize(item) == "一位开发者分享离线备份工具，另一位强调定期演练恢复流程。"
+    payload = request_payload(opener)
+    assert payload["response_format"]["schema"]["required"] == ["status", "summary", "reason"]
+    assert "source_summary" not in payload["response_format"]["schema"]["properties"]
 
 
 def test_classifier_skips_api_for_empty_input():
@@ -693,3 +739,22 @@ def test_combined_insufficient_cannot_include_source_claims():
     item.summary_basis = "hn_comments"
     with pytest.raises(GeminiResponseError):
         backend.summarize(item)
+
+
+def test_production_roundup_summary_has_exactly_one_partial_comment_attribution():
+    from daily_brief.cli import _generate_candidate_summary
+
+    summary = "一位开发者用 GPU 编辑体素地形；另一位开发者的日程工具支持离线搜索。"
+    backend = GeminiBackend(api_key="test-key", opener=RecordingOpener(
+        FakeResponse(interaction({"status": "sufficient", "summary": summary, "reason": ""}))
+    ))
+    item = candidate("1", "Ask HN: What are you working on?", story_text="Share your projects.")
+    item.story = replace(item.story, source_url=item.story.hn_discussion_url)
+    item.content_kind = "community_roundup"
+    item.summary_basis = "hn_comments"
+    item.discussion_text = "I use GPU terrain editing. Another author built an offline calendar."
+
+    _generate_candidate_summary(item, backend)
+
+    assert item.summary_status == "success"
+    assert item.summary == "根据 Hacker News 部分评论：" + summary

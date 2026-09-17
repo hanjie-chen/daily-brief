@@ -307,6 +307,62 @@ def test_fetch_hn_discussion_collects_bounded_breadth_first_plain_text():
     assert "<i>" not in result.text
 
 
+def test_fetch_hn_discussion_covers_later_top_level_answers_before_long_replies():
+    responses = {
+        "1": {"id": 1, "type": "story", "kids": [2, 3, 4]},
+        "2": {"id": 2, "type": "comment", "text": "First answer.", "kids": [5]},
+        "3": {"id": 3, "type": "comment", "text": "Second answer."},
+        "4": {"id": 4, "type": "comment", "text": "Third answer."},
+        "5": {"id": 5, "type": "comment", "text": "Reply one.", "kids": [6]},
+        "6": {"id": 6, "type": "comment", "text": "Reply two.", "kids": [7]},
+        "7": {"id": 7, "type": "comment", "text": "Reply three."},
+    }
+    requested = []
+
+    def fetch(url):
+        item_id = url.rsplit("/", 1)[-1].split(".", 1)[0]
+        requested.append(item_id)
+        return responses[item_id]
+
+    result = fetch_hn_discussion(
+        "1", max_item_requests=4, item_fetcher=fetch
+    )
+
+    assert requested == ["1", "2", "3", "4"]
+    assert result.comments == 3
+    assert "First answer." in result.text
+    assert "Second answer." in result.text
+    assert "Third answer." in result.text
+    assert "Reply one." not in result.text
+
+
+def test_fetch_hn_discussion_prioritizes_top_level_after_deleted_comment():
+    responses = {
+        "1": {"id": 1, "type": "story", "kids": [2, 3]},
+        "2": {"id": 2, "type": "comment", "deleted": True, "kids": [4]},
+        "3": {"id": 3, "type": "comment", "text": "Visible top-level answer."},
+        "4": {"id": 4, "type": "comment", "text": "Reply to deleted answer."},
+    }
+    requested = []
+
+    def fetch(url):
+        item_id = url.rsplit("/", 1)[-1].split(".", 1)[0]
+        requested.append(item_id)
+        return responses[item_id]
+
+    result = fetch_hn_discussion(
+        "1", max_item_requests=4, item_fetcher=fetch
+    )
+
+    assert requested == ["1", "2", "3", "4"]
+    assert result.comments == 2
+    assert "Visible top-level answer." in result.text
+    assert "Reply to deleted answer." in result.text
+    assert result.text.index("Visible top-level answer.") < result.text.index(
+        "Reply to deleted answer."
+    )
+
+
 def test_fetch_hn_discussion_skips_bad_items_and_obeys_request_bound():
     responses = {
         "1": {"id": 1, "type": "story", "kids": [2, 3, 4]},

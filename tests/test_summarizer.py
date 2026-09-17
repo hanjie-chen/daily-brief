@@ -8,8 +8,10 @@ from daily_brief.summarizer import (
     SUMMARY_CONTEXT_RESEARCH_FULL_TEXT_FALLBACK,
     SUMMARY_CONTEXT_RESEARCH_SECTIONS,
     SUMMARY_CONTEXT_HN_COMMENTS,
+    SUMMARY_CONTEXT_COMMUNITY_ROUNDUP,
     SUMMARY_MODE_GENERIC,
     SUMMARY_MODE_HN_DISCUSSION,
+    SUMMARY_MODE_COMMUNITY_ROUNDUP,
     SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY,
     SUMMARY_MODE_RESEARCH_REPORT,
     build_summary_context,
@@ -17,6 +19,7 @@ from daily_brief.summarizer import (
     fallback_summary,
     normalize_summary_text,
     route_summary_mode,
+    has_discussion_source,
 )
 
 
@@ -520,3 +523,31 @@ def test_combined_self_post_is_labeled_as_hn_post_not_retrieved_webpage():
     assert "HN 帖子正文" in build_summary_context(item).text
     assert "retrieved" not in build_summary_context(item).text
     assert source_summary_prefix(item) == "根据 HN 帖子正文："
+
+
+def test_community_roundup_uses_question_only_as_context_and_comments_as_evidence():
+    item = candidate(
+        story_text="What are you working on?",
+        fetched_text="This must not become source evidence.",
+    )
+    item.content_kind = "community_roundup"
+    item.summary_basis = "hn_comments"
+    item.discussion_text = (
+        "I am building a local-first backup tool.\n\n"
+        "We learned that restore drills matter more than dashboard metrics."
+    )
+
+    context = build_summary_context(item)
+    prompt = build_summary_prompt(item)
+
+    assert route_summary_mode(item) == SUMMARY_MODE_COMMUNITY_ROUNDUP
+    assert has_discussion_source(item) is False
+    assert context.strategy == SUMMARY_CONTEXT_COMMUNITY_ROUNDUP
+    assert "What are you working on?" in context.text
+    assert item.discussion_text in context.text
+    assert "This must not become source evidence." not in context.text
+    assert "评论是唯一的实质证据" in prompt
+    assert "两到三个具体且有区分度的" in prompt
+    assert "至少\n两个有实质细节的例子" in prompt
+    assert "社区趋势" in prompt
+    assert "source_summary" not in prompt

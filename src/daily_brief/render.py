@@ -43,6 +43,8 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                     match.keyword for match in candidate.matched_keywords
                 ],
                 "topic_route": candidate.topic_route,
+                "content_kind": candidate.content_kind,
+                "content_reason": candidate.content_reason,
                 "summary_mode": candidate.summary_mode,
                 "summary_context": {
                     "strategy": candidate.summary_context_strategy,

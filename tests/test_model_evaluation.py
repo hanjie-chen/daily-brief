@@ -29,6 +29,27 @@ def candidate(item_id: str, title: str, *, fetched_text: str = "") -> Candidate:
     )
 
 
+def community_roundup(
+    item_id: str, title: str = "What are you working on?"
+) -> Candidate:
+    item = candidate(item_id, title)
+    item.story = Story(
+        source=item.story.source,
+        hn_item_id=item.story.hn_item_id,
+        title=item.story.title,
+        source_url=item.story.hn_discussion_url,
+        hn_discussion_url=item.story.hn_discussion_url,
+        created_at=item.story.created_at,
+        points=item.story.points,
+        comments=item.story.comments,
+        story_text="What are you working on?",
+    )
+    item.content_kind = "community_roundup"
+    item.summary_basis = "hn_comments"
+    item.discussion_text = "A developer shares a useful project."
+    return item
+
+
 class FakeBackend:
     name = "fake"
 
@@ -292,7 +313,8 @@ def test_source_and_discussion_attempts_replay_independently(tmp_path):
     original_bytes = input_path.read_bytes()
     loaded = load_model_evaluation_input(input_path)
     assert [build_summary_prompt(item) for item in loaded.summary_candidates] == [
-        build_summary_prompt(source), build_summary_prompt(discussion)
+        build_summary_prompt(source),
+        build_summary_prompt(discussion),
     ]
 
     class EvidenceBackend(FakeBackend):
@@ -307,20 +329,27 @@ def test_source_and_discussion_attempts_replay_independently(tmp_path):
     payload = json.loads(result.output_path.read_text())
     assert result.failures == 0
     assert backend.summary_ids == [("1", "fetched_article"), ("1", "hn_comments")]
-    assert [item["status"] for item in payload["summaries"]] == ["insufficient", "success"]
+    assert [item["status"] for item in payload["summaries"]] == [
+        "insufficient",
+        "success",
+    ]
     assert [item["summary_basis"] for item in payload["summaries"]] == [
-        "fetched_article", "hn_comments"
+        "fetched_article",
+        "hn_comments",
     ]
     assert payload["summaries"][0]["reason"] == "Only an opening instruction"
     assert payload["summaries"][0]["error"] == ""
     assert input_path.read_bytes() == original_bytes
 
 
-@pytest.mark.parametrize("bases", [
-    ["fetched_article", "fetched_article"],
-    ["hn_comments", "fetched_article"],
-    ["fetched_article", "hn_comments", "hn_comments"],
-])
+@pytest.mark.parametrize(
+    "bases",
+    [
+        ["fetched_article", "fetched_article"],
+        ["hn_comments", "fetched_article"],
+        ["fetched_article", "hn_comments", "hn_comments"],
+    ],
+)
 def test_load_rejects_invalid_repeated_summary_attempts(tmp_path, bases):
     attempts = []
     for basis in bases:
@@ -336,11 +365,18 @@ def test_load_rejects_invalid_repeated_summary_attempts(tmp_path, bases):
 
 def test_load_accepts_version_three_and_keeps_its_unique_id_constraint(tmp_path):
     input_path = tmp_path / "input.json"
-    capture_model_evaluation_input(input_path, "2026-07-20", [], [candidate("1", "Old input")])
+    capture_model_evaluation_input(
+        input_path, "2026-07-20", [], [candidate("1", "Old input")]
+    )
     payload = json.loads(input_path.read_text())
     payload["schema_version"] = 3
+    for item in payload["summary_candidates"]:
+        del item["content_kind"]
     input_path.write_text(json.dumps(payload))
-    assert load_model_evaluation_input(input_path).summary_candidates[0].story.title == "Old input"
+    assert (
+        load_model_evaluation_input(input_path).summary_candidates[0].story.title
+        == "Old input"
+    )
     payload["summary_candidates"] *= 2
     input_path.write_text(json.dumps(payload))
     with pytest.raises(ModelEvaluationInputError, match="duplicate item IDs"):
@@ -360,4 +396,209 @@ def test_capture_supports_two_attempts_for_every_selected_item(tmp_path):
         attempts.extend([source, discussion])
     input_path = tmp_path / "input.json"
     capture_model_evaluation_input(input_path, "2026-07-20", [], attempts)
-    assert len(load_model_evaluation_input(input_path).summary_candidates) == 2 * MAX_SUMMARY_ITEMS
+    assert (
+        len(load_model_evaluation_input(input_path).summary_candidates)
+        == 2 * MAX_SUMMARY_ITEMS
+    )
+
+
+def test_schema_five_preserves_community_roundup_inputs_and_prompts(tmp_path):
+    from daily_brief.topic_classifier import build_topic_classifier_prompt
+
+    original = community_roundup("7")
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", [[original]], [original])
+
+    payload = json.loads(input_path.read_text())
+    replayed = load_model_evaluation_input(input_path)
+
+    assert payload["schema_version"] == 5
+    assert payload["summary_candidates"][0]["content_kind"] == "community_roundup"
+    assert (
+        replayed.exploration_classification_batches[0][0].content_kind
+        == "community_roundup"
+    )
+    assert build_topic_classifier_prompt(
+        replayed.exploration_classification_batches[0]
+    ) == (build_topic_classifier_prompt([original]))
+    assert build_summary_prompt(replayed.summary_candidates[0]) == build_summary_prompt(
+        original
+    )
+
+
+@pytest.mark.parametrize("schema_version", [3, 4])
+def test_old_schemas_default_content_kind_to_article(tmp_path, schema_version):
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(
+        input_path, "2026-07-20", [], [candidate("1", "Old input")]
+    )
+    payload = json.loads(input_path.read_text())
+    payload["schema_version"] = schema_version
+    for item in payload["summary_candidates"]:
+        del item["content_kind"]
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert (
+        load_model_evaluation_input(input_path).summary_candidates[0].content_kind
+        == "article"
+    )
+
+
+def test_old_schemas_reject_content_kind_field(tmp_path):
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(
+        input_path, "2026-07-20", [], [candidate("1", "Old input")]
+    )
+    payload = json.loads(input_path.read_text())
+    payload["schema_version"] = 4
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ModelEvaluationInputError, match="invalid item"):
+        load_model_evaluation_input(input_path)
+
+
+def test_legacy_schema_bounds_and_retries_are_preserved(tmp_path):
+    from daily_brief.model_evaluation import MAX_SUMMARY_ITEMS
+
+    attempts = []
+    for index in range(MAX_SUMMARY_ITEMS):
+        source = candidate(str(index), "Game")
+        source.summary_basis = "fetched_article"
+        discussion = candidate(str(index), "Game")
+        discussion.summary_basis = "hn_comments"
+        discussion.discussion_text = "Comment sample"
+        attempts.extend([source, discussion])
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", [], attempts)
+    payload = json.loads(input_path.read_text())
+    payload["schema_version"] = 4
+    for item in payload["summary_candidates"]:
+        del item["content_kind"]
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+    assert (
+        len(load_model_evaluation_input(input_path).summary_candidates)
+        == 2 * MAX_SUMMARY_ITEMS
+    )
+
+    payload["summary_candidates"].append(payload["summary_candidates"][0])
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ModelEvaluationInputError, match="at most"):
+        load_model_evaluation_input(input_path)
+
+    payload["schema_version"] = 3
+    payload["summary_candidates"] = payload["summary_candidates"][:2]
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ModelEvaluationInputError, match="duplicate item IDs"):
+        load_model_evaluation_input(input_path)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda item: item.__setitem__("content_kind", "unknown"),
+        lambda item: item.__setitem__("source_url", "https://example.com/external"),
+        lambda item: item.__setitem__("summary_basis", "story_text"),
+    ],
+)
+def test_schema_five_rejects_invalid_community_roundup(tmp_path, mutate):
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(
+        input_path, "2026-07-20", [], [community_roundup("1")]
+    )
+    payload = json.loads(input_path.read_text())
+    mutate(payload["summary_candidates"][0])
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ModelEvaluationInputError):
+        load_model_evaluation_input(input_path)
+
+
+def test_schema_five_allows_bounded_article_then_roundup_classification(tmp_path):
+    from daily_brief.config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES
+
+    batches = []
+    for index in range(EXPLORATION_CLASSIFIER_MAX_CANDIDATES):
+        article = candidate(str(index), "Ask HN")
+        roundup = community_roundup(str(index))
+        batches.extend([[article], [roundup]])
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", batches, [])
+
+    assert len(
+        load_model_evaluation_input(input_path).exploration_classification_batches
+    ) == (2 * EXPLORATION_CLASSIFIER_MAX_CANDIDATES)
+
+    payload = json.loads(input_path.read_text())
+    (
+        payload["exploration_classification_batches"][1],
+        payload["exploration_classification_batches"][0],
+    ) = (
+        payload["exploration_classification_batches"][0],
+        payload["exploration_classification_batches"][1],
+    )
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(
+        ModelEvaluationInputError, match="article then community_roundup"
+    ):
+        load_model_evaluation_input(input_path)
+
+
+def test_schema_five_rejects_excess_roundup_summaries_and_duplicate_roundup(tmp_path):
+    from daily_brief.config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES
+
+    summaries = [
+        community_roundup(str(index))
+        for index in range(EXPLORATION_CLASSIFIER_MAX_CANDIDATES)
+    ]
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", [], summaries)
+    assert len(load_model_evaluation_input(input_path).summary_candidates) == len(
+        summaries
+    )
+
+    summaries.append(community_roundup(str(EXPLORATION_CLASSIFIER_MAX_CANDIDATES)))
+    capture_model_evaluation_input(input_path, "2026-07-20", [], summaries)
+    with pytest.raises(ModelEvaluationInputError, match="community_roundup items"):
+        load_model_evaluation_input(input_path)
+
+    capture_model_evaluation_input(
+        input_path, "2026-07-20", [], [community_roundup("1"), community_roundup("1")]
+    )
+    with pytest.raises(ModelEvaluationInputError, match="duplicate community_roundup"):
+        load_model_evaluation_input(input_path)
+
+
+def test_schema_five_rejects_article_and_roundup_summary_for_same_item(tmp_path):
+    article = candidate("1", "Ask HN")
+    article.summary_basis = "story_text"
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(
+        input_path, "2026-07-20", [], [article, community_roundup("1")]
+    )
+
+    with pytest.raises(ModelEvaluationInputError, match="cannot mix article"):
+        load_model_evaluation_input(input_path)
+
+
+def test_schema_five_accepts_the_combined_summary_bound(tmp_path):
+    from daily_brief.config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES
+    from daily_brief.model_evaluation import MAX_SUMMARY_CANDIDATES, MAX_SUMMARY_ITEMS
+
+    summaries = []
+    for index in range(MAX_SUMMARY_ITEMS):
+        source = candidate(str(index), "Article")
+        source.summary_basis = "fetched_article"
+        discussion = candidate(str(index), "Article")
+        discussion.summary_basis = "hn_comments"
+        discussion.discussion_text = "Comment sample"
+        summaries.extend([source, discussion])
+    summaries.extend(
+        community_roundup(f"roundup-{index}")
+        for index in range(EXPLORATION_CLASSIFIER_MAX_CANDIDATES)
+    )
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-07-20", [], summaries)
+
+    assert len(load_model_evaluation_input(input_path).summary_candidates) == (
+        MAX_SUMMARY_CANDIDATES
+    )

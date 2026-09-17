@@ -1495,6 +1495,8 @@ def test_self_post_story_text_remains_the_summary_basis(tmp_path):
         ],
         hot_stories=[],
         article_fetcher=fail_if_fetched,
+        hn_discussion_fetcher=fail_if_fetched,
+        classifier=FakeClassifier(default_label="ai"),
         summarizer=FakeSummarizer(),
     )
 
@@ -1694,7 +1696,7 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
 
     assert result.model_input_path == data_dir / "model-eval-inputs/2026-07-20.json"
     payload = json.loads(result.model_input_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 4
+    assert payload["schema_version"] == 5
     assert [
         batch[0]["hn_item_id"]
         for batch in payload["exploration_classification_batches"]
@@ -3182,3 +3184,125 @@ def test_short_sufficient_material_does_not_fetch_discussion(tmp_path):
     audit = json.loads(result.data_path.read_text())[0]
     assert audit["source_material"]["status"] == "sufficient"
     assert audit["discussion_retrieval"]["status"] == "not_attempted"
+
+
+@pytest.mark.parametrize("keyword_title", [False, True])
+@pytest.mark.parametrize("outcome", ["success", "insufficient", "model_error", "too_short", "fetch_error", "uncertain"])
+def test_roundup_is_assessed_before_selection_and_replaced_when_unusable(
+    tmp_path, keyword_title, outcome,
+):
+    from daily_brief.model_evaluation import load_model_evaluation_input
+    from daily_brief.summarizer import InsufficientSummaryMaterial
+
+    calls = []
+    overview = "一位开发者的体素引擎支持 GPU 地形编辑；另一位开发者的日程工具可在本地运行。"
+    comments = (
+        "[Comment 11]\nI built a voxel engine with GPU terrain editing. " * 6
+        + "[Comment 12]\nI built a local-first calendar with offline event search. " * 6
+        + "[Comment 13]\nI recommend measuring redraw time before changing the renderer. " * 6
+    )
+
+    class RoundupClassifier:
+        def classify(self, candidates):
+            item = candidates[0]
+            calls.append(("classify", item.story.hn_item_id, item.content_kind))
+            if item.story.hn_item_id == "49686380":
+                if item.content_kind == "article":
+                    assert not item.discussion_text
+                    return {"49686380": "community_roundup"}
+                assert item.discussion_text == comments
+                return {"49686380": "uncertain" if outcome == "uncertain" else "core_non_ai"}
+            return {item.story.hn_item_id: "core_non_ai"}
+
+    class RoundupSummarizer:
+        def summarize(self, item):
+            calls.append(("summarize", item.story.hn_item_id, item.selected))
+            if item.content_kind == "community_roundup":
+                assert not item.selected
+                assert item.summary_basis == "hn_comments"
+                assert item.summary_mode == "community_roundup"
+                if outcome == "insufficient":
+                    raise InsufficientSummaryMaterial("Only project names and promotional links.")
+                if outcome == "model_error":
+                    raise RuntimeError("provider unavailable")
+                return overview
+            return "工具新增了离线搜索功能。"
+
+    def fetch_comments(item_id):
+        calls.append(("comments", item_id))
+        if outcome == "fetch_error":
+            raise RuntimeError("HN unavailable")
+        return HNDiscussionResult(
+            text=comments if outcome != "too_short" else "Nice!",
+            comments=3 if outcome != "too_short" else 1,
+            chars=len(comments) if outcome != "too_short" else 5,
+            requested_items=4, failed_items=0,
+        )
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs", data_dir=tmp_path / "data",
+        date_label="2026-09-16",
+        algolia_stories=[
+            story(
+                "49686380",
+                "Ask HN: What AI tools are you working on?" if keyword_title
+                else "Ask HN: What are you working on? (September 2026)",
+                url="https://news.ycombinator.com/item?id=49686380",
+                story_text="What are you working on? What have you been curious about lately?",
+                points=362, comments=1125,
+            ),
+            *[story(str(i), "SQLite update", points=100 - i, comments=10) for i in range(1, 6)],
+        ],
+        hot_stories=[], classifier=RoundupClassifier(), summarizer=RoundupSummarizer(),
+        hn_discussion_fetcher=fetch_comments,
+        article_fetcher=lambda url, **kwargs: "SQLite now supports offline search.",
+        capture_model_inputs=True,
+    )
+    audit = {item["hn_item_id"]: item for item in json.loads(result.data_path.read_text())}
+    roundup = audit["49686380"]
+    items = json.loads(result.public_json_path.read_text())["sections"]["ai"]["items"]
+    assert len(items) == 5
+    assert roundup["content_kind"] == "community_roundup"
+    assert calls.count(("comments", "49686380")) == 1
+    assert audit["5"]["selected"] == (outcome != "success")
+    if outcome == "success":
+        assert roundup["selected"] is True
+        assert next(item for item in items if item["title"].startswith("Ask HN:"))["summary"] == (
+            "根据 Hacker News 部分评论：" + overview
+        )
+        assert calls.count(("summarize", "49686380", False)) == 1
+        assert roundup["summary_context"]["strategy"] == "community_roundup"
+    else:
+        assert roundup["selected"] is False
+        assert roundup["rejection_reason"]
+        assert not any(item["title"].startswith("Ask HN:") for item in items)
+        if outcome == "insufficient":
+            assert "promotional" in roundup["content_reason"]
+
+    captured = load_model_evaluation_input(result.model_input_path)
+    roundup_batches = [batch[0] for batch in captured.exploration_classification_batches
+                       if batch[0].story.hn_item_id == "49686380"]
+    assert roundup_batches[0].content_kind == "article"
+    assert not roundup_batches[0].discussion_text
+    if outcome not in {"fetch_error", "too_short"}:
+        assert roundup_batches[1].content_kind == "community_roundup"
+        assert roundup_batches[1].discussion_text == comments
+    roundup_summaries = [item for item in captured.summary_candidates
+                        if item.story.hn_item_id == "49686380"]
+    assert len(roundup_summaries) == (1 if outcome in {"success", "insufficient", "model_error"} else 0)
+
+
+def test_roundup_route_cannot_be_used_for_an_external_article(tmp_path):
+    calls = []
+    result = run_generate(
+        output_dir=tmp_path / "briefs", data_dir=tmp_path / "data",
+        date_label="2026-09-16", algolia_stories=[],
+        hot_stories=[story("1", "What are you working on?", points=362, comments=1125)],
+        classifier=FakeClassifier(default_label="community_roundup"),
+        summarizer=FakeSummarizer(),
+        hn_discussion_fetcher=lambda item_id: calls.append(item_id),
+    )
+    audit = json.loads(result.data_path.read_text())[0]
+    assert audit["selected"] is False
+    assert audit["rejection_reason"] == "classifier_failed"
+    assert calls == []

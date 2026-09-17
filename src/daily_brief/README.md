@@ -30,11 +30,25 @@ Production generation spans CLI setup and `cli.run_generate(...)`:
 4. `selection.py` deduplicates candidates, while `history.py` excludes recently
    recommended stories. `keywords.py` and `scoring.py` establish the initial core
    candidates and ranking order.
-5. A bounded set of remaining candidates is fetched under the classification
+5. A bounded set of remaining candidates, including keyword-matched HN self-posts,
+   is fetched under the classification
    retrieval policy and classified by article evidence as AI, other core
    computing, outside the core scope, or uncertain. Retrieval and classifier
    failures fail closed for that candidate.
-6. Confirmed core candidates join one ranked pool. Confirmed outside candidates
+   The classifier can first route project-sharing, tool-recommendation, and
+   practical-experience solicitations as `community_roundup`. Only self-posts
+   qualify; informative self-posts and general debates keep the normal route.
+   Roundups fetch a bounded HN comment sample, prioritizing top-level answers,
+   then receive a second topical classification based on the comments. The
+   question provides context only. All self-posts share the existing candidate
+   inspection limit, with at most two classification calls per candidate.
+6. Before final selection, roundups must also pass their summary call: comments
+   must support at least two concrete projects, tools, or practical examples.
+   Insufficient comments, uncertain topics, retrieval errors, or model failures
+   exclude the item so other eligible candidates can fill the slots. Successful
+   overviews are reused after selection, with a code-owned partial-comment
+   attribution. This preselection work is bounded by the classification pool.
+   Confirmed core candidates join one ranked pool. Confirmed outside candidates
    must also satisfy the exploration eligibility rules and are ranked separately.
 7. Selected external stories are retrieved under the fuller summary policy.
    Material fetched during classification is reused. Every fetched public PDF is
@@ -68,12 +82,19 @@ Production generation spans CLI setup and `cli.run_generate(...)`:
 Model comparison is intentionally separate from generation. A generation run can
 capture the exact classifier and summarizer inputs, and `evaluate-model` can
 replay that immutable input without fetching sources, rendering a brief, or
-modifying recommendation and publishing state. Capture schema 4 preserves immutable
-source and HN-discussion inputs when both are attempted for one item; schema 3
-captures remain readable. Replay records insufficient material separately from
+modifying recommendation and publishing state. Capture schema 5 preserves immutable
+classification inputs before and after roundup comment retrieval, content kind,
+and preselection summary inputs (including rejected roundups). It also preserves
+source and HN-discussion inputs when both are attempted for an ordinary item;
+schema 3 and 4 captures remain readable. Replay records insufficient material separately from
 provider failures and does not retrieve fallback material.
 
 The existing summary call returns a validated sufficient/insufficient decision.
+Roundups use a separate sufficiency rule requiring two substantive examples and
+never count a restatement of the question as a useful overview. Their summaries
+use the standard single-summary response schema, with comments as substantive
+evidence and the self-post question only as context. `content_kind` and rejection
+details are private audit fields; public schema remains unchanged.
 The backend returns summary text or raises `InsufficientSummaryMaterial`; this is
 a completed semantic decision, not a provider error. No character minimum is used
 for source sufficiency. `source_material` in candidate audit preserves the original

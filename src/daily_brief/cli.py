@@ -178,6 +178,7 @@ class _SelectionResult:
     ai_items: list[Candidate]
     selected_hot_items: list[Candidate]
     classification_batches: list[list[Candidate]]
+    summary_inputs: list[Candidate]
 
 
 def _fetch_source(
@@ -335,8 +336,10 @@ def run_generate(
         alternate_reporting_finder,
         window,
         clock,
+        summary_client=summarizer or backend,
+        hn_discussion_fetcher=hn_discussion_fetcher,
     )
-    summarization_inputs = _summarize_selected_candidates(
+    summarization_inputs = selection.summary_inputs + _summarize_selected_candidates(
         selection.ai_items,
         selection.selected_hot_items,
         summarizer or backend,
@@ -421,23 +424,27 @@ def _classify_and_select_candidates(
     alternate_reporting_finder: AlternateReportingFinder | None,
     window: TimeWindow,
     clock: Callable[[], float],
+    *,
+    summary_client,
+    hn_discussion_fetcher,
 ) -> _SelectionResult:
     known_core_candidates = [
         candidate
         for candidate in eligible_candidates
-        if _has_non_weak_keyword_match(candidate)
+        if _has_non_weak_keyword_match(candidate) and not _is_self_post(candidate)
     ]
     for candidate in known_core_candidates:
         candidate.topic_route = "keyword"
     unmatched_candidates = [
         candidate
         for candidate in eligible_candidates
-        if not _has_non_weak_keyword_match(candidate)
+        if not _has_non_weak_keyword_match(candidate) or _is_self_post(candidate)
     ]
     core_candidates = list(known_core_candidates)
     ranked_exploration = rank_exploration_candidates(unmatched_candidates)
     outside_candidates: list[Candidate] = []
     classification_batches: list[list[Candidate]] = []
+    summary_inputs: list[Candidate] = []
     inspected_exploration = 0
     for candidate in ranked_exploration[:EXPLORATION_CLASSIFIER_MAX_CANDIDATES]:
         inspected_exploration += 1
@@ -452,13 +459,16 @@ def _classify_and_select_candidates(
             candidate.topic_route = "topic_unknown"
             candidate.rejection_reason = "topic_unknown"
             continue
-        if not (candidate.story.fetched_text or candidate.story.story_text).strip():
+        if (
+            not (candidate.story.fetched_text or candidate.story.story_text).strip()
+            and not _is_self_post(candidate)
+        ):
             candidate.topic_route = "article_uncertain"
             candidate.rejection_reason = "topic_uncertain"
             continue
 
         classification_batch = [candidate]
-        classification_batches.append(classification_batch)
+        classification_batches.append(deepcopy(classification_batch))
         classification_started = clock()
         try:
             decisions = ensure_topic_decisions(
@@ -466,6 +476,21 @@ def _classify_and_select_candidates(
                 classification_batch,
             )
             label_decision = decisions[candidate.story.hn_item_id]
+            if label_decision == "community_roundup":
+                if not _is_self_post(candidate):
+                    raise ValueError("community roundup must be an HN self-post")
+                candidate.content_kind = "community_roundup"
+                if not _prepare_hn_discussion_material(candidate, hn_discussion_fetcher):
+                    candidate.topic_route = "discussion_unavailable"
+                    candidate.rejection_reason = "roundup_discussion_unavailable"
+                    continue
+                classification_batches.append(deepcopy(classification_batch))
+                decisions = ensure_topic_decisions(
+                    topic_classifier.classify(classification_batch), classification_batch,
+                )
+                label_decision = decisions[candidate.story.hn_item_id]
+                if label_decision == "community_roundup":
+                    raise ValueError("roundup comments require a topical decision")
         except Exception as exc:
             classification_duration = clock() - classification_started
             candidate.topic_route = "classifier_failed"
@@ -489,6 +514,13 @@ def _classify_and_select_candidates(
             label_decision,
             classification_duration,
         )
+        if candidate.content_kind == "community_roundup" and label_decision != "uncertain":
+            _prepare_summary_context(candidate)
+            summary_inputs.append(deepcopy(candidate))
+            _generate_candidate_summary(candidate, summary_client)
+            if candidate.summary_status != "success":
+                candidate.rejection_reason = f"roundup_summary_{candidate.summary_status}"
+                continue
         if label_decision == "outside":
             if meets_exploration_minimum(candidate):
                 outside_candidates.append(candidate)
@@ -497,7 +529,8 @@ def _classify_and_select_candidates(
         elif label_decision == "uncertain":
             candidate.rejection_reason = "topic_uncertain"
         else:
-            apply_article_evidence_bonus(candidate)
+            if not _has_non_weak_keyword_match(candidate):
+                apply_article_evidence_bonus(candidate)
             core_candidates.append(candidate)
             LOGGER.info(
                 "component=exploration_router item_id=%s status=article_%s "
@@ -509,6 +542,9 @@ def _classify_and_select_candidates(
 
     ai_items = select_ai_candidates(core_candidates)
     selected_hot_items = select_exploration_candidates(outside_candidates)
+    for candidate in [*ai_items, *selected_hot_items]:
+        if candidate.content_kind == "community_roundup":
+            candidate.why = "HN 部分评论提供了具体项目、工具或实践经验；按热度入选"
     LOGGER.info(
         "component=exploration_router status=completed inspected=%d outside=%d "
         "selected=%d limit=%d",
@@ -521,7 +557,24 @@ def _classify_and_select_candidates(
         ai_items=ai_items,
         selected_hot_items=selected_hot_items,
         classification_batches=classification_batches,
+        summary_inputs=summary_inputs,
     )
+
+
+def _is_self_post(candidate: Candidate) -> bool:
+    return (
+        bool(candidate.story.source_url)
+        and candidate.story.source_url == candidate.story.hn_discussion_url
+    )
+
+
+def _prepare_summary_context(candidate: Candidate) -> None:
+    candidate.summary_mode = route_summary_mode(candidate)
+    context = build_summary_context(candidate)
+    candidate.summary_context_strategy = context.strategy
+    candidate.summary_context_source_chars = context.source_chars
+    candidate.summary_context_selected_chars = context.selected_chars
+    candidate.summary_context_sections = list(context.sections)
 
 
 def _summarize_selected_candidates(
@@ -538,6 +591,9 @@ def _summarize_selected_candidates(
     summary_candidates = [*ai_items, *selected_hot_items]
     summarization_inputs: list[Candidate] = []
     for candidate in summary_candidates:
+        if candidate.content_kind == "community_roundup":
+            # Already assessed before selection; reuse the successful overview.
+            continue
         if candidate.article_retrieval.status == "not_attempted":
             _prepare_candidate_material(
                 candidate,
@@ -557,12 +613,7 @@ def _summarize_selected_candidates(
                 continue
         # At most one source call and one discussion call; never recurse on comments.
         for _ in range(2):
-            candidate.summary_mode = route_summary_mode(candidate)
-            summary_context = build_summary_context(candidate)
-            candidate.summary_context_strategy = summary_context.strategy
-            candidate.summary_context_source_chars = summary_context.source_chars
-            candidate.summary_context_selected_chars = summary_context.selected_chars
-            candidate.summary_context_sections = list(summary_context.sections)
+            _prepare_summary_context(candidate)
             summarization_inputs.append(deepcopy(candidate))
             insufficient = _generate_candidate_summary(candidate, summary_client)
             if not insufficient or candidate.summary_basis == "hn_comments":
@@ -587,8 +638,12 @@ def _generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
         candidate.summary = normalize_summary_text(
             summary_client.summarize(candidate)
         )
+        if not candidate.summary:
+            raise ValueError("summarizer returned an empty summary")
         if candidate.summary_basis == "hn_comments":
-            if not has_discussion_source(candidate):
+            if candidate.content_kind == "community_roundup":
+                candidate.summary = "根据 Hacker News 部分评论：" + candidate.summary
+            elif not has_discussion_source(candidate):
                 candidate.summary = HN_DISCUSSION_SUMMARY_PREFIX + candidate.summary
         elif candidate.article_retrieval.material_origin == "alternate_reporting":
             candidate.summary = (
@@ -615,6 +670,8 @@ def _generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
             candidate.summary_generation.attempts,
         )
     except InsufficientSummaryMaterial as exc:
+        if candidate.content_kind == "community_roundup":
+            candidate.content_reason = exc.reason
         candidate.summary_generation = SummaryGeneration(
             status="insufficient",
             provider=provider,

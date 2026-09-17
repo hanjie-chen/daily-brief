@@ -89,6 +89,8 @@ def test_render_candidates_json_uses_snake_case_fields():
         "comments",
         "matched_keywords",
         "topic_route",
+        "content_kind",
+        "content_reason",
         "summary_mode",
         "summary_context",
         "score",

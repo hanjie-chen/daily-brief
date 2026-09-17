@@ -77,3 +77,48 @@ def test_classifier_prompt_uses_story_text_when_no_article_was_fetched():
     payload = json.loads(prompt.split("Untrusted items:\n", 1)[1])
 
     assert payload[0]["article_evidence_excerpt"] == "Grounded HN self-post facts."
+
+
+def test_classifier_prompt_exposes_self_posts_and_roundup_routing_rules():
+    item = candidate(
+        "1",
+        "Ask HN: What are you working on?",
+        url="https://news.ycombinator.com/item?id=1",
+        story_text="What projects or tools are you building?",
+    )
+
+    prompt = build_topic_classifier_prompt([item])
+    payload = json.loads(prompt.split("Untrusted items:\n", 1)[1])
+
+    assert payload[0]["is_self_post"] is True
+    assert "community_roundup" in prompt
+    assert "Do not use it for every Ask HN post" in prompt
+    assert "standalone analysis" in prompt
+    assert "general controversy" in prompt
+
+
+def test_classifier_prompt_uses_comments_as_roundup_evidence_after_routing():
+    item = candidate(
+        "1",
+        "Ask HN: What are you working on?",
+        url="https://news.ycombinator.com/item?id=1",
+        story_text="What projects or tools are you building?",
+    )
+    item.content_kind = "community_roundup"
+    item.discussion_text = "I made a filesystem indexer that works offline."
+
+    prompt = build_topic_classifier_prompt([item])
+    payload = json.loads(prompt.split("Untrusted items:\n", 1)[1])
+
+    assert payload == [{
+        "id": "1",
+        "source_question": {
+            "title": "Ask HN: What are you working on?",
+            "text": "What projects or tools are you building?",
+        },
+        "hn_comments": "I made a filesystem indexer that works offline.",
+    }]
+    assert "comments are the primary evidence" in prompt
+    assert "question provides context only" in prompt
+    assert "Do not infer their topic" in prompt
+    assert "community_roundup:" not in prompt

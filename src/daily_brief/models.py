@@ -151,6 +151,8 @@ class DiscussionRetrieval:
 @dataclass
 class Candidate:
     story: Story
+    content_kind: str = "article"
+    content_reason: str = ""
     matched_keywords: list[KeywordMatch] = field(default_factory=list)
     score: float = 0.0
     selected: bool = False
