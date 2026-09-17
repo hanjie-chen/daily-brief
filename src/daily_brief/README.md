@@ -91,9 +91,13 @@ provider failures and does not retrieve fallback material.
 
 The existing summary call returns a validated sufficient/insufficient decision.
 Roundups use a separate sufficiency rule requiring two substantive examples and
-never count a restatement of the question as a useful overview. Their summaries
-use the standard single-summary response schema, with comments as substantive
-evidence and the self-post question only as context. `content_kind` and rejection
+never count a restatement of the question as a useful overview. Their dedicated
+prompt returns a short introduction and two or three structured entries (name and plain-language description), with comments as substantive
+evidence and the self-post question only as context. The adapter validates this
+route-specific response and formats a plain-text introduction and bullet list;
+`render.py` preserves those line breaks in Markdown and the existing public
+`summary` string. Ordinary summaries retain their existing response schemas and
+whitespace normalization. `content_kind` and rejection
 details are private audit fields; public schema remains unchanged.
 The backend returns summary text or raises `InsufficientSummaryMaterial`; this is
 a completed semantic decision, not a provider error. No character minimum is used

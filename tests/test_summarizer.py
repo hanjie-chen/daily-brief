@@ -7,7 +7,6 @@ from daily_brief.summarizer import (
     RESEARCH_REPORT_MODULE,
     SUMMARY_CONTEXT_RESEARCH_FULL_TEXT_FALLBACK,
     SUMMARY_CONTEXT_RESEARCH_SECTIONS,
-    SUMMARY_CONTEXT_HN_COMMENTS,
     SUMMARY_CONTEXT_COMMUNITY_ROUNDUP,
     SUMMARY_MODE_GENERIC,
     SUMMARY_MODE_HN_DISCUSSION,
@@ -547,7 +546,11 @@ def test_community_roundup_uses_question_only_as_context_and_comments_as_evidenc
     assert item.discussion_text in context.text
     assert "This must not become source evidence." not in context.text
     assert "评论是唯一的实质证据" in prompt
-    assert "两到三个具体且有区分度的" in prompt
-    assert "至少\n两个有实质细节的例子" in prompt
+    assert "可扫读的小列表" in prompt
+    assert "introduction 用一句简短中文" in prompt
+    assert "entries 给出两到三个" in prompt
+    assert "至少两个有实质细节的例子" in prompt
     assert "社区趋势" in prompt
-    assert "source_summary" not in prompt
+    assert "Return exactly one JSON object with status,\nintroduction, entries, and reason" in prompt
+    assert "默认使用一至两句话" not in prompt
+    assert "先识别材料最核心的结论" not in prompt

@@ -192,7 +192,7 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
             [
                 f"### {_single_line_display_text(story.title)}",
                 "",
-                f"- Summary: {_single_line_display_text(item.summary)}",
+                *_markdown_summary_lines(item),
             ]
         )
         if item.article_retrieval.status == "failed":
@@ -242,6 +242,22 @@ def _single_line_display_text(value: str) -> str:
     return " ".join(value.split())
 
 
+def _summary_display_text(candidate: Candidate) -> str:
+    if candidate.content_kind == "community_roundup" and candidate.summary_status == "success":
+        # The roundup adapter owns these line boundaries; preserve its list.
+        return "\n".join(
+            _single_line_display_text(line) for line in candidate.summary.strip().splitlines()
+        )
+    return _single_line_display_text(candidate.summary)
+
+
+def _markdown_summary_lines(candidate: Candidate) -> list[str]:
+    summary_lines = _summary_display_text(candidate).split("\n")
+    return [f"- Summary: {summary_lines[0]}", *(
+        "  " + line if line else "" for line in summary_lines[1:]
+    )]
+
+
 def _retrieval_failure_payload(failure):
     if failure is None:
         return None
@@ -262,7 +278,7 @@ def _public_item(candidate: Candidate) -> dict:
     return {
         "hn_item_id": story.hn_item_id,
         "title": _single_line_display_text(story.title),
-        "summary": _single_line_display_text(candidate.summary),
+        "summary": _summary_display_text(candidate),
         "content_status": _public_content_status(candidate),
         "why": _single_line_display_text(candidate.why),
         "source_url": story.source_url,

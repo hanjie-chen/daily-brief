@@ -209,9 +209,15 @@ def test_classifier_rejects_roundup_for_external_or_already_routed_item():
         backend.classify([external, self_post])
 
 
-def test_community_roundup_summary_uses_standard_schema():
+def test_community_roundup_summary_uses_structured_schema_and_renders_list():
     opener = RecordingOpener(FakeResponse(interaction({
-        "status": "sufficient", "summary": "一位开发者分享离线备份工具，另一位强调定期演练恢复流程。", "reason": ""
+        "status": "sufficient",
+        "introduction": "这是一个分享近期项目的征集帖。",
+        "entries": [
+            {"name": "离线备份工具", "description": "帮助个人保存本地数据，并强调定期演练恢复流程。"},
+            {"name": "离线日历", "description": "让用户在没有网络时仍能搜索自己的日程。"},
+        ],
+        "reason": "",
     })))
     backend = GeminiBackend(api_key="secret-key", opener=opener)
     item = candidate("1", "Ask HN: What are you working on?", story_text="What are you making?")
@@ -219,10 +225,16 @@ def test_community_roundup_summary_uses_standard_schema():
     item.summary_basis = "hn_comments"
     item.discussion_text = "Comments with concrete projects."
 
-    assert backend.summarize(item) == "一位开发者分享离线备份工具，另一位强调定期演练恢复流程。"
+    assert backend.summarize(item) == (
+        "这是一个分享近期项目的征集帖。\n\n"
+        "- 离线备份工具：帮助个人保存本地数据，并强调定期演练恢复流程。\n"
+        "- 离线日历：让用户在没有网络时仍能搜索自己的日程。"
+    )
     payload = request_payload(opener)
-    assert payload["response_format"]["schema"]["required"] == ["status", "summary", "reason"]
+    assert payload["response_format"]["schema"]["required"] == ["status", "introduction", "entries", "reason"]
     assert "source_summary" not in payload["response_format"]["schema"]["properties"]
+    assert "summary" not in payload["response_format"]["schema"]["properties"]
+    assert payload["response_format"]["schema"]["properties"]["entries"]["items"]["required"] == ["name", "description"]
 
 
 def test_classifier_skips_api_for_empty_input():
@@ -744,9 +756,21 @@ def test_combined_insufficient_cannot_include_source_claims():
 def test_production_roundup_summary_has_exactly_one_partial_comment_attribution():
     from daily_brief.cli import _generate_candidate_summary
 
-    summary = "一位开发者用 GPU 编辑体素地形；另一位开发者的日程工具支持离线搜索。"
+    summary = (
+        "这是一个分享近期项目的征集帖。\n\n"
+        "- 地形编辑器：用 GPU 编辑体素地形。\n"
+        "- 离线日历：支持本地搜索日程。"
+    )
     backend = GeminiBackend(api_key="test-key", opener=RecordingOpener(
-        FakeResponse(interaction({"status": "sufficient", "summary": summary, "reason": ""}))
+        FakeResponse(interaction({
+            "status": "sufficient",
+            "introduction": "这是一个分享近期项目的征集帖。",
+            "entries": [
+                {"name": "地形编辑器", "description": "用 GPU 编辑体素地形。"},
+                {"name": "离线日历", "description": "支持本地搜索日程。"},
+            ],
+            "reason": "",
+        }))
     ))
     item = candidate("1", "Ask HN: What are you working on?", story_text="Share your projects.")
     item.story = replace(item.story, source_url=item.story.hn_discussion_url)
@@ -758,3 +782,35 @@ def test_production_roundup_summary_has_exactly_one_partial_comment_attribution(
 
     assert item.summary_status == "success"
     assert item.summary == "根据 Hacker News 部分评论：" + summary
+
+
+@pytest.mark.parametrize("output", [
+    {"status": "sufficient", "introduction": "导语", "entries": [], "reason": ""},
+    {"status": "sufficient", "introduction": "", "entries": [
+        {"name": "甲", "description": "说明"}, {"name": "乙", "description": "说明"},
+    ], "reason": ""},
+    {"status": "sufficient", "introduction": "导语\n续行", "entries": [
+        {"name": "甲", "description": "说明"}, {"name": "乙", "description": "说明"},
+    ], "reason": ""},
+    {"status": "sufficient", "introduction": "导语", "entries": [
+        {"name": "甲", "description": "说明\n续行"}, {"name": "乙", "description": "说明"},
+    ], "reason": ""},
+    {"status": "sufficient", "introduction": "导语", "entries": [
+        {"name": "甲"}, {"name": "乙", "description": "说明"},
+    ], "reason": ""},
+    {"status": "insufficient", "introduction": "导语", "entries": [], "reason": "材料不足"},
+    {"status": "insufficient", "introduction": "", "entries": [
+        {"name": "甲", "description": "说明"},
+    ], "reason": "材料不足"},
+])
+def test_community_roundup_rejects_invalid_structured_results(output):
+    backend = GeminiBackend(
+        api_key="secret-key", opener=RecordingOpener(FakeResponse(interaction(output)))
+    )
+    item = candidate("1", "Ask HN: Projects?", story_text="Share your work.")
+    item.content_kind = "community_roundup"
+    item.summary_basis = "hn_comments"
+    item.discussion_text = "Concrete project comments."
+
+    with pytest.raises(GeminiResponseError):
+        backend.summarize(item)

@@ -420,3 +420,28 @@ def test_render_marks_summary_failure_as_distinct_from_fetch_failure():
     assert "secret provider detail" not in json.dumps(
         public_payload, ensure_ascii=False
     )
+
+
+def test_roundup_list_survives_markdown_and_public_json_rendering():
+    from daily_brief.public_schema import validate_public_brief
+
+    item = candidate(title="Ask HN: What are you working on?")
+    item.content_kind = "community_roundup"
+    item.summary_basis = "hn_comments"
+    item.summary_status = "success"
+    item.summary = (
+        "根据 Hacker News 部分评论：这是一个分享近期项目的帖子。\n\n"
+        "- 法律工具：追踪法条修改，帮助查看不同版本。\n"
+        "- 木工工具：根据尺寸生成制作方案，并比较板材成本。"
+    )
+    markdown = render_markdown("2026-09-16", [item], [])
+    assert (
+        "- Summary: 根据 Hacker News 部分评论：这是一个分享近期项目的帖子。\n\n"
+        "  - 法律工具：追踪法条修改，帮助查看不同版本。\n"
+        "  - 木工工具：根据尺寸生成制作方案，并比较板材成本。\n- Why:"
+    ) in markdown
+    payload = json.loads(render_public_brief_json(
+        "2026-09-16", "2026-09-16T08:00:00+08:00", [item], []
+    ))
+    validate_public_brief(payload)
+    assert payload["sections"]["ai"]["items"][0]["summary"] == item.summary
