@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from ..source_evidence import SourceEvidence
+
 
 DEFAULT_TIMEOUT_SECONDS = 15
 CLASSIFICATION_HTTP_TIMEOUT_SECONDS = 8
@@ -74,3 +76,4 @@ class ArticleFetchResult:
     attempts: int = 1
     retrieved_url: str = ""
     material_origin: str = "original"
+    source_evidence: SourceEvidence | None = None

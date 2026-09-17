@@ -172,6 +172,7 @@ def _fetch_wayback_capture(
             pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
             pdf_address_space_bytes=pdf_address_space_bytes,
             decode_wayback_encoding=True,
+            source_evidence_url=capture.original_url,
         )
     except HTTPError as exc:
         raise ArticleFetchError(
@@ -209,6 +210,7 @@ def _fetch_wayback_capture(
         extractor=result.extractor,
         retrieved_url=result.retrieved_url,
         material_origin="archived_copy",
+        source_evidence=result.source_evidence,
     )
 
 

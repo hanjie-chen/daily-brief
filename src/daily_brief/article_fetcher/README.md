@@ -44,7 +44,11 @@ bounded flow:
    limit; corrupt gzip and unsupported encodings are rejected. Decoded replay
    content still passes the normal challenge, source-identity, and extraction checks.
 6. Return `ArticleFetchResult` with transport, extractor, attempt count,
-   retrieved URL, fallback reason, and material origin.
+   retrieved URL, fallback reason, material origin, and optional bounded
+   `source_evidence`. The latter preserves fetched title, author, and explicit
+   source relations from article headers, Reader introductions, or YouTube
+   descriptions; it is not itself an acceptance decision. It survives direct,
+   Jina, and Wayback routing and never substitutes for article/caption text.
 
 Classification uses a stricter policy than final summary retrieval. Recovery
 paths must not run when the active policy disables them.

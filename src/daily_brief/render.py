@@ -68,6 +68,9 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                     "error_message": candidate.article_retrieval.error_message,
                     "retrieved_url": candidate.article_retrieval.retrieved_url,
                     "material_origin": candidate.article_retrieval.material_origin,
+                    "same_article_recovery": asdict(
+                        candidate.article_retrieval.same_article_recovery
+                    ),
                     "origin_failure": _retrieval_failure_payload(
                         candidate.article_retrieval.origin_failure
                     ),

@@ -137,6 +137,7 @@ def fetch_article(
             text=caption.text,
             method="youtube_caption",
             extractor="yt_dlp",
+            source_evidence=caption.source_evidence,
         )
 
     github_repository = _github_repository(url)
@@ -308,6 +309,7 @@ def fetch_article(
             extractor=result.extractor,
             attempts=attempt,
             retrieved_url=result.retrieved_url,
+            source_evidence=result.source_evidence,
         )
 
     raise AssertionError("direct article retry loop ended unexpectedly")

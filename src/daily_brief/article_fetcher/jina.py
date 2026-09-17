@@ -19,6 +19,7 @@ from .http_safety import (
     _validate_public_http_url,
 )
 from .responses import _normalize_document_text
+from ..source_evidence import SourceEvidence, extract_markdown_source_evidence
 
 
 JINA_READER_BASE_URL = "https://r.jina.ai/"
@@ -30,6 +31,7 @@ JINA_JSON_CONTENT_TYPES = {"application/json", "text/json"}
 class _JinaReaderResult:
     text: str
     origin_url: str
+    source_evidence: SourceEvidence | None = None
 
 
 def fetch_jina_reader_text(
@@ -157,7 +159,17 @@ def _fetch_jina_reader(
                 error_code="challenge_page",
             )
         _enforce_extracted_limit(text, max_bytes, extractor="jina")
-        return _JinaReaderResult(text=text, origin_url=origin_url)
+        return _JinaReaderResult(
+            text=text,
+            origin_url=origin_url,
+            source_evidence=extract_markdown_source_evidence(
+                content,
+                origin_url,
+                title=data.get("title") if isinstance(data.get("title"), str) else "",
+                author=data.get("author") if isinstance(data.get("author"), str) else "",
+                description=data.get("description") if isinstance(data.get("description"), str) else "",
+            ),
+        )
     except HTTPError as exc:
         raise ArticleFetchError(
             f"Jina Reader request failed: {exc}",

@@ -24,6 +24,7 @@ from .contracts import (
     LOGGER,
 )
 from .extract import extract_html
+from ..source_evidence import extract_html_source_evidence
 from .http_safety import (
     _enforce_extracted_limit,
     _read_bounded,
@@ -77,6 +78,7 @@ def _fetch_direct_response(
     adobe_pdf_enabled: bool = True,
     adobe_pdf_timeout_seconds: int = DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
     decode_wayback_encoding: bool = False,
+    source_evidence_url: str | None = None,
 ) -> ArticleFetchResult:
     expects_pdf = urlparse(request.full_url).path.lower().endswith(".pdf")
     with opener(request, timeout=timeout_seconds) as response:
@@ -117,6 +119,9 @@ def _fetch_direct_response(
                 error_code="challenge_page",
                 extractor="trafilatura",
             )
+        source_evidence = extract_html_source_evidence(markup, source_evidence_url or final_url)
+    else:
+        source_evidence = None
 
     result = _extract_response_payload(
         payload,
@@ -145,6 +150,7 @@ def _fetch_direct_response(
         extractor=result.extractor,
         attempts=result.attempts,
         retrieved_url=final_url,
+        source_evidence=source_evidence or result.source_evidence,
     )
 
 
@@ -205,8 +211,9 @@ def _extract_response_payload(
         )
 
     if content_type == "text/html":
+        markup = payload.decode(charset, errors="replace")
         try:
-            text = extract_html(payload.decode(charset, errors="replace"))
+            text = extract_html(markup)
         except Exception as exc:
             raise ArticleFetchError(
                 f"HTML extraction failed: {exc}",
@@ -214,6 +221,7 @@ def _extract_response_payload(
                 extractor="trafilatura",
             ) from exc
         extractor = "trafilatura"
+        source_evidence = extract_html_source_evidence(markup, "")
     elif content_type.startswith("text/") or content_type in {
         "application/json",
         GITHUB_RAW_CONTENT_TYPE,
@@ -222,6 +230,7 @@ def _extract_response_payload(
             payload.decode(charset, errors="replace")
         )
         extractor = "plain_text"
+        source_evidence = None
     else:
         raise ArticleFetchError(
             f"unsupported article content type: {content_type}",
@@ -235,7 +244,12 @@ def _extract_response_payload(
             extractor=extractor,
         )
     _enforce_extracted_limit(text, extracted_max_bytes, extractor=extractor)
-    return ArticleFetchResult(text=text, method=method, extractor=extractor)
+    return ArticleFetchResult(
+        text=text,
+        method=method,
+        extractor=extractor,
+        source_evidence=source_evidence,
+    )
 
 
 def _extract_pdf_payload(

@@ -44,6 +44,14 @@ Production generation spans CLI setup and `cli.run_generate(...)`:
    Specialized GitHub, YouTube, HTML, and PDF paths remain behind the same bounded
    retrieval interface; recovery material is accepted only after deterministic
    validation.
+   After an origin browser challenge exhausts retrieval, selected-item summary
+   retrieval first tries `same_article.py`: one title-based Tavily basic query,
+   ten discovery candidates, and at most three unique candidate fetches. Only HN
+   is excluded. An independently fetched matching title, explicit publisher
+   cross-post/republication backlink to the source, and substantive body are
+   required. YouTube candidates use the existing captions path and must declare
+   narration of that source. Search snippets and bare/canonical backlinks are
+   insufficient. Rejections continue to the existing Reuters recovery routes.
 8. If every external-source retrieval and recovery path fails for a selected
    story, or its summary call explicitly finds the retrieved material insufficient,
    `cli.py` asks `hn_client.py` for a bounded HN discussion sample as the final fallback.
@@ -119,6 +127,8 @@ from HN self-post text; source prefixes are defined in one shared location.
 | `article_fetcher/challenges.py` | Browser-challenge and network-failure detection |
 | `syndicated_copy.py` | Discovery and validation of Reuters syndicated copies |
 | `alternate_reporting.py` | Discovery and validation of Reuters reporting on the same event |
+| `same_article.py` | Bounded discovery and conservative validation of same-article copies |
+| `source_evidence.py` | Bounded publisher-declared identity signals from page headers and video descriptions |
 | `youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
 | `adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
 | `pdf_extractor.py` | Resource-bounded local PDF text worker |
@@ -143,6 +153,12 @@ from HN self-post text; source prefixes are defined in one shared location.
   summarization. A recovery path is eligible only for its documented failure
   conditions, cannot recurse, and must validate both source identity and usable
   material before model input is created.
+  Same-article recovery preserves the original source URL and failure, actual
+  recovered URL, `same_article` provenance, query, and per-candidate decisions
+  in private audit. Candidate fetches never recursively trigger search. Missing
+  or ambiguous evidence fails closed; this first version intentionally rejects
+  short copies and unsupported attribution formats. Identity evidence remains
+  untrusted publisher testimony, not independent authorship authentication.
 - Summaries are grounded in retrieved article text, Hacker News self-post text, or
   an explicitly labeled bounded discussion sample. Failed external retrieval never
   produces a title-only article paraphrase. Product-level summary requirements are

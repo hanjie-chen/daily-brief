@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .source_evidence import SourceEvidence, extract_markdown_source_evidence
+
 
 YOUTUBE_VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 YOUTUBE_LANGUAGE_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
@@ -32,6 +34,7 @@ class YoutubeCaptionResult:
     text: str
     language: str
     generated: bool
+    source_evidence: SourceEvidence | None = None
 
 
 def youtube_video_id(url: str) -> str | None:
@@ -173,6 +176,13 @@ def fetch_youtube_caption(
             text=text,
             language=language,
             generated=generated,
+            source_evidence=extract_markdown_source_evidence(
+                "",
+                url,
+                title=metadata.get("title") if isinstance(metadata.get("title"), str) else "",
+                author=(metadata.get("uploader") if isinstance(metadata.get("uploader"), str) else ""),
+                description=(metadata.get("description") if isinstance(metadata.get("description"), str) else ""),
+            ),
         )
 
 

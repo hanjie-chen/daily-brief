@@ -74,6 +74,27 @@ class AlternateReportingRecovery:
 
 
 @dataclass
+class SameArticleAttempt:
+    url: str = ""
+    status: str = "rejected"
+    reason: str = ""
+    retrieved_url: str = ""
+    method: str = ""
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SameArticleRecovery:
+    status: str = "not_attempted"
+    provider: str = ""
+    query: str = ""
+    discovered_candidates: int = 0
+    attempted_candidates: int = 0
+    candidates: list[SameArticleAttempt] = field(default_factory=list)
+    error_code: str = ""
+
+
+@dataclass
 class ArticleRetrieval:
     status: str = "not_attempted"
     method: str = ""
@@ -86,6 +107,7 @@ class ArticleRetrieval:
     error_message: str = ""
     retrieved_url: str = ""
     material_origin: str = ""
+    same_article_recovery: SameArticleRecovery = field(default_factory=SameArticleRecovery)
     origin_failure: RetrievalFailure | None = None
     syndicated_recovery: SyndicatedRecovery = field(default_factory=SyndicatedRecovery)
     alternate_reporting_recovery: AlternateReportingRecovery = field(

@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .alternate_reporting import (
     MAX_ALTERNATE_REPORTING_CANDIDATES,
@@ -57,6 +58,8 @@ from .models import (
     Candidate,
     DiscussionRetrieval,
     RetrievalFailure,
+    SameArticleAttempt,
+    SameArticleRecovery,
     Story,
     SummaryGeneration,
     SyndicatedRecovery,
@@ -95,6 +98,17 @@ from .syndicated_copy import (
     validate_syndicated_copy,
 )
 from .time_window import TimeWindow, daily_window
+from .same_article import (
+    MAX_SAME_ARTICLE_CANDIDATES,
+    MAX_SAME_ARTICLE_FETCHES,
+    SameArticleCandidate,
+    SameArticleFinder,
+    SameArticleFinderError,
+    TavilySameArticleFinder,
+    normalize_candidate_url as normalize_same_article_url,
+    same_source_url,
+    validate_same_article,
+)
 
 LOGGER = logging.getLogger(__name__)
 RETRIEVAL_MODE_CLASSIFICATION = "classification"
@@ -137,6 +151,12 @@ class _SyndicatedOutcome:
 class _AlternateReportingOutcome:
     material: _FetchedMaterial | None
     audit: AlternateReportingRecovery
+
+
+@dataclass(frozen=True)
+class _SameArticleOutcome:
+    material: _FetchedMaterial | None
+    audit: SameArticleRecovery
 
 
 @dataclass(frozen=True)
@@ -291,6 +311,7 @@ def run_generate(
     generated_at: str | None = None,
     model_backend: ModelBackend | None = None,
     capture_model_inputs: bool = False,
+    same_article_finder: SameArticleFinder | None = None,
 ) -> GenerateResult:
     window = daily_window()
     label = date_label or window.date_label
@@ -324,6 +345,7 @@ def run_generate(
         syndicated_finder,
         alternate_reporting_finder,
         window,
+        same_article_finder=same_article_finder,
     )
     return _persist_generation(
         output_dir,
@@ -511,6 +533,7 @@ def _summarize_selected_candidates(
     syndicated_finder: SyndicatedCopyFinder | None,
     alternate_reporting_finder: AlternateReportingFinder | None,
     window: TimeWindow,
+    same_article_finder: SameArticleFinder | None = None,
 ) -> list[Candidate]:
     summary_candidates = [*ai_items, *selected_hot_items]
     summarization_inputs: list[Candidate] = []
@@ -523,6 +546,7 @@ def _summarize_selected_candidates(
                 alternate_reporting_finder,
                 window,
                 retrieval_mode=RETRIEVAL_MODE_SUMMARY,
+                same_article_finder=same_article_finder,
             )
         if candidate.article_retrieval.status == "failed":
             if not _prepare_hn_discussion_material(
@@ -745,6 +769,7 @@ def _prepare_candidate_material(
     window,
     *,
     retrieval_mode: str = RETRIEVAL_MODE_SUMMARY,
+    same_article_finder: SameArticleFinder | None = None,
 ) -> bool:
     if (
         candidate.story.source_url
@@ -795,8 +820,20 @@ def _prepare_candidate_material(
                 audit=AlternateReportingRecovery(),
             )
             material_origin = ""
+            same_recovery = _SameArticleOutcome(None, SameArticleRecovery())
             if (
                 retrieval_mode == RETRIEVAL_MODE_SUMMARY
+                and original_failure.fallback_attempted
+                and is_origin_block_reason(original_failure.fallback_reason)
+            ):
+                same_recovery = _attempt_same_article_recovery(
+                    candidate, article_client, same_article_finder
+                )
+                if same_recovery.material is not None:
+                    material_origin = "same_article"
+            if (
+                same_recovery.material is None
+                and retrieval_mode == RETRIEVAL_MODE_SUMMARY
                 and _should_attempt_reuters_recovery(candidate, original_failure)
             ):
                 recovery = _attempt_syndicated_recovery(
@@ -806,7 +843,8 @@ def _prepare_candidate_material(
                 )
                 material_origin = "syndicated_copy"
             elif (
-                retrieval_mode == RETRIEVAL_MODE_SUMMARY
+                same_recovery.material is None
+                and retrieval_mode == RETRIEVAL_MODE_SUMMARY
                 and _should_attempt_alternate_reporting(
                     candidate, original_failure
                 )
@@ -817,7 +855,9 @@ def _prepare_candidate_material(
                     alternate_reporting_finder,
                 )
                 material_origin = "alternate_reporting"
-            recovered_material = recovery.material or alternate_recovery.material
+            recovered_material = (
+                same_recovery.material or recovery.material or alternate_recovery.material
+            )
             if recovered_material is None:
                 candidate.article_retrieval = ArticleRetrieval(
                     status="failed",
@@ -829,6 +869,7 @@ def _prepare_candidate_material(
                     error_type=original_failure.error_type,
                     error_code=original_failure.error_code,
                     error_message=original_failure.error_message,
+                    same_article_recovery=same_recovery.audit,
                     syndicated_recovery=recovery.audit,
                     alternate_reporting_recovery=alternate_recovery.audit,
                 )
@@ -861,10 +902,13 @@ def _prepare_candidate_material(
                 retrieved_url=material.retrieved_url,
                 material_origin=material_origin,
                 origin_failure=original_failure,
+                same_article_recovery=same_recovery.audit,
                 syndicated_recovery=recovery.audit,
                 alternate_reporting_recovery=alternate_recovery.audit,
             )
-            candidate.summary_basis = "fetched_article"
+            candidate.summary_basis = (
+                "youtube_caption" if material.method == "youtube_caption" else "fetched_article"
+            )
             LOGGER.info(
                 "component=article_fetch item_id=%s status=success "
                 "material_origin=%s method=%s extractor=%s "
@@ -1187,6 +1231,100 @@ def _should_attempt_alternate_reporting(
         and failure.fallback_attempted is True
         and is_origin_block_reason(failure.fallback_reason)
     )
+
+
+def _attempt_same_article_recovery(
+    candidate: Candidate,
+    article_client,
+    finder: SameArticleFinder | None,
+) -> _SameArticleOutcome:
+    active_finder = finder or TavilySameArticleFinder.from_environment()
+    audit = SameArticleRecovery(
+        status="exhausted",
+        provider=getattr(active_finder, "provider", "unknown"),
+        query=candidate.story.title.strip()[:500],
+    )
+    try:
+        discovered = active_finder.find(candidate)
+    except Exception as exc:
+        audit.error_code = (
+            exc.error_code if isinstance(exc, SameArticleFinderError) else "finder_failed"
+        )
+        audit.status = "not_configured" if audit.error_code == "not_configured" else "finder_failed"
+        LOGGER.info(
+            "component=same_article_recovery item_id=%s status=%s code=%s",
+            candidate.story.hn_item_id, audit.status, audit.error_code,
+        )
+        return _SameArticleOutcome(None, audit)
+    if not isinstance(discovered, list):
+        audit.status, audit.error_code = "finder_failed", "malformed_results"
+        return _SameArticleOutcome(None, audit)
+
+    bounded = discovered[:MAX_SAME_ARTICLE_CANDIDATES]
+    audit.discovered_candidates = len(bounded)
+    seen: list[str] = []
+    for alternative in bounded:
+        entry = SameArticleAttempt()
+        audit.candidates.append(entry)
+        if not isinstance(alternative, SameArticleCandidate):
+            entry.reason = "malformed_candidate"
+            continue
+        url = normalize_same_article_url(alternative.url)
+        if url is None:
+            entry.reason = "unsupported_url"
+            continue
+        entry.url = url
+        if urlsplit(url).hostname == "news.ycombinator.com":
+            entry.reason = "hn_discussion"
+            continue
+        if same_source_url(url, candidate.story.source_url):
+            entry.reason = "original_url"
+            continue
+        if any(same_source_url(url, previous) for previous in seen):
+            entry.reason = "duplicate_url"
+            continue
+        seen.append(url)
+        if audit.attempted_candidates >= MAX_SAME_ARTICLE_FETCHES:
+            entry.reason = "fetch_budget_exhausted"
+            continue
+        audit.attempted_candidates += 1
+        try:
+            fetched = article_client(url)
+            if not isinstance(fetched, ArticleFetchResult):
+                entry.reason = "missing_source_evidence"
+                continue
+            material = _coerce_fetched_material(fetched, url)
+            entry.retrieved_url = material.retrieved_url
+            entry.method = material.method
+            if same_source_url(material.retrieved_url, candidate.story.source_url):
+                entry.reason = "redirected_to_original"
+                continue
+            if urlsplit(material.retrieved_url).hostname == "news.ycombinator.com":
+                entry.reason = "hn_discussion"
+                continue
+            validation = validate_same_article(candidate, alternative, fetched)
+            entry.reason = validation.reason
+            entry.evidence = [str(value)[:500] for value in validation.evidence[:5]]
+            if not validation.accepted:
+                continue
+        except Exception as exc:
+            entry.reason = (
+                getattr(exc, "error_code", "") or "fetch_failed"
+            )[:100]
+            entry.status = "fetch_failed"
+            continue
+        entry.status = "accepted"
+        audit.status = "success"
+        LOGGER.info(
+            "component=same_article_recovery item_id=%s status=success attempted=%d",
+            candidate.story.hn_item_id, audit.attempted_candidates,
+        )
+        return _SameArticleOutcome(material, audit)
+    LOGGER.info(
+        "component=same_article_recovery item_id=%s status=exhausted attempted=%d",
+        candidate.story.hn_item_id, audit.attempted_candidates,
+    )
+    return _SameArticleOutcome(None, audit)
 
 
 def _attempt_alternate_reporting_recovery(

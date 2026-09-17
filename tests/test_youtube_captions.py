@@ -118,6 +118,9 @@ def test_fetch_youtube_caption_uses_yt_dlp_without_downloading_media():
                 json.dumps(
                     {
                         "id": TARGET_VIDEO_ID,
+                        "title": "Business economics",
+                        "uploader": "The author",
+                        "description": "Narration of https://origin.example/article",
                         "language": "en",
                         "subtitles": {},
                         "automatic_captions": {
@@ -154,6 +157,9 @@ def test_fetch_youtube_caption_uses_yt_dlp_without_downloading_media():
     assert result.text == "No one has proven that there is a sustainable business."
     assert result.language == "en-orig"
     assert result.generated is True
+    assert result.source_evidence.title == "Business economics"
+    assert result.source_evidence.relations[0].kind == "narration"
+    assert result.source_evidence.relations[0].url == "https://origin.example/article"
     assert len(calls) == 2
     for command, kwargs in calls:
         assert "--ignore-config" in command

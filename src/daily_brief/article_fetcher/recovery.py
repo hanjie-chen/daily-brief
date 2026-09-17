@@ -252,6 +252,7 @@ def _fetch_jina_fallback(
         fallback_reason=fallback_reason,
         attempts=direct_attempts + 1,
         retrieved_url=reader_result.origin_url,
+        source_evidence=reader_result.source_evidence,
     )
 
 
@@ -340,4 +341,5 @@ def _fetch_wayback_fallback(
         attempts=attempts,
         retrieved_url=archived.retrieved_url,
         material_origin="archived_copy",
+        source_evidence=archived.source_evidence,
     )

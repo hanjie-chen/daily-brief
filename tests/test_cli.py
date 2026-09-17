@@ -1901,6 +1901,11 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
         "retrieved_url": "",
         "material_origin": "",
         "origin_failure": None,
+        "same_article_recovery": {
+            "status": "not_attempted", "provider": "", "query": "",
+            "discovered_candidates": 0, "attempted_candidates": 0,
+            "candidates": [], "error_code": "",
+        },
         "syndicated_recovery": {
             "status": "not_attempted",
             "provider": "",
