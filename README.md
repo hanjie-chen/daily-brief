@@ -50,6 +50,7 @@ set +a
 
 ### 可选功能
 
+- `JINA_API_KEY`：Jina Reader 优先匿名请求；遇到 HTTP 401/429 时使用此 key 重试一次。未配置则不重试，继续既有恢复流程。原站验证页、无效正文不会触发带 key 重试。
 - `TAVILY_API_KEY`：用于在原文抓取受阻时寻找同稿页面及既有 Reuters 恢复材料；同稿搜索只排除 HN，最多发现 10 个候选、实际抓取 3 个，YouTube 候选走字幕提取。未配置时跳过搜索恢复。
 - `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：同时配置后启用 Adobe PDF-to-Markdown；未配置时仍会使用本地 PDF 提取。
 - Gemini 模型和请求间隔通常无需调整；如需覆盖默认配置，请参考 [`.env.example`](./.env.example)。

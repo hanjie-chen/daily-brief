@@ -226,7 +226,7 @@ def _fetch_jina_fallback(
                 pdf_max_pages=pdf_max_pages,
                 pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
                 pdf_address_space_bytes=pdf_address_space_bytes,
-                prior_attempts=direct_attempts + 1,
+                prior_attempts=direct_attempts + jina_exc.attempts,
                 not_before=wayback_not_before,
                 not_after=wayback_not_after,
             )
@@ -237,20 +237,20 @@ def _fetch_jina_fallback(
             extractor="jina",
             fallback_attempted=True,
             fallback_reason=fallback_reason,
-            attempts=direct_attempts + 1,
+            attempts=direct_attempts + jina_exc.attempts,
         ) from jina_exc
     LOGGER.info(
         "component=article_fetch method=jina extractor=jina status=success "
         "fallback_reason=%s attempts=%d",
         fallback_reason,
-        direct_attempts + 1,
+        direct_attempts + reader_result.attempts,
     )
     return ArticleFetchResult(
         text=reader_result.text,
         method="jina",
         extractor="jina",
         fallback_reason=fallback_reason,
-        attempts=direct_attempts + 1,
+        attempts=direct_attempts + reader_result.attempts,
         retrieved_url=reader_result.origin_url,
         source_evidence=reader_result.source_evidence,
     )

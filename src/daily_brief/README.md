@@ -175,6 +175,10 @@ from HN self-post text; source prefixes are defined in one shared location.
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never
   scans or catches up old dates implicitly.
+- Jina Reader is anonymous first, with one optional `JINA_API_KEY` retry for
+  Reader HTTP 401/429 only. Origin/content failures remain failures; recovery
+  attempt totals include the authenticated request. Credentials are not forwarded
+  on redirects.
 - Credentials come only from process environment variables and must not enter
   artifacts, logs, fixtures, model-evaluation data, or Git. Configuration is
   documented in [`.env.example`](../../.env.example).

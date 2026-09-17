@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.error import HTTPError
 from urllib.request import Request
 
 from .challenges import _is_challenge_page
 from .contracts import (
     ArticleFetchError,
+    LOGGER,
     DEFAULT_MAX_EXTRACTED_BYTES,
     DEFAULT_TIMEOUT_SECONDS,
 )
@@ -32,6 +34,7 @@ class _JinaReaderResult:
     text: str
     origin_url: str
     source_evidence: SourceEvidence | None = None
+    attempts: int = 1
 
 
 def fetch_jina_reader_text(
@@ -42,7 +45,7 @@ def fetch_jina_reader_text(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
 ) -> str:
-    """Fetch and validate one bounded Jina Reader JSON response."""
+    """Fetch validated Reader text, anonymously first with one eligible key retry."""
     return _fetch_jina_reader(
         url,
         opener=opener,
@@ -60,6 +63,46 @@ def _fetch_jina_reader(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
 ) -> _JinaReaderResult:
+    kwargs = dict(opener=opener, resolver=resolver,
+                  timeout_seconds=timeout_seconds, max_bytes=max_bytes)
+    try:
+        result = _fetch_jina_reader_once(url, **kwargs)
+    except ArticleFetchError as anonymous_error:
+        api_key = os.environ.get("JINA_API_KEY", "").strip()
+        if anonymous_error.error_code not in {"http_401", "http_429"} or not api_key:
+            raise
+        LOGGER.info(
+            "component=jina_reader auth=anonymous status=failed code=%s fallback=api_key",
+            anonymous_error.error_code,
+        )
+        try:
+            result = _fetch_jina_reader_once(url, api_key=api_key, **kwargs)
+        except ArticleFetchError as authenticated_error:
+            LOGGER.info(
+                "component=jina_reader auth=api_key status=failed code=%s attempts=2",
+                authenticated_error.error_code,
+            )
+            raise ArticleFetchError(
+                f"Jina Reader anonymous={anonymous_error.error_code}; "
+                f"api_key={authenticated_error.error_code}",
+                error_code=authenticated_error.error_code,
+                method="jina", extractor="jina", attempts=2,
+            ) from authenticated_error
+        LOGGER.info("component=jina_reader auth=api_key status=success attempts=2")
+        return replace(result, attempts=2)
+    LOGGER.info("component=jina_reader auth=anonymous status=success attempts=1")
+    return result
+
+
+def _fetch_jina_reader_once(
+    url: str,
+    *,
+    opener=None,
+    resolver=socket.getaddrinfo,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
+    api_key: str = "",
+) -> _JinaReaderResult:
     _validate_public_http_url(url, resolver)
     reader_url = f"{JINA_READER_BASE_URL}{url}"
     _validate_public_http_url(reader_url, resolver)
@@ -71,6 +114,9 @@ def _fetch_jina_reader(
             "X-Cache-Tolerance": str(JINA_CACHE_TOLERANCE_SECONDS),
         },
     )
+    if api_key:
+        # urllib must not forward this credential to a redirect destination.
+        request.add_unredirected_header("Authorization", f"Bearer {api_key}")
     open_request = opener or _build_safe_opener(resolver).open
 
     try:
@@ -172,7 +218,7 @@ def _fetch_jina_reader(
         )
     except HTTPError as exc:
         raise ArticleFetchError(
-            f"Jina Reader request failed: {exc}",
+            f"Jina Reader request failed: HTTP {exc.code}",
             error_code=f"http_{exc.code}",
             method="jina",
             extractor="jina",
@@ -186,7 +232,7 @@ def _fetch_jina_reader(
         ) from exc
     except Exception as exc:
         raise ArticleFetchError(
-            f"Jina Reader request failed: {exc}",
+            "Jina Reader request failed",
             error_code="request_failed",
             method="jina",
             extractor="jina",

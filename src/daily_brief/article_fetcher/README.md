@@ -43,6 +43,13 @@ bounded flow:
    payload and the decompressed payload must fit the existing response byte
    limit; corrupt gzip and unsupported encodings are rejected. Decoded replay
    content still passes the normal challenge, source-identity, and extraction checks.
+   Reader always tries anonymously first. Only Reader HTTP 401/429 triggers one
+   authenticated retry when `JINA_API_KEY` is configured. Origin-status errors,
+   challenges, malformed responses, timeouts, and other failures do not trigger
+   this retry. Each request retains the existing timeout and size limits;
+   attempt counts include both requests, including when Wayback follows.
+   Logs distinguish anonymous/API-key attempts using stable codes only. The key
+   uses an unredirected Authorization header and is never logged.
 6. Return `ArticleFetchResult` with transport, extractor, attempt count,
    retrieved URL, fallback reason, material origin, and optional bounded
    `source_evidence`. The latter preserves fetched title, author, and explicit
