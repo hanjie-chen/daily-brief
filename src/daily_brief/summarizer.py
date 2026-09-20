@@ -42,6 +42,12 @@ and a specific nonempty reason of at most 300 characters. Never return a title-o
 paraphrase as a sufficient summary. Assess sufficiency and summarize in this one call.
 """
 
+SUMMARY_SCOPE_INSTRUCTION = """摘要范围要求：只介绍 HN 标题所指的具体事件、问题或观点，不要总结整个来源页面。
+材料含有多项更新或多个话题时，仅保留直接说明当前事件的事实、适用条件和限制；不要因为
+它们属于同一个产品或包含共同关键词，就顺带介绍其他变化。原文没有支持的标题说法不能采纳，
+标题与原文冲突时以原文为准。没有相关实质事实时返回 insufficient，不用其他话题凑摘要。
+"""
+
 SUMMARY_SUFFICIENCY_INSTRUCTION = """统一材料判断标准（首次摘要与补充评论后的来源摘要使用同一标准）：
 只使用与当前条目相关的原文事实，写出能帮助读者了解条目的简短摘要。HN 标题只可帮助定位
 材料，不能作为事实证据。材料能交代对象的性质、用途、主题、变化或观点中的任一项，就可以足够；
@@ -485,6 +491,11 @@ def _find_results_heading(body: str, start: int = 0) -> re.Match[str] | None:
 
 
 def build_summary_prompt(candidate: Candidate) -> str:
+    """Apply the same event scope to every summary route."""
+    return SUMMARY_SCOPE_INSTRUCTION + "\n" + _build_summary_route_prompt(candidate)
+
+
+def _build_summary_route_prompt(candidate: Candidate) -> str:
     context = build_summary_context(candidate)
     body = context.text
     summary_mode = route_summary_mode(candidate)

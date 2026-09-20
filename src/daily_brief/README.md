@@ -152,6 +152,11 @@ to the current item count, the HN title is not evidence, and a concrete short
 announcement can suffice. Insufficient excerpts retain existing discussion fallback
 and source/comment attribution; absence from excerpts is not absence from the page.
 Selection is lexical, not semantic, and makes no additional provider calls.
+All summary routes share an event-scope instruction: summarize the item rather
+than the entire source page, retain relevant conditions and limitations, and omit
+other updates that only share a product or keywords. Source evidence overrides
+unsupported title claims. This is a generation instruction, not a post-generation
+quality gate; evidence selection and provider-call counts are unchanged.
 
 ## Module Map
 
