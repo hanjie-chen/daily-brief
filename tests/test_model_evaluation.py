@@ -602,3 +602,17 @@ def test_schema_five_accepts_the_combined_summary_bound(tmp_path):
     assert len(load_model_evaluation_input(input_path).summary_candidates) == (
         MAX_SUMMARY_CANDIDATES
     )
+
+
+def test_long_source_replay_preserves_original_and_selected_prompt(tmp_path):
+    body = 'Previous release: maintenance.\n' * 12000 + '\nNovaDB introduces snapshot reads, except on replicas.'
+    item = candidate('1', 'NovaDB snapshot reads', fetched_text=body)
+    item.summary_basis = 'fetched_article'
+    path = tmp_path / 'long.json'
+    capture_model_evaluation_input(path, '2026-09-19', [[item]], [item])
+    loaded = load_model_evaluation_input(path)
+    restored = loaded.summary_candidates[0]
+    assert restored.story.fetched_text == body
+    assert build_summary_prompt(restored) == build_summary_prompt(item)
+    assert 'except on replicas' in build_summary_prompt(restored)
+    assert len(build_summary_prompt(restored)) < 40000

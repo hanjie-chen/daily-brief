@@ -57,6 +57,12 @@ bounded flow:
    descriptions; it is not itself an acceptance decision. It survives direct,
    Jina, and Wayback routing and never substitutes for article/caption text.
 
+Complete extracted text has a 2 MiB hard ceiling, independent of downstream
+model evidence budgets. HTML and PDF download ceilings remain 4 and 20 MiB.
+Exceeding a hard ceiling still fails; this package does not truncate or select
+title-dependent excerpts. Classification and summarization select bounded views
+after retrieval, preserving full material for recovery validation.
+
 Classification uses a stricter policy than final summary retrieval. Recovery
 paths must not run when the active policy disables them.
 

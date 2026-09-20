@@ -3306,3 +3306,57 @@ def test_roundup_route_cannot_be_used_for_an_external_article(tmp_path):
     assert audit["selected"] is False
     assert audit["rejection_reason"] == "classifier_failed"
     assert calls == []
+
+
+@pytest.mark.parametrize('long_source', [False, True])
+@pytest.mark.parametrize('relevant', [False, True])
+def test_item_evidence_selection_and_discussion_fallback(tmp_path, long_source, relevant):
+    from daily_brief.summarizer import InsufficientSummaryMaterial, build_summary_context
+    from daily_brief.model_evaluation import load_model_evaluation_input
+
+    announcement = 'AGENTS.md is read only if CLAUDE.md is absent; cloud editions are excluded.'
+    source = ('Old release: unrelated maintenance.\n' * 10000 if long_source else '')
+    source += announcement if relevant else 'Contact our sales team to learn about this product.'
+    calls = []
+    discussions = []
+
+    class EvidenceBackend:
+        name = 'fake'
+
+        def summarize(self, item):
+            context = build_summary_context(item)
+            calls.append((item.summary_basis, context))
+            assert item.story.fetched_text == source
+            assert context.source_chars >= len(source)
+            if item.summary_basis == 'hn_comments':
+                assert 'Untrusted source material' in context.text
+                assert 'Untrusted HN comments' in context.text
+                assert len(context.text) < 27000
+                return '根据 Hacker News 讨论（不代表原文观点）：评论者讨论了共享项目指令的维护方式。'
+            assert len(context.text) <= 24000
+            if relevant:
+                assert announcement in context.text
+                return '项目没有 CLAUDE.md 时会读取 AGENTS.md，云端版本暂不支持。'
+            raise InsufficientSummaryMaterial('所提供材料未说明当前条目的具体变化。')
+
+    def fetch_discussion(item_id):
+        discussions.append(item_id)
+        text = 'Commenters discuss maintaining shared project instructions across tools. ' * 12
+        return HNDiscussionResult(text=text, comments=4, chars=len(text), requested_items=5, failed_items=0)
+
+    result = run_generate(
+        output_dir=tmp_path / 'briefs', data_dir=tmp_path / 'data', date_label='2026-09-19',
+        algolia_stories=[story('1', 'Claude Code reads AGENTS.md if no CLAUDE.md', points=80, comments=20)],
+        hot_stories=[], article_fetcher=lambda url, **kwargs: source,
+        hn_discussion_fetcher=fetch_discussion, summarizer=EvidenceBackend(), capture_model_inputs=True,
+    )
+    audit = json.loads(result.data_path.read_text())[0]
+    assert audit['article_retrieval']['status'] == 'success'
+    assert audit['summary_status'] == 'success'
+    assert discussions == ([] if relevant else ['1'])
+    assert len(calls) == (1 if relevant else 2)
+    if long_source:
+        assert calls[0][1].strategy in {'relevant_excerpts', 'sampled_excerpts'}
+        assert calls[0][1].sections
+    captured = load_model_evaluation_input(result.model_input_path)
+    assert captured.summary_candidates[0].story.fetched_text == source

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from .article_fetcher.contracts import DEFAULT_MAX_EXTRACTED_BYTES
 from .config import (
     AI_MAX_ITEMS,
     EXPLORATION_CLASSIFIER_MAX_CANDIDATES,
@@ -402,13 +403,15 @@ def _parse_candidate(value, field_name: str, *, schema_version: int) -> Candidat
         "hn_discussion_url": 4096,
         "created_at": 128,
         "story_text": MAX_TEXT_LENGTH,
-        "fetched_text": MAX_TEXT_LENGTH,
+        "fetched_text": DEFAULT_MAX_EXTRACTED_BYTES,
         "summary_basis": 64,
         "discussion_text": MAX_TEXT_LENGTH,
     }
     for key, maximum in text_limits.items():
         if not isinstance(value[key], str) or len(value[key]) > maximum:
             raise ModelEvaluationInputError(f"invalid {key} in {field_name}")
+    if len(value["fetched_text"].encode("utf-8")) > DEFAULT_MAX_EXTRACTED_BYTES:
+        raise ModelEvaluationInputError(f"invalid fetched_text in {field_name}")
     if not value["hn_item_id"] or not value["title"]:
         raise ModelEvaluationInputError(
             f"item ID and title are required in {field_name}"

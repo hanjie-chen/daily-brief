@@ -519,7 +519,7 @@ def test_fetch_article_routes_target_youtube_video_to_caption_extractor(monkeypa
     assert fetched_urls == [
         (
             "https://www.youtube.com/watch?v=68X8yEatepQ",
-            {"max_text_bytes": 256 * 1024},
+            {"max_text_bytes": 2 * 1024 * 1024},
         )
     ]
 
@@ -2712,3 +2712,32 @@ def test_fetch_jina_reader_text_enforces_content_limit_after_json_decode():
 
     assert caught.value.error_code == "extracted_content_too_large"
     assert caught.value.extractor == "jina"
+
+
+def test_long_extracted_html_is_available_for_evidence_selection(monkeypatch):
+    from daily_brief.evidence_selection import select_evidence
+    text = 'Old release notes.\n' * 16000 + '\n2.1.277\nAdded AGENTS.md support when CLAUDE.md is absent.'
+    monkeypatch.setattr(article_responses_module, 'extract_html', lambda markup: text)
+    result = fetch_article(
+        'https://example.com/releases',
+        opener=lambda request, timeout: FakeResponse(b'<html><body>Release notes</body></html>'),
+        resolver=resolver_for({}),
+    )
+    assert len(result.text.encode()) > 256 * 1024
+    assert result.text == text  # Retrieval retains full material, never a hidden prefix.
+    selected = select_evidence(result.text, title='AGENTS.md support without CLAUDE.md')
+    assert 'when CLAUDE.md is absent' in selected.text
+    assert len(selected.text) <= 24000
+
+
+def test_hard_extraction_ceiling_still_rejects_oversized_text(monkeypatch):
+    from daily_brief.article_fetcher import DEFAULT_MAX_EXTRACTED_BYTES
+    monkeypatch.setattr(article_responses_module, 'extract_html',
+                        lambda markup: 'x' * (DEFAULT_MAX_EXTRACTED_BYTES + 1))
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            'https://example.com/oversized',
+            opener=lambda request, timeout: FakeResponse(b'<html>Body</html>'),
+            resolver=resolver_for({}),
+        )
+    assert caught.value.error_code == 'extracted_content_too_large'

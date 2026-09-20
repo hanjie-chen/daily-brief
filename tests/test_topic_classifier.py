@@ -65,9 +65,10 @@ def test_classifier_prompt_prefers_normalized_bounded_fetched_text_excerpt():
     payload = json.loads(prompt.split("Untrusted items:\n", 1)[1])
     excerpt = payload[0]["article_evidence_excerpt"]
 
-    assert excerpt.startswith("AI agents can help ")
-    assert "\n" not in excerpt
-    assert len(excerpt) == TOPIC_CLASSIFIER_ARTICLE_TEXT_MAX_CHARS
+    assert "AI agents can help " in " ".join(excerpt.split())
+    assert excerpt.startswith("[Source excerpts;")
+    assert "[Source characters 0:" in excerpt
+    assert len(excerpt) <= TOPIC_CLASSIFIER_ARTICLE_TEXT_MAX_CHARS
 
 
 def test_classifier_prompt_uses_story_text_when_no_article_was_fetched():
@@ -77,6 +78,24 @@ def test_classifier_prompt_uses_story_text_when_no_article_was_fetched():
     payload = json.loads(prompt.split("Untrusted items:\n", 1)[1])
 
     assert payload[0]["article_evidence_excerpt"] == "Grounded HN self-post facts."
+
+
+def test_classifier_selects_relevant_evidence_beyond_the_old_prefix_limit():
+    item = candidate(
+        "1",
+        "A field guide to ceramic glazing",
+        fetched_text=("unrelated release archive " * 500)
+        + "This field guide explains ceramic glazing temperatures and kiln safety.",
+    )
+
+    prompt = build_topic_classifier_prompt([item])
+    payload = json.loads(prompt.split("Untrusted items:\n", 1)[1])
+    excerpt = payload[0]["article_evidence_excerpt"]
+
+    assert "ceramic glazing temperatures" in excerpt
+    assert "Source excerpts" in excerpt
+    assert "title can help locate material" in prompt
+    assert "return uncertain" in prompt
 
 
 def test_classifier_prompt_exposes_self_posts_and_roundup_routing_rules():

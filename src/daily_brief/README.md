@@ -119,6 +119,40 @@ introduction can be written. Metadata-derived statements always require explicit
 website self-description attribution. Combined output distinguishes web content
 from HN self-post text; source prefixes are defined in one shared location.
 
+## Bounded Evidence Selection
+
+Retrieval retains complete extracted text up to a 2 MiB hard ceiling; HTML/PDF
+response limits remain 4/20 MiB. Oversized responses or extraction still fail,
+never silently truncate. Source identity and republication validators continue to
+inspect full retrieved material before any model-input selection.
+
+`evidence_selection.py` supplies deterministic title/URL-fragment-aware excerpts
+at the model boundary: 6,000 characters for classification and 24,000 for ordinary
+source summaries. Full `Story.fetched_text` is never replaced by excerpts, including
+when classification material is reused for a selected item. Capture/replay accepts
+full fetched text up to the same UTF-8 byte ceiling. Short classifier inputs keep
+legacy whitespace normalization; long inputs retain block boundaries.
+
+Long text is divided into bounded blocks. Rare matching title/anchor terms rank
+blocks; adjacent blocks retain local qualifications and headings when extraction
+preserved them. Publisher metadata keeps its attribution wrapper. No lexical match
+uses bounded distributed sampling, explicitly distinguished from relevance matching.
+All excerpts carry omission notices; matching never establishes factual truth.
+Summary audit records source length, selected length (including markers), strategy,
+and half-open character ranges. Ordinary ranges refer to the stripped extracted
+source; `research_chars` ranges refer to the assembled research sections, whose
+names remain in the audit. Research section selection precedes this budget; each chosen section receives a
+separate share with head/tail coverage so a title match cannot displace results or
+limitations. The
+source-plus-comment fallback budgets the source again without restoring full text.
+Comments keep their separate existing bounded sampling limits.
+
+Shared sufficiency instructions apply to short and long sources: only facts relevant
+to the current item count, the HN title is not evidence, and a concrete short
+announcement can suffice. Insufficient excerpts retain existing discussion fallback
+and source/comment attribution; absence from excerpts is not absence from the page.
+Selection is lexical, not semantic, and makes no additional provider calls.
+
 ## Module Map
 
 | File | Responsibility |
@@ -157,6 +191,7 @@ from HN self-post text; source prefixes are defined in one shared location.
 | `youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
 | `adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
 | `pdf_extractor.py` | Resource-bounded local PDF text worker |
+| `evidence_selection.py` | Bounded title-aware source excerpts with explicit omissions |
 | `summarizer.py` | Grounded prompts, route selection, evidence selection, and normalization |
 | `render.py` | Markdown, public JSON, and private candidate-audit serialization |
 | `public_schema.py` | Public payload contract shared by generation and publishing |

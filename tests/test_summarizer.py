@@ -220,6 +220,43 @@ def test_summary_prompt_uses_placeholder_when_no_content():
     assert "(not available)" in prompt
 
 
+def test_generic_long_source_selects_relevant_late_evidence_with_range_markers():
+    body = (
+        "Old changelog entry with unrelated maintenance notes.\n\n" * 900
+        + "Version 2.1.277 adds AGENTS.md support when no CLAUDE.md exists.\n"
+    )
+    item = candidate(
+        story_text="",
+        fetched_text=body,
+        title="Claude Code now reads AGENTS.md if there is no Claude.md",
+    )
+
+    context = build_summary_context(item)
+
+    assert context.strategy == "relevant_excerpts"
+    assert context.source_chars == len(body.strip())
+    assert context.selected_chars == len(context.text)
+    assert "AGENTS.md support" in context.text
+    assert any(section.startswith("chars:") for section in context.sections)
+    assert "Missing evidence here does not establish absence" in context.text
+
+
+def test_combined_discussion_keeps_selected_source_separate_from_comments():
+    source = "Historical release note.\n" * 1500 + "The update adds a safe migration command."
+    item = candidate(story_text="", fetched_text=source, title="Safe migration command")
+    item.summary_basis = "hn_comments"
+    item.discussion_text = "A commenter says the rollback option is useful."
+
+    context = build_summary_context(item)
+
+    assert context.strategy == "source_and_hn_comments"
+    assert "safe migration command" in context.text
+    assert item.discussion_text in context.text
+    assert context.source_chars == len(source.strip()) + len(item.discussion_text)
+    assert "source_material" in context.sections
+    assert "hn_comments" in context.sections
+
+
 def test_high_confidence_research_structure_routes_and_selects_evidence():
     body = research_body()
     item = candidate(story_text="", fetched_text=body, title="Enterprise AI study [pdf]")
@@ -359,6 +396,22 @@ def test_research_evidence_falls_back_to_full_text_when_sections_are_too_short()
     assert context.strategy == SUMMARY_CONTEXT_RESEARCH_FULL_TEXT_FALLBACK
     assert context.text == body.strip()
     assert context.sections == ()
+
+
+def test_research_sections_are_budgeted_after_section_selection():
+    body = research_body().replace(
+        "Output tokens increased sevenfold,",
+        "Output tokens increased sevenfold, " + ("detailed result " * 2_000),
+    )
+    item = candidate(story_text="", fetched_text=body, title="Enterprise AI study")
+
+    context = build_summary_context(item)
+
+    assert context.strategy == SUMMARY_CONTEXT_RESEARCH_SECTIONS
+    assert context.source_chars == len(body.strip())
+    assert context.selected_chars <= 24_000
+    assert context.sections[:2] == ("abstract", "results_through_conclusion")
+    assert any(section.startswith("research_chars:") for section in context.sections)
 
 
 def test_research_module_and_selected_evidence_preserve_untrusted_boundary():
@@ -554,3 +607,21 @@ def test_community_roundup_uses_question_only_as_context_and_comments_as_evidenc
     assert "Return exactly one JSON object with status,\nintroduction, entries, and reason" in prompt
     assert "默认使用一至两句话" not in prompt
     assert "先识别材料最核心的结论" not in prompt
+
+
+def test_research_budget_keeps_results_and_limitations_when_title_only_in_abstract():
+    body = research_body().replace(
+        'This study links', 'OpaqueStudyName This study links'
+    ).replace(
+        'Output tokens increased sevenfold,',
+        'RESULT_SENTINEL Output tokens increased sevenfold, ' + 'additional measurements ' * 4000,
+    ).replace(
+        'The analysis covers only', 'LIMITATION_SENTINEL The analysis covers only'
+    )
+    context = build_summary_context(candidate(story_text='', fetched_text=body, title='OpaqueStudyName'))
+    assert context.strategy == SUMMARY_CONTEXT_RESEARCH_SECTIONS
+    assert len(context.text) <= 24000
+    assert 'OpaqueStudyName' in context.text
+    assert 'RESULT_SENTINEL' in context.text
+    assert 'LIMITATION_SENTINEL' in context.text
+    assert 'does not measure downstream' in context.text

@@ -4,6 +4,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from .evidence_selection import select_evidence
 from .models import Candidate
 
 SUMMARY_SYSTEM_INSTRUCTION = (
@@ -42,10 +43,12 @@ paraphrase as a sufficient summary. Assess sufficiency and summarize in this one
 """
 
 SUMMARY_SUFFICIENCY_INSTRUCTION = """统一材料判断标准（首次摘要与补充评论后的来源摘要使用同一标准）：
-只使用所提供的材料，写出能帮助读者了解条目的简短摘要。材料能交代对象的性质、用途、
-主题、变化或观点中的任一项，就可以足够；不要求材料完整、达到某个字数或解释所有细节。
+只使用与当前条目相关的原文事实，写出能帮助读者了解条目的简短摘要。HN 标题只可帮助定位
+材料，不能作为事实证据。材料能交代对象的性质、用途、主题、变化或观点中的任一项，就可以足够；
+不要求材料完整、达到某个字数或解释所有细节。短公告只要清楚交代具体变化及其适用条件，也可以足够。
 只有无法从材料写出任何有用介绍时才返回 insufficient，例如只有标题、导航、登录提示，
 或缺少对象语境的操作指令。不得仅因希望获得更多细节而判不足，也不得用标题或常识补写。
+若材料是长文节选，节选中没有找到相关事实只说明该节选不足，不能声称全文没有该事实。
 页面 description / og:description 是网站自述。凡依据这些介绍作出的陈述，必须明确写
 “网站介绍称……”或“网站自述……”，包括整段摘要都来自介绍的情况；不能当作独立验证的事实。
 对其余来源也只陈述有依据的信息，不得推断未取得的剧情、操作结果或技术实现。
@@ -92,6 +95,7 @@ MIN_RESEARCH_ABSTRACT_CHARS = 120
 MIN_RESEARCH_MAIN_CHARS = 240
 MAX_RESEARCH_ABSTRACT_START_CHARS = 12_000
 RESEARCH_ABSTRACT_START_FRACTION = 0.15
+SUMMARY_EVIDENCE_MAX_CHARS = 24_000
 
 _MEMORIAL_TITLE_PATTERNS = (
     re.compile(r"in memory of(?:\s+|\s*[:\-\u2013\u2014]\s*)\S(?:.*\S)?", re.IGNORECASE),
@@ -294,11 +298,21 @@ def build_summary_context(candidate: Candidate) -> SummaryContext:
         discussion_text = candidate.discussion_text.strip()
         if has_discussion_source(candidate):
             source = candidate.story.fetched_text.strip() or candidate.story.story_text.strip()
-            text = f"Untrusted source material ({source_material_label(candidate)}):\n{source}\n\nUntrusted HN comments:\n{discussion_text}"
+            selected_source = select_evidence(
+                source,
+                title=candidate.story.title,
+                url=candidate.story.source_url,
+                max_chars=SUMMARY_EVIDENCE_MAX_CHARS,
+            )
+            text = (
+                f"Untrusted source material ({source_material_label(candidate)}):\n"
+                f"{selected_source.text}\n\nUntrusted HN comments:\n{discussion_text}"
+            )
             return SummaryContext(
                 text=text, strategy="source_and_hn_comments",
-                source_chars=len(source) + len(discussion_text),
-                selected_chars=len(text), sections=("source_material", "hn_comments"),
+                source_chars=selected_source.source_chars + len(discussion_text),
+                selected_chars=len(text),
+                sections=("source_material", *selected_source.sections, "hn_comments"),
             )
         return SummaryContext(
             text=discussion_text or "(not available)",
@@ -322,28 +336,82 @@ def build_summary_context(candidate: Candidate) -> SummaryContext:
         )
 
     if route_summary_mode(candidate) != SUMMARY_MODE_RESEARCH_REPORT:
+        evidence = select_evidence(
+            body,
+            title=candidate.story.title,
+            url=candidate.story.source_url,
+            max_chars=SUMMARY_EVIDENCE_MAX_CHARS,
+        )
         return SummaryContext(
-            text=body,
-            strategy=SUMMARY_CONTEXT_FULL_TEXT,
-            source_chars=len(body),
-            selected_chars=len(body),
+            text=evidence.text,
+            strategy=evidence.strategy,
+            source_chars=evidence.source_chars,
+            selected_chars=evidence.selected_chars,
+            sections=evidence.sections,
         )
 
     selected_text, sections = _select_research_evidence(body)
     if not selected_text:
+        evidence = select_evidence(
+            body,
+            title=candidate.story.title,
+            url=candidate.story.source_url,
+            max_chars=SUMMARY_EVIDENCE_MAX_CHARS,
+        )
         return SummaryContext(
-            text=body,
+            text=evidence.text,
             strategy=SUMMARY_CONTEXT_RESEARCH_FULL_TEXT_FALLBACK,
             source_chars=len(body),
-            selected_chars=len(body),
+            selected_chars=evidence.selected_chars,
+            sections=evidence.sections,
         )
+    bounded_text, ranges = _bound_research_sections(selected_text)
     return SummaryContext(
-        text=selected_text,
+        text=bounded_text,
         strategy=SUMMARY_CONTEXT_RESEARCH_SECTIONS,
         source_chars=len(body),
-        selected_chars=len(selected_text),
-        sections=sections,
+        selected_chars=len(bounded_text),
+        sections=(*sections, *ranges),
     )
+
+
+def _bound_research_sections(text: str) -> tuple[str, tuple[str, ...]]:
+    """Budget each research section so title matches cannot crowd out conclusions."""
+    if len(text) <= SUMMARY_EVIDENCE_MAX_CHARS:
+        return text, ()
+    conclusion = _CONCLUSION_HEADING.search(text)
+    results = _find_results_heading(text)
+    cuts = sorted({0, len(text)} | {
+        match.start() for match in (results, conclusion) if match is not None
+    })
+    spans = list(zip(cuts, cuts[1:]))
+    budget = (SUMMARY_EVIDENCE_MAX_CHARS - 512) // len(spans)
+    pieces = []
+    ranges = []
+    for start, end in spans:
+        # The semantic sections are already chosen. Distributed sampling within
+        # each section preserves its start and end even with an opaque study name.
+        evidence = select_evidence(text[start:end], title="", max_chars=budget)
+        piece = evidence.text
+        if evidence.sections:
+            # Rebuild only code-owned markers, never substitute inside source text.
+            piece = evidence.text.split("\n\n[Source characters ", 1)[0]
+            for span in evidence.sections:
+                _, lo, hi = span.split(":")
+                absolute_lo, absolute_hi = start + int(lo), start + int(hi)
+                piece += (
+                    f"\n\n[Source characters {absolute_lo}:{absolute_hi}]\n"
+                    + text[absolute_lo:absolute_hi]
+                )
+        pieces.append(piece)
+        if evidence.sections:
+            for span in evidence.sections:
+                _, lo, hi = span.split(":")
+                ranges.append(f"research_chars:{start + int(lo)}:{start + int(hi)}")
+        else:
+            ranges.append(f"research_chars:{start}:{end}")
+    return "\n\n".join(pieces), tuple(ranges)
+
 
 
 def _is_high_confidence_research_report(body: str) -> bool:
