@@ -1,0 +1,40 @@
+# API 额度与使用注意事项
+
+记录本项目使用的 API 配额及影响日常运行和实验的注意事项。各服务按需记录，实际额度以对应控制台为准；接入新服务或额度变化时更新。
+
+## Gemini
+
+当前项目配额，依据 2026-09-19 Google AI Studio 设置；变化时以控制台为准。
+
+| 模型                    | 项目用途 | 每分钟请求数（RPM） | 每分钟输入 token（TPM） | 每日请求数（RPD） |
+| ----------------------- | -------- | ------------------- | ----------------------- | ----------------- |
+| `gemini-3.5-flash-lite` | 内容分类 | 15                  | 250,000                 | 500               |
+| `gemini-3.6-flash`      | 摘要生成 | 5                   | 250,000                 | 20                |
+
+- 批量实验前先查看 3.6 Flash 的当日用量，为日常生成留出余量。 一份简报的摘要请求可能超过最终条目数；`evaluate-model` 也会真实调用 API。
+- 程序默认将分类、摘要请求分别间隔至少 6 秒、20 秒，包含重试；没有每日额度检查或跨进程共享限流，避免多个任务同时调用同一模型。配置见 [`.env.example`](../.env.example)。
+- 配额按 Google project 计算，同一 project 下的其他调用也会占用相应额度。每日额度在美国太平洋时间午夜重置，对应新加坡时间夏令时 15:00、冬令时 16:00；日额度耗尽后，短暂等待重试不能解决。[官方限流说明](https://ai.google.dev/gemini-api/docs/rate-limits)
+
+## Tavily
+
+依据 2026-09-19 控制台及官方文档核实。
+
+- 使用 Researcher 免费套餐，每月 1,000 credits，每月 1 日重置。当前 Pay as you go 关闭，额度耗尽后请求停止，等待重置或主动升级。[套餐与重置规则](https://www.tavily.com/pricing)
+- 项目固定使用 `basic` 搜索，每次消耗 1 credit；若以后改用 `advanced`，每次为 2 credits。[计费说明](https://docs.tavily.com/documentation/api-credits)
+- 仅在原文抓取受阻后的恢复流程中使用，一篇文章单次恢复最多搜索两次。额度耗尽会影响搜索恢复，但程序仍会继续后续兜底流程。批量重跑前可在 [控制台](https://app.tavily.com/home) 查看当月用量。
+
+## Jina Reader
+
+依据 2026-09-20 控制台及[官方说明](https://jina.ai/reader/)核实。
+
+- 匿名访问免费，按出口 IP 限流，目前为 20 RPM。项目优先匿名请求；仅遇到 Jina HTTP 401/429 时，使用 `JINA_API_KEY` 重试一次，原站验证页或无效正文不会触发带 key 重试。
+- 新 API key 赠送 10M tokens，按赠送余额使用，不预期每月重置；免费 key 的 Reader 限流为 500 RPM，按输出 token 数消耗余额。余额不足时再按需充值，实际余额在[控制台](https://jina.ai/api-dashboard/key-manager/)查看。
+- 批量实验或并行运行时，留意同一出口 IP 的匿名限流，避免频繁切换到带 key 请求而消耗赠送余额。
+
+## Adobe PDF Services
+
+依据 2026-09-20 [官方额度说明](https://developer.adobe.com/document-services/docs/overview/limits)核实。
+
+- 免费层每月提供 500 个 Document Transactions（文档事务），每月 1 日重置。
+- 项目使用 PDF To Markdown，每份 PDF 每 5 页计 1 个事务，不足 5 页向上取整。例如 8 页消耗 2 个事务，20 页消耗 4 个；批量实验应按页数估算用量，不能只数 PDF 文件数量。
+- 配置好凭据后优先使用 Adobe 转换；额度不足、转换失败或超时时，自动尝试本地 `pypdf` 提取，提取效果可能有所下降。
