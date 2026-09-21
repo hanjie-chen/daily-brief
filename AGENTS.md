@@ -5,6 +5,7 @@
 - Start with the project root `README.md`.
 - Before planning changes that affect content selection, section composition, or the reading experience, read `docs/product.md`.
 - Before planning or making non-trivial changes under `src/daily_brief`, read `src/daily_brief/README.md` and the relevant code and tests.
+- Before running batch experiments that call live APIs, read `docs/api-quotas.md`.
 
 ## Documentation
 

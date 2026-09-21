@@ -34,7 +34,7 @@
 
 Daily Brief 只读取进程环境变量，不会自动加载 `.env`。完整的变量列表、默认值和说明见 [`.env.example`](./.env.example)。
 
-各 API 的免费额度、限流及使用注意事项见 [`docs/api-quotas.md`](./docs/api-quotas.md)；运行调用真实 API 的批量实验前，请先查阅。
+各 API 的免费额度、限流及使用注意事项见 [`docs/api-quotas.md`](./docs/api-quotas.md)。
 
 本地运行时，可以复制配置模板，编辑后将其加载到当前 shell：
 
