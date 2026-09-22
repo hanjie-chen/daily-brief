@@ -32,35 +32,31 @@
 
 ## Config
 
-Daily Brief 只读取进程环境变量，不会自动加载 `.env`。完整的变量列表、默认值和说明见 [`.env.example`](./.env.example)。
+首次配置时，将 [`.env.example`](./.env.example) 复制为 `.env`，再填写所需的凭据。模板中列出了全部配置项及默认值；已有 `.env` 时直接编辑，避免覆盖现有配置。
 
-各 API 的免费额度、限流及使用注意事项见 [`docs/api-quotas.md`](./docs/api-quotas.md)。
+### 必填配置
 
-本地运行时，可以复制配置模板，编辑后将其加载到当前 shell：
+- 生成简报：填写 `GEMINI_API_KEY`。
+- 发布简报：填写 `DAILY_BRIEF_PUBLISH_URL` 和 `DAILY_BRIEF_PUBLISH_TOKEN`。只生成、不发布时无需配置。
+
+### 可选配置
+
+以下服务用于补充原文获取能力，不配置也可以生成简报：
+
+- `JINA_API_KEY`：在 Jina Reader 匿名访问受限时，使用 API key 重试。
+- `TAVILY_API_KEY`：原文抓取受阻时，搜索同稿页面或相关报道，补充摘要材料。
+- `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：同时填写后启用 Adobe PDF-to-Markdown；未配置时使用本地 PDF 提取。
+
+Gemini 模型、备用模型和请求间隔已有默认配置，通常无需修改。如需调整，见 [`.env.example`](./.env.example)；额度与限流说明见 [API 额度文档](./docs/api-quotas.md)。
+
+### 让配置生效
+
+Daily Brief 只读取进程环境变量，不会自动加载 `.env`。手动运行前，在项目目录的同一个终端中执行：
 
 ```sh
-cp .env.example .env
-# 编辑 .env 后执行
 set -a
 . ./.env
 set +a
 ```
 
-### 生成简报所需
-
-- `GEMINI_API_KEY`：生成简报时必填。
-
-### 可选功能
-
-- `JINA_API_KEY`：Jina Reader 优先匿名请求；遇到 HTTP 401/429 时使用此 key 重试一次。未配置则不重试，继续既有恢复流程。原站验证页、无效正文不会触发带 key 重试。
-- `TAVILY_API_KEY`：用于在原文抓取受阻时寻找同稿页面及既有 Reuters 恢复材料；同稿搜索只排除 HN，最多发现 10 个候选、实际抓取 3 个，YouTube 候选走字幕提取。未配置时跳过搜索恢复。
-- `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：同时配置后启用 Adobe PDF-to-Markdown；未配置时仍会使用本地 PDF 提取。
-- Gemini 模型和请求间隔通常无需调整；如需覆盖默认配置，请参考 [`.env.example`](./.env.example)。
-
-摘要默认依次使用 **3.6 Flash → 3.7 Flash → 3.8 Flash**。明确遇到每日额度耗尽时跳过该模型；服务繁忙、超时或网络错误经过有限重试后尝试下一个。分钟限流或原因不明的 429 只等待并有限重试，不自动切换；材料不足则继续原有的补充材料流程。各模型使用相同材料和摘要要求，切换前也保留请求间隔。复盘数据记录实际最后调用的模型及整个切换过程的请求总次数。
-
-每日额度耗尽的记录保存在当前进程内，在美国太平洋时间午夜恢复尝试；重启进程后会重新检查。可将 `DAILY_BRIEF_GEMINI_SUMMARIZER_FALLBACK_MODELS` 设为空来禁用备用模型。`evaluate-model` 始终只测试指定的单个模型，不启用此备用链。
-
-### 发布所需
-
-- `DAILY_BRIEF_PUBLISH_URL`、`DAILY_BRIEF_PUBLISH_TOKEN`：只有运行 `publish` 时需要，必须同时配置。
+修改 `.env` 后，手动运行需要重新执行上述命令。当前部署的每日 cron 任务会在每次运行前加载 `.env`，因此修改会在下一次任务中生效，无需重启 cron；已经运行中的任务不受影响。
