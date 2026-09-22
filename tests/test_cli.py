@@ -2941,7 +2941,7 @@ class FakeModelBackend(FakeSummarizer, FakeClassifier):
 
 class FakeGeminiBackendFactory:
     @classmethod
-    def from_environment(cls):
+    def from_environment(cls, **kwargs):
         return FakeModelBackend()
 
 

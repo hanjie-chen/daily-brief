@@ -8,9 +8,11 @@ import random
 import re
 import time
 from collections.abc import Callable, Mapping
+from datetime import datetime, time as datetime_time, timedelta
 from http.client import HTTPResponse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from .models import Candidate
 from .summarizer import (
@@ -39,6 +41,7 @@ LOGGER = logging.getLogger(__name__)
 INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 DEFAULT_CLASSIFIER_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_SUMMARIZER_MODEL = "gemini-3.6-flash"
+DEFAULT_SUMMARIZER_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.8-flash")
 DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS = 6.0
 DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS = 20.0
 MODEL_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
@@ -156,6 +159,7 @@ class GeminiBackend:
         api_key: str,
         classifier_model: str = DEFAULT_CLASSIFIER_MODEL,
         summarizer_model: str = DEFAULT_SUMMARIZER_MODEL,
+        summarizer_fallback_models: tuple[str, ...] = (),
         timeout_seconds: int = 90,
         max_retries: int = 3,
         retry_base_seconds: float = 1.0,
@@ -169,11 +173,21 @@ class GeminiBackend:
         opener: Callable[..., HTTPResponse] = urlopen,
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
         jitter: Callable[[float, float], float] = random.uniform,
     ) -> None:
         self.api_key = api_key.strip()
         self.classifier_model = _validate_model(classifier_model)
         self.summarizer_model = _validate_model(summarizer_model)
+        self._summary_models = tuple(dict.fromkeys((
+            self.summarizer_model,
+            *(_validate_model(model) for model in summarizer_fallback_models),
+        )))
+        self.summarizer_fallback_models = self._summary_models[1:]
+        self.last_summary_model = self.summarizer_model
+        self._summary_attempt_models: list[str] = []
+        self._daily_exhausted_until: dict[str, float] = {}
+        self._last_summary_request_started: float | None = None
         if not self.api_key:
             raise GeminiConfigurationError("GEMINI_API_KEY is not configured")
         if timeout_seconds <= 0:
@@ -208,6 +222,8 @@ class GeminiBackend:
         for model, interval in (
             (self.classifier_model, classifier_min_request_interval_seconds),
             (self.summarizer_model, summarizer_min_request_interval_seconds),
+            *((model, summarizer_min_request_interval_seconds)
+              for model in self.summarizer_fallback_models),
         ):
             self._model_request_intervals[model] = max(
                 interval,
@@ -216,6 +232,7 @@ class GeminiBackend:
         self.opener = opener
         self.sleeper = sleeper
         self.clock = clock
+        self.wall_clock = wall_clock
         self.jitter = jitter
         self._last_request_started_by_model: dict[str, float] = {}
         self._last_request_attempts_by_model: dict[str, int] = {}
@@ -224,15 +241,18 @@ class GeminiBackend:
 
     @property
     def last_summary_attempts(self) -> int:
-        return self._last_request_attempts_by_model.get(self.summarizer_model, 0)
+        return sum(
+            self._last_request_attempts_by_model.get(model, 0)
+            for model in self._summary_attempt_models
+        )
 
     @property
     def last_summary_provider_status(self) -> str:
-        return self._last_response_status_by_model.get(self.summarizer_model, "")
+        return self._last_response_status_by_model.get(self.last_summary_model, "")
 
     @property
     def last_summary_usage(self) -> dict[str, int | None]:
-        return dict(self._last_response_usage_by_model.get(self.summarizer_model, {}))
+        return dict(self._last_response_usage_by_model.get(self.last_summary_model, {}))
 
     @classmethod
     def from_environment(
@@ -264,14 +284,26 @@ class GeminiBackend:
                 shared_interval,
                 DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS,
             )
+        primary_model = environment.get(
+            "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL", DEFAULT_SUMMARIZER_MODEL
+        )
+        if "summarizer_fallback_models" not in kwargs:
+            default_fallbacks = (
+                ",".join(DEFAULT_SUMMARIZER_FALLBACK_MODELS)
+                if primary_model.strip() == DEFAULT_SUMMARIZER_MODEL else ""
+            )
+            value = environment.get(
+                "DAILY_BRIEF_GEMINI_SUMMARIZER_FALLBACK_MODELS", default_fallbacks
+            )
+            kwargs["summarizer_fallback_models"] = (
+                tuple(value.split(",")) if value.strip() else ()
+            )
         return cls(
             api_key=environment.get("GEMINI_API_KEY", ""),
             classifier_model=environment.get(
                 "DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL", DEFAULT_CLASSIFIER_MODEL
             ),
-            summarizer_model=environment.get(
-                "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL", DEFAULT_SUMMARIZER_MODEL
-            ),
+            summarizer_model=primary_model,
             classifier_min_request_interval_seconds=classifier_interval,
             summarizer_min_request_interval_seconds=summarizer_interval,
             **kwargs,
@@ -356,7 +388,42 @@ class GeminiBackend:
         return {item["id"]: item["label"] for item in decisions}
 
     def summarize(self, candidate: Candidate) -> str:
-        self._reset_request_diagnostics(self.summarizer_model)
+        self._summary_attempt_models = []
+        self.last_summary_model = ""
+        for model in self._summary_models:
+            self._reset_request_diagnostics(model)
+        last_error = None
+        for model in self._summary_models:
+            if self._daily_exhausted_until.get(model, 0) > self.wall_clock():
+                continue
+            self.last_summary_model = model
+            self._summary_attempt_models.append(model)
+            try:
+                return self._summarize_with_model(candidate, model)
+            except GeminiAPIError as exc:
+                if exc.error_code == "daily_quota_exceeded":
+                    now = datetime.fromtimestamp(
+                        self.wall_clock(), ZoneInfo("America/Los_Angeles")
+                    )
+                    reset = datetime.combine(
+                        now.date() + timedelta(days=1), datetime_time(), now.tzinfo
+                    )
+                    self._daily_exhausted_until[model] = reset.timestamp()
+                elif exc.error_code not in {"provider_unavailable", "timeout", "network_error"}:
+                    raise
+                last_error = exc
+                LOGGER.warning(
+                    "component=gemini_api task=summarize model=%s error_code=%s "
+                    "action=summary_model_unavailable", model, exc.error_code,
+                )
+        if last_error is not None:
+            raise last_error
+        raise GeminiAPIError(
+            "All summary models have exhausted their daily quota",
+            error_code="daily_quota_exceeded", http_status=429,
+        )
+
+    def _summarize_with_model(self, candidate: Candidate, model: str) -> str:
         combined = has_discussion_source(candidate)
         community_roundup = route_summary_mode(candidate) == SUMMARY_MODE_COMMUNITY_ROUNDUP
         summary_schema = (
@@ -409,7 +476,7 @@ class GeminiBackend:
         )
         output = self._interact(
             task="summarize",
-            model=self.summarizer_model,
+            model=model,
             system_instruction=(
                 COMMUNITY_ROUNDUP_SYSTEM_INSTRUCTION
                 if community_roundup
@@ -543,6 +610,11 @@ class GeminiBackend:
                     response_body = response.read(MAX_RESPONSE_BYTES + 1)
             except HTTPError as exc:
                 error_body = exc.read(MAX_RESPONSE_BYTES + 1)
+                if exc.code == 429 and _is_daily_quota_error(error_body):
+                    raise GeminiAPIError(
+                        _http_error_message(exc.code, error_body),
+                        error_code="daily_quota_exceeded", http_status=429,
+                    ) from exc
                 if _is_retryable_status(exc.code) and attempt < self.max_retries:
                     self.sleeper(self._retry_delay(attempt, exc.headers, error_body))
                     continue
@@ -587,14 +659,23 @@ class GeminiBackend:
     def _wait_for_request_slot(self, model: str) -> None:
         now = self.clock()
         last_request_started = self._last_request_started_by_model.get(model)
+        remaining = 0.0
         if last_request_started is not None:
             remaining = self._model_request_intervals[model] - (
                 now - last_request_started
             )
-            if remaining > 0:
-                self.sleeper(remaining)
-                now = self.clock()
+        if model in self._summary_models and self._last_summary_request_started is not None:
+            remaining = max(
+                remaining,
+                self.summarizer_min_request_interval_seconds
+                - (now - self._last_summary_request_started),
+            )
+        if remaining > 0:
+            self.sleeper(remaining)
+            now = self.clock()
         self._last_request_started_by_model[model] = now
+        if model in self._summary_models:
+            self._last_summary_request_started = now
 
     def _retry_delay(
         self, attempt: int, headers, error_body: bytes | None = None
@@ -655,6 +736,45 @@ def _http_error_code(status: int) -> str:
     if 500 <= status <= 599:
         return "provider_unavailable"
     return f"http_{status}"
+
+
+def _is_daily_quota_error(body: bytes) -> bool:
+    """Only explicit daily limits justify switching models without waiting.
+
+    An unqualified 429 can be RPM/TPM or another quota; never guess that it
+    means the daily request budget is exhausted.
+    """
+    if len(body) > MAX_RESPONSE_BYTES:
+        return False
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return False
+    details = error.get("details", [])
+    if isinstance(details, list):
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            violations = detail.get("violations", [])
+            if not isinstance(violations, list):
+                continue
+            for violation in violations:
+                if not isinstance(violation, dict):
+                    continue
+                for field in ("quotaId", "quotaMetric"):
+                    value = violation.get(field)
+                    if isinstance(value, str) and "perday" in re.sub(
+                        r"[^a-z]", "", value.lower()
+                    ):
+                        return True
+    message = error.get("message", "")
+    return isinstance(message, str) and bool(re.search(
+        r"\b(?:per[ _-]day|daily (?:request )?quota|requests? per day)\b",
+        message, re.IGNORECASE,
+    ))
 
 
 def _http_error_message(status: int, body: bytes) -> str:

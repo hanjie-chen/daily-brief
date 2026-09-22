@@ -57,6 +57,10 @@ set +a
 - `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：同时配置后启用 Adobe PDF-to-Markdown；未配置时仍会使用本地 PDF 提取。
 - Gemini 模型和请求间隔通常无需调整；如需覆盖默认配置，请参考 [`.env.example`](./.env.example)。
 
+摘要默认依次使用 **3.6 Flash → 3.7 Flash → 3.8 Flash**。明确遇到每日额度耗尽时跳过该模型；服务繁忙、超时或网络错误经过有限重试后尝试下一个。分钟限流或原因不明的 429 只等待并有限重试，不自动切换；材料不足则继续原有的补充材料流程。各模型使用相同材料和摘要要求，切换前也保留请求间隔。复盘数据记录实际最后调用的模型及整个切换过程的请求总次数。
+
+每日额度耗尽的记录保存在当前进程内，在美国太平洋时间午夜恢复尝试；重启进程后会重新检查。可将 `DAILY_BRIEF_GEMINI_SUMMARIZER_FALLBACK_MODELS` 设为空来禁用备用模型。`evaluate-model` 始终只测试指定的单个模型，不启用此备用链。
+
 ### 发布所需
 
 - `DAILY_BRIEF_PUBLISH_URL`、`DAILY_BRIEF_PUBLISH_TOKEN`：只有运行 `publish` 时需要，必须同时配置。

@@ -277,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("evaluate-model requires --date YYYY-MM-DD")
         input_path = Path(args.data_dir) / "model-eval-inputs" / f"{args.date}.json"
         try:
-            backend = _model_backend()
+            backend = GeminiBackend.from_environment(summarizer_fallback_models=())
             result = run_model_evaluation(
                 input_path,
                 Path(args.data_dir) / "model-evaluations",
@@ -633,7 +633,6 @@ def _unavailable_material_summary(candidate: Candidate) -> str:
 def _generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
     """Return whether the model explicitly found the supplied material insufficient."""
     provider = _summary_provider(summary_client)
-    model = _summary_model(summary_client)
     try:
         candidate.summary = normalize_summary_text(
             summary_client.summarize(candidate)
@@ -652,6 +651,7 @@ def _generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
         if candidate.summary_basis != "hn_comments":
             candidate.source_material_status = "sufficient"
         candidate.summary_status = "success"
+        model = _summary_model(summary_client)
         summary_usage = _summary_usage(summary_client)
         candidate.summary_generation = SummaryGeneration(
             status="success",
@@ -670,6 +670,7 @@ def _generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
             candidate.summary_generation.attempts,
         )
     except InsufficientSummaryMaterial as exc:
+        model = _summary_model(summary_client)
         if candidate.content_kind == "community_roundup":
             candidate.content_reason = exc.reason
         candidate.summary_generation = SummaryGeneration(
@@ -692,6 +693,7 @@ def _generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
         )
         return True
     except Exception as exc:
+        model = _summary_model(summary_client)
         error_message = _bounded_error_message(exc)
         summary_usage = _summary_usage(summary_client)
         candidate.summary_generation = SummaryGeneration(
@@ -1120,7 +1122,10 @@ def _summary_provider(summary_client) -> str:
 
 
 def _summary_model(summary_client) -> str:
-    model = getattr(summary_client, "summarizer_model", "")
+    model = getattr(
+        summary_client, "last_summary_model",
+        getattr(summary_client, "summarizer_model", ""),
+    )
     if not isinstance(model, str):
         return ""
     return " ".join(model.split())[:128]

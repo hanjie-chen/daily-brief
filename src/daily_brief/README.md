@@ -204,6 +204,30 @@ quality gate; evidence selection and provider-call counts are unchanged.
 
 ## Core Invariants
 
+Production `GeminiBackend.from_environment()` enables ordered summary fallback
+from `gemini-3.6-flash` to `gemini-3.7-flash` and `gemini-3.8-flash`. A custom
+primary has no implicit fallback; an explicit comma-separated
+`DAILY_BRIEF_GEMINI_SUMMARIZER_FALLBACK_MODELS` overrides the list, and an empty
+value disables it. Direct construction remains single-model by default, keeping
+model evaluation isolated. The `evaluate-model` CLI explicitly disables fallback,
+even when the environment enables it. Classification has no model fallback.
+
+Only explicit daily-quota 429 errors skip retries and disable a summary model
+until the next America/Los_Angeles midnight. This is backend-instance memory,
+not a persistent quota counter. Unknown and minute-limit 429 errors retain
+bounded same-model retries and do not switch models. Exhausted transient-error
+retries (5xx, timeout, network failure) permit the next model; material
+insufficiency, invalid output and authentication errors do not. Each summary
+starts from the configured primary, skipping models whose daily quota is known
+to be exhausted. All summary models share a request-start interval in addition
+to existing per-model pacing, including retries and model switches.
+
+`summarizer_model` remains the configured primary; `last_summary_model` identifies
+the last attempted model. Private summary audit reads it after the call, on both
+success and failure. Attempts cover the whole chain, while provider status and
+token usage describe the final attempted model's last response. Fallback logs
+record model and error code without credentials. Public output is unchanged.
+
 - Hacker News fields, article content, captions, URLs, and source metadata are
   untrusted input. They remain behind an explicit prompt boundary and cannot
   supply instructions to the model.
