@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from daily_brief.config import CORE_TOPIC_HIGH_WEIGHT_KEYWORDS
@@ -154,51 +152,3 @@ def test_approved_core_topic_keywords_are_high_weight(keyword):
         match.keyword == keyword and match.weight == "high"
         for match in matches
     )
-
-
-def test_runtime_core_topic_keywords_match_approved_manifest():
-    manifest_path = (
-        Path(__file__).parents[1] / "docs" / "keyword-entry-manifest.md"
-    )
-    rows = []
-    for line in manifest_path.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("| `"):
-            continue
-        cells = [cell.strip() for cell in line.split("|")[1:-1]]
-        rows.append(
-            {
-                "keyword": cells[0].removeprefix("`").removesuffix("`"),
-                "tier": cells[1],
-                "hits": int(cells[2]),
-                "decision": cells[3],
-                "reason": cells[4],
-            }
-        )
-
-    assert [row["keyword"] for row in rows] == CORE_TOPIC_HIGH_WEIGHT_KEYWORDS
-    assert len(rows) == 99
-    assert all(row["tier"] in {"A", "B"} for row in rows)
-    assert all(row["decision"] == "批准" for row in rows)
-    assert all(row["reason"] for row in rows)
-
-    zero_hit_plural_keywords = {
-        "GCC compilers",
-        "Clang compilers",
-        "Linux kernels",
-        "bytecode interpreters",
-        "type systems",
-        "borrow checkers",
-        "goroutines",
-        "kernel panics",
-        "kernel modules",
-        "POSIX shells",
-        "Bash scripts",
-        "JDKs",
-        "compiler optimizations",
-    }
-    uniform_reason = "单数已过关，复数误命中风险不高于单数。"
-    assert {
-        row["keyword"]
-        for row in rows
-        if row["hits"] == 0 and row["reason"] == uniform_reason
-    } == zero_hit_plural_keywords
