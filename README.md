@@ -34,12 +34,12 @@
 
 首次配置时，将 [`.env.example`](./.env.example) 复制为 `.env`，再填写所需的凭据。模板中列出了全部配置项及默认值；已有 `.env` 时直接编辑，避免覆盖现有配置。
 
-### 必填配置
+### Required
 
 - 生成简报：填写 `GEMINI_API_KEY`。
 - 发布简报：填写 `DAILY_BRIEF_PUBLISH_URL` 和 `DAILY_BRIEF_PUBLISH_TOKEN`。只生成、不发布时无需配置。
 
-### 可选配置
+### Optional
 
 以下服务用于补充原文获取能力，不配置也可以生成简报：
 
@@ -49,7 +49,7 @@
 
 Gemini 模型、备用模型和请求间隔已有默认配置，通常无需修改。如需调整，见 [`.env.example`](./.env.example)；额度与限流说明见 [API 额度文档](./docs/api-quotas.md)。
 
-### 让配置生效
+### Load Config
 
 Daily Brief 只读取进程环境变量，不会自动加载 `.env`。手动运行前，在项目目录的同一个终端中执行：
 
@@ -60,3 +60,7 @@ set +a
 ```
 
 修改 `.env` 后，手动运行需要重新执行上述命令。当前部署的每日 cron 任务会在每次运行前加载 `.env`，因此修改会在下一次任务中生效，无需重启 cron；已经运行中的任务不受影响。
+
+## Next
+
+- 等到项目稳定之后，在考虑部署到 gcp-vm
