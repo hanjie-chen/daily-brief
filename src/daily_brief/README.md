@@ -5,6 +5,8 @@ the package's entry points, data flow, module boundaries, and cross-cutting
 invariants. User-visible behavior belongs in the [root README](../../README.md),
 product intent belongs in [the product document](../../docs/product.md), and
 function-level behavior belongs in the code and tests.
+For a system overview, retrieval/recovery flows, and diagnostic entry
+points, see [the architecture guide](../../docs/architecture.md).
 
 ## Entry Points
 

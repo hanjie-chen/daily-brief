@@ -4,13 +4,14 @@
 
 - Start with the project root `README.md`.
 - Before planning changes that affect content selection, section composition, or the reading experience, read `docs/product.md`.
+- Before changing retrieval or recovery flow, read `docs/architecture.md`.
 - Before planning or making non-trivial changes under `src/daily_brief`, read `src/daily_brief/README.md` and the relevant code and tests.
 - Before running batch experiments that call live APIs, read `docs/api-quotas.md`.
 
 ## Documentation
 
-- Keep the root `README.md` focused on usage and user-visible behavior. Use `docs/product.md` for product intent and direction, and `src/daily_brief/README.md` for package architecture and implementation invariants.
-- Write the root `README.md` and `docs/product.md` in Chinese, using English technical terms when clearer. Write `AGENTS.md` and `src/daily_brief/README.md` in English.
+- Keep the root `README.md` focused on usage and user-visible behavior. Use `docs/product.md` for product intent and direction, `docs/architecture.md` for the system overview, retrieval/recovery flows and diagnostic entry points, and `src/daily_brief/README.md` for module responsibilities and implementation invariants.
+- Write the root `README.md`, `docs/product.md`, and `docs/architecture.md` in Chinese, using English technical terms when clearer. Write `AGENTS.md` and `src/daily_brief/README.md` in English.
 - Update the corresponding document in the same change when product intent, user-visible behavior, or package architecture changes.
 
 ## Verification

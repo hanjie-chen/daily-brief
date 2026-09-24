@@ -28,7 +28,7 @@
 3. 生成摘要：获取入选内容的原文，并结合网页提供的介绍生成中文摘要；原文抓取不到时补充 HN 讨论；
 4. 输出与发布：生成用于阅读、发布和复盘的文件；发布作为独立步骤执行
 
-每个步骤的 details 详见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
+系统总览、原文获取流程与排查入口见 [`docs/architecture.md`](./docs/architecture.md)；模块职责与实现约束见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。
 
 ## Config
 
