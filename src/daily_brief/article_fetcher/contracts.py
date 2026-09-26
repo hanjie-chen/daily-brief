@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from ..source_evidence import SourceEvidence
+from .source_evidence import SourceEvidence
 
 
 DEFAULT_TIMEOUT_SECONDS = 15

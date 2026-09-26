@@ -24,12 +24,12 @@ from .contracts import (
     LOGGER,
 )
 from .extract import extract_html
-from ..source_evidence import extract_html_source_evidence
 from .http_safety import (
     _enforce_extracted_limit,
     _read_bounded,
     _validate_public_http_url,
 )
+from .source_evidence import extract_html_source_evidence
 
 
 GITHUB_RAW_CONTENT_TYPE = "application/vnd.github.raw+json"

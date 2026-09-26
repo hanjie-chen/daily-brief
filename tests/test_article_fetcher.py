@@ -31,7 +31,7 @@ from daily_brief.article_fetcher.http_safety import (
     _create_public_connection,
     _validate_public_http_url,
 )
-from daily_brief.youtube_captions import YoutubeCaptionResult
+from daily_brief.article_fetcher.youtube_captions import YoutubeCaptionResult
 
 
 PUBLIC_ADDRESS = "93.184.216.34"

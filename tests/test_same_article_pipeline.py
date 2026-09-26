@@ -5,12 +5,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
+from daily_brief.article_fetcher import (
+    ArticleFetchError,
+    ArticleFetchResult,
+    SourceEvidence,
+    SourceRelation,
+)
 from daily_brief.generation import material, run_generate, search_recovery, summaries
 from daily_brief.hn_client import HNDiscussionResult
 from daily_brief.models import Candidate, Story
 from daily_brief.same_article import SameArticleCandidate, SameArticleFinderError
-from daily_brief.source_evidence import SourceEvidence, SourceRelation
 from daily_brief.time_window import TimeWindow
 
 

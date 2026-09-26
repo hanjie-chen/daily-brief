@@ -21,7 +21,7 @@ from .http_safety import (
     _validate_public_http_url,
 )
 from .responses import _normalize_document_text
-from ..source_evidence import SourceEvidence, extract_markdown_source_evidence
+from .source_evidence import SourceEvidence, extract_markdown_source_evidence
 
 
 JINA_READER_BASE_URL = "https://r.jina.ai/"

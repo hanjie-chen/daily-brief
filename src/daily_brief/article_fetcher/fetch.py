@@ -6,11 +6,6 @@ from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
-from ..youtube_captions import (
-    YoutubeCaptionError,
-    fetch_youtube_caption,
-    youtube_video_id,
-)
 from .challenges import _is_network_timeout, _is_tls_issuer_unavailable
 from .contracts import (
     ArticleFetchError,
@@ -41,6 +36,11 @@ from .recovery import (
     _recover_direct_failure,
 )
 from .responses import _fetch_direct_response
+from .youtube_captions import (
+    YoutubeCaptionError,
+    fetch_youtube_caption,
+    youtube_video_id,
+)
 
 
 def fetch_article_text(

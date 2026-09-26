@@ -147,11 +147,11 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `article_fetcher/extract.py` | HTML body and semantic-table extraction |
 | `article_fetcher/http_safety.py` | Public-address validation and pinned connections |
 | `article_fetcher/challenges.py` | Browser-challenge and network-failure detection |
+| `article_fetcher/youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
+| `article_fetcher/source_evidence.py` | Bounded publisher-declared identity signals from page headers and video descriptions |
 | `syndicated_copy.py` | Discovery and validation of Reuters syndicated copies |
 | `alternate_reporting.py` | Discovery and validation of Reuters reporting on the same event |
 | `same_article.py` | Bounded discovery and conservative validation of same-article copies |
-| `source_evidence.py` | Bounded publisher-declared identity signals from page headers and video descriptions |
-| `youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
 | `adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
 | `pdf_extractor.py` | Resource-bounded local PDF text worker |
 | `evidence_selection.py` | Bounded title-aware source excerpts with explicit omissions |

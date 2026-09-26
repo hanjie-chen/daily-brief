@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from daily_brief.youtube_captions import (
+from daily_brief.article_fetcher.youtube_captions import (
     YoutubeCaptionError,
     _select_caption_track,
     fetch_youtube_caption,

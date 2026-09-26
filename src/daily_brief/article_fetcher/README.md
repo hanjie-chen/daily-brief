@@ -81,6 +81,8 @@ paths must not run when the active policy disables them.
 | `extract.py` | HTML body extraction and semantic-table preservation |
 | `http_safety.py` | Public-address validation and pinned connections |
 | `challenges.py` | Browser-challenge and network-failure detection |
+| `youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
+| `source_evidence.py` | Bounded publisher-declared identity signals from page headers and video descriptions |
 
 ## Dependency Direction
 
@@ -88,8 +90,8 @@ Keep dependencies directed from orchestration toward lower-level modules:
 
 ```text
 __init__ -> fetch -> recovery -> jina / wayback
-                  -> github / responses
-lower-level modules -> contracts / http_safety / challenges / extract
+                  -> github / responses / youtube_captions
+lower-level modules -> contracts / http_safety / challenges / extract / source_evidence
 ```
 
 Lower-level modules must not import `fetch.py` or the package facade. Shared
@@ -109,9 +111,11 @@ circular imports.
 
 ## Tests
 
-Subsystem tests live in `tests/test_article_fetcher.py`. Tests must use injected
-openers and resolvers and must never call live article, Jina, Wayback, GitHub, or
-model-provider services.
+Subsystem tests live in `tests/test_article_fetcher.py`, with YouTube captions
+and source evidence covered by `tests/test_youtube_captions.py`,
+`tests/test_source_evidence.py`, and `tests/test_source_evidence_transport.py`.
+Tests must use injected openers and resolvers and must never call live article,
+Jina, Wayback, GitHub, or model-provider services.
 
 During development, run the relevant article-fetcher tests. Before completing a
 behavior or code change, run the full suite as required by the repository guide:

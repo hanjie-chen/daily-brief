@@ -1,4 +1,4 @@
-from daily_brief.source_evidence import (
+from daily_brief.article_fetcher.source_evidence import (
     SourceRelation,
     extract_html_source_evidence,
     extract_markdown_source_evidence,

@@ -21,10 +21,10 @@ from .contracts import (
     ArticleFetchResult,
 )
 from .extract import extract_html
-from ..source_evidence import SourceEvidence, SourceRelation
 from .fetch import fetch_article, fetch_article_text
 from .github import fetch_github_blob, fetch_github_readme_text
 from .jina import fetch_jina_reader_text
+from .source_evidence import SourceEvidence, SourceRelation
 
 
 __all__ = [
