@@ -13,75 +13,26 @@ points, see [the architecture guide](../../docs/architecture.md).
 - `__main__.py` runs the primary CLI through `python -m daily_brief`.
 - `cli.py` parses the `daily-brief` commands for generation, publishing, and
   model evaluation and dispatches them. It contains no pipeline logic.
-- `generation/` implements the generation pipeline. Start at
-  `generation/pipeline.py` for changes to pipeline order, and at the stage module
-  that owns the behavior for cross-module fallback changes.
+- `generation/` implements the generation pipeline. Start at its
+  [guide](generation/README.md) for changes to stage order, selection, material
+  retrieval, recovery, or summary fallback.
 - `keyword_evaluation.py` provides the corpus collection and replay utility used
   to evaluate production keyword matching. It can be run through
   `scripts/evaluate_keywords.py`.
 
 ## Generation Flow
 
-Production generation spans CLI setup and `generation.run_generate(...)`:
+`cli.main()` constructs the production model backend before calling
+`generation.run_generate(...)`, so configuration errors fail before external
+collection. The [generation guide](generation/README.md) describes each pipeline
+stage: candidate collection, classification and selection, material retrieval and
+recovery, summaries, and artifact writes.
 
-1. `time_window.py` calculates the daily collection window in the
-   Asia/Singapore timezone.
-2. `cli.main()` constructs the production model backend before calling
-   `run_generate(...)`, so configuration errors fail before external collection.
-3. `hn_client.py` collects recent Algolia stories and hot stories from the
-   official Hacker News API. Both sources are required; failure of either source
-   aborts the run before date-scoped artifacts are written or replaced.
-4. `selection.py` deduplicates candidates, while `history.py` excludes recently
-   recommended stories. `keywords.py` and `scoring.py` establish the initial core
-   candidates and ranking order.
-5. A bounded set of remaining candidates, including keyword-matched HN self-posts,
-   is fetched under the classification
-   retrieval policy and classified by article evidence as AI, other core
-   computing, outside the core scope, or uncertain. Retrieval and classifier
-   failures fail closed for that candidate.
-   The classifier can first route project-sharing, tool-recommendation, and
-   practical-experience solicitations as `community_roundup`. Only self-posts
-   qualify; informative self-posts and general debates keep the normal route.
-   Roundups fetch a bounded HN comment sample, prioritizing top-level answers,
-   then receive a second topical classification based on the comments. The
-   question provides context only. All self-posts share the existing candidate
-   inspection limit, with at most two classification calls per candidate.
-6. Before final selection, roundups must also pass their summary call: comments
-   must support at least two concrete projects, tools, or practical examples.
-   Insufficient comments, uncertain topics, retrieval errors, or model failures
-   exclude the item so other eligible candidates can fill the slots. Successful
-   overviews are reused after selection, with a code-owned partial-comment
-   attribution. This preselection work is bounded by the classification pool.
-   Confirmed core candidates join one ranked pool. Confirmed outside candidates
-   must also satisfy the exploration eligibility rules and are ranked separately.
-7. Selected external stories are retrieved under the fuller summary policy.
-   Material fetched during classification is reused. Every fetched public PDF is
-   Adobe PDF-to-Markdown first when credentials are configured, with the same
-   bounded hard timeout in classification and summary retrieval, conversion
-   duration logging, and a logged local `pypdf` fallback.
-   Specialized GitHub, YouTube, HTML, and PDF paths remain behind the same bounded
-   retrieval interface; recovery material is accepted only after deterministic
-   validation.
-   After an origin browser challenge exhausts retrieval, selected-item summary
-   retrieval first tries `same_article.py`: one title-based Tavily basic query,
-   ten discovery candidates, and at most three unique candidate fetches. Only HN
-   is excluded. An independently fetched matching title, explicit publisher
-   cross-post/republication backlink to the source, and substantive body are
-   required. YouTube candidates use the existing captions path and must declare
-   narration of that source. Search snippets and bare/canonical backlinks are
-   insufficient. Rejections continue to the existing Reuters recovery routes.
-8. If every external-source retrieval and recovery path fails for a selected
-   story, or its summary call explicitly finds the retrieved material insufficient,
-   `generation/material.py` asks `hn_client.py` for a bounded HN discussion sample as the final fallback.
-   `summarizer.py` selects the generic, memorial, research, or HN-discussion route
-   from available evidence. An external-source retrieval failure never becomes a
-   title- or model-knowledge-based article summary.
-9. `render.py` writes the readable Markdown, validated public JSON, and private
-   candidate audit. `history.py` then records selected item IDs. An empty brief
-   writes a `.no-content` marker instead of public JSON.
-10. Publishing is a separate, explicitly targeted operation. `publisher.py`
-    validates the public payload, sends it to the website, and records successful
-    content hashes for idempotent retries.
+Publishing is a separate, explicitly targeted operation. `publisher.py`
+validates the public payload, sends it to the website, and records successful
+content hashes for idempotent retries.
+
+## Model Evaluation
 
 Model comparison is intentionally separate from generation. A generation run can
 capture the exact classifier and summarizer inputs, and `evaluate-model` can
@@ -92,6 +43,8 @@ and preselection summary inputs (including rejected roundups). It also preserves
 source and HN-discussion inputs when both are attempted for an ordinary item;
 schema 3 and 4 captures remain readable. Replay records insufficient material separately from
 provider failures and does not retrieve fallback material.
+
+## Summary Sufficiency
 
 The existing summary call returns a validated sufficient/insufficient decision.
 Roundups use a separate sufficiency rule requiring two substantive examples and
@@ -169,13 +122,7 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `__init__.py` | Package metadata |
 | `__main__.py` | `python -m daily_brief` entry point |
 | `cli.py` | Command-line parsing and command dispatch |
-| `generation/__init__.py` | Stable facade: `run_generate`, `GenerateResult`, `SourceCollectionError` |
-| `generation/pipeline.py` | Generation stage order, candidate collection, history exclusion, and artifact writes |
-| `generation/classification.py` | Keyword routing, bounded topic classification, roundup assessment, and section selection |
-| `generation/summaries.py` | Selected-item summary loop, discussion fallback, and summary diagnostics |
-| `generation/material.py` | Classification/summary retrieval modes, recovery dispatch, and HN discussion material |
-| `generation/search_recovery.py` | Same-article, Reuters syndicated-copy, and alternate-reporting recovery attempts |
-| `generation/fetched_material.py` | Normalized fetched material shared by direct retrieval and recovery |
+| [`generation/`](generation/README.md) | Generation pipeline behind `daily-brief generate` |
 | `config.py` | Timezone, topic vocabulary, quotas, thresholds, and scoring limits |
 | `models.py` | Shared story, candidate, retrieval, and model-diagnostic structures |
 | `time_window.py` | Daily collection window |
