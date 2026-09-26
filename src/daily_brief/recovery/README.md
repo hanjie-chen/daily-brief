@@ -166,7 +166,7 @@ not import each other; what they share lives in `tavily.py`.
   each validator.
 - `tests/test_same_article_pipeline.py`: same-article attempts, budgets, and the
   hand-off to the other routes and to discussion fallback.
-- `tests/test_cli.py`: end-to-end Reuters and alternate-reporting recovery
+- `tests/generation/test_recovery.py`: end-to-end Reuters and alternate-reporting recovery
   through `run_generate(...)`.
 
 Tests inject finders and fake HTTP responses and never call Tavily.

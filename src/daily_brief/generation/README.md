@@ -118,8 +118,13 @@ dependency graph free of cycles.
 
 ## Tests
 
-- `tests/test_cli.py`: end-to-end generation through `run_generate(...)` with
-  injected fakes, plus command dispatch in `cli.main()`.
+End-to-end tests run `run_generate(...)` with injected fakes and live in
+`tests/generation/`, one file per stage module: `test_pipeline.py`,
+`test_classification.py`, `test_material.py`, `test_recovery.py`, and
+`test_summaries.py`. `tests/generation/conftest.py` replaces the default model
+backend, article fetcher, and discussion fetcher for every test there; shared
+fakes and story builders live in `tests/fakes.py`.
+
 - `tests/test_same_article_pipeline.py`: same-article recovery and its hand-off
   to the other recovery routes and to discussion fallback.
 - `tests/test_gemini_fallback.py` and `tests/test_gemini_backend.py`: summary
@@ -130,6 +135,6 @@ During development, run the relevant tests. Before completing a behavior or code
 change, run the full suite as required by the repository guide:
 
 ```sh
-pytest -q tests/test_cli.py tests/test_same_article_pipeline.py
+pytest -q tests/generation tests/test_same_article_pipeline.py
 pytest -q
 ```
