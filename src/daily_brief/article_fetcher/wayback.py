@@ -105,17 +105,11 @@ def _find_wayback_capture(
             error_code="wayback_malformed_json",
             method="wayback",
         ) from exc
-    if not isinstance(rows, list) or not rows or rows[0] != fields:
+    # CDX returns a bare [] instead of a header-only envelope when nothing matches.
+    if not isinstance(rows, list) or (rows and rows[0] != fields):
         raise ArticleFetchError(
             "Wayback CDX returned an invalid result envelope",
             error_code="wayback_invalid_index",
-            method="wayback",
-        )
-
-    if len(rows) == 1:
-        raise ArticleFetchError(
-            "Wayback CDX found no capture in the allowed time window",
-            error_code="wayback_no_capture",
             method="wayback",
         )
 
@@ -128,7 +122,14 @@ def _find_wayback_capture(
             upper_bound=upper_bound,
             resolver=resolver,
         )
-        captures.append(capture)
+        if capture is not None:
+            captures.append(capture)
+    if not captures:
+        raise ArticleFetchError(
+            "Wayback CDX found no capture in the allowed time window",
+            error_code="wayback_no_capture",
+            method="wayback",
+        )
     return max(captures, key=lambda capture: capture.timestamp)
 
 
@@ -252,7 +253,7 @@ def _parse_wayback_index_row(
     lower_bound: datetime,
     upper_bound: datetime,
     resolver,
-) -> _WaybackCapture:
+) -> _WaybackCapture | None:
     if not isinstance(row, list) or len(row) != 6:
         raise _invalid_wayback_index_row()
     timestamp, original, mimetype, statuscode, digest, length = row
@@ -275,8 +276,10 @@ def _parse_wayback_index_row(
         _validate_public_http_url(original, resolver)
     except ArticleFetchError:
         raise _invalid_wayback_index_row()
+    # An exact CDX match still returns scheme and www variants of the same URL;
+    # skip them so the replay identity check only ever sees the requested URL.
     if _archive_url_identity(original) != _archive_url_identity(source_url):
-        raise _invalid_wayback_index_row()
+        return None
     return _WaybackCapture(timestamp=timestamp, original_url=original)
 
 

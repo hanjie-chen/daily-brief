@@ -1995,6 +1995,157 @@ def test_wayback_reports_no_capture_without_requesting_replay():
     assert caught.value.attempts == 3
 
 
+def test_wayback_reports_no_capture_for_bare_empty_index():
+    source_url = "https://example.com/article"
+    requested_urls = []
+
+    def open_response(request, timeout):
+        requested_urls.append(request.full_url)
+        if request.full_url == source_url:
+            raise http_error(
+                request.full_url,
+                429,
+                x_vercel_mitigated="challenge",
+            )
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 403)
+        return FakeResponse(
+            b"[]",
+            content_type="application/json",
+            final_url=request.full_url,
+        )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            source_url,
+            opener=open_response,
+            resolver=resolver_for({}),
+            wayback_not_before=datetime(2026, 8, 21, 0, 0, tzinfo=UTC),
+            wayback_not_after=datetime(2026, 8, 23, 0, 0, tzinfo=UTC),
+        )
+
+    assert len(requested_urls) == 3
+    assert caught.value.error_code == "wayback_no_capture"
+    assert caught.value.method == "wayback"
+    assert caught.value.attempts == 3
+
+
+def test_wayback_skips_index_rows_for_url_variants():
+    source_url = "https://example.com/article"
+    capture_timestamp = "20260822062417"
+    replay_url = (
+        f"https://web.archive.org/web/{capture_timestamp}id_/{source_url}"
+    )
+    archived_html = b"""
+    <html><body><main>
+      <h1>Archived Article</h1>
+      <p>The archived article body survives when the origin blocks readers.</p>
+      <p>It carries enough text for extraction to accept the replay content.</p>
+    </main></body></html>
+    """
+    requested_urls = []
+
+    def open_response(request, timeout):
+        requested_urls.append(request.full_url)
+        if request.full_url == source_url:
+            raise http_error(
+                request.full_url,
+                429,
+                x_vercel_mitigated="challenge",
+            )
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 403)
+        if request.full_url.startswith("https://web.archive.org/cdx/search/cdx?"):
+            return FakeResponse(
+                make_wayback_payload(
+                    [
+                        capture_timestamp,
+                        source_url,
+                        "text/html",
+                        "200",
+                        "CAPTUREDIGEST",
+                        str(len(archived_html)),
+                    ],
+                    [
+                        "20260822070000",
+                        "https://www.example.com/article",
+                        "text/html",
+                        "200",
+                        "WWWDIGEST",
+                        "2000",
+                    ],
+                    [
+                        "20260822080000",
+                        "http://example.com/article",
+                        "text/html",
+                        "200",
+                        "HTTPDIGEST",
+                        "2000",
+                    ],
+                ),
+                content_type="application/json",
+                final_url=request.full_url,
+            )
+        assert request.full_url == replay_url
+        return FakeResponse(archived_html, final_url=replay_url)
+
+    result = fetch_article(
+        source_url,
+        opener=open_response,
+        resolver=resolver_for({}),
+        wayback_not_before=datetime(2026, 8, 21, 0, 0, tzinfo=UTC),
+        wayback_not_after=datetime(2026, 8, 23, 0, 0, tzinfo=UTC),
+    )
+
+    assert requested_urls[-1] == replay_url
+    assert result.method == "wayback"
+    assert result.retrieved_url == replay_url
+    assert "archived article body survives" in result.text
+
+
+def test_wayback_reports_no_capture_when_only_url_variants_match():
+    source_url = "https://example.com/article"
+    requested_urls = []
+
+    def open_response(request, timeout):
+        requested_urls.append(request.full_url)
+        if request.full_url == source_url:
+            raise http_error(
+                request.full_url,
+                429,
+                x_vercel_mitigated="challenge",
+            )
+        if request.full_url.startswith("https://r.jina.ai/"):
+            raise http_error(request.full_url, 403)
+        return FakeResponse(
+            make_wayback_payload(
+                [
+                    "20260822070000",
+                    "https://www.example.com/article",
+                    "text/html",
+                    "200",
+                    "WWWDIGEST",
+                    "2000",
+                ]
+            ),
+            content_type="application/json",
+            final_url=request.full_url,
+        )
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            source_url,
+            opener=open_response,
+            resolver=resolver_for({}),
+            wayback_not_before=datetime(2026, 8, 21, 0, 0, tzinfo=UTC),
+            wayback_not_after=datetime(2026, 8, 23, 0, 0, tzinfo=UTC),
+        )
+
+    assert len(requested_urls) == 3
+    assert caught.value.error_code == "wayback_no_capture"
+    assert caught.value.attempts == 3
+
+
 def test_wayback_rejects_replay_redirect_to_live_source():
     source_url = "https://example.com/article"
     capture_timestamp = "20260822062417"
