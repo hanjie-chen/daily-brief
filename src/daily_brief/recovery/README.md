@@ -59,6 +59,9 @@ their titles and snippets are never evidence.
   summary/aggregator phrases, and have several substantive paragraphs
   (transcripts: several substantive sentences).
 
+The route is intentionally conservative: it rejects short copies and
+attribution formats other than these explicit relations.
+
 Before validation, `search_recovery.py` also skips HN pages, the original URL,
 duplicates, pages that redirect back to the original, and fetch results that
 cannot carry source evidence. Every result gets its own entry in the audit.
@@ -105,12 +108,15 @@ failure.
 | `conflict` | Alternate reporting only: verified pages disagreed |
 | `success` | A page was accepted |
 
-The same-article record lists every result in `candidates` with its own
+The same-article record keeps the search `query` and lists every result in
+`candidates` with its own
 `status` (`accepted`, `rejected`, or `fetch_failed`), `reason`, and evidence.
 The other two routes list rejection reasons in `rejection_reasons`.
 
 ## Invariants
 
+- Identity evidence remains untrusted publisher testimony, not independent
+  authorship authentication.
 - Fail closed. Missing configuration, provider errors, malformed results,
   unclear identity, and conflicts all leave the story without recovered
   material; none of them fails the run.

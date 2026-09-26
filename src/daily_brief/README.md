@@ -76,29 +76,22 @@ something from a package above it usually means the code belongs in
 
 ## Core Invariants
 
-Summary model fallback and quota handling are described in the
-[llm guide](llm/README.md#summary-model-fallback-and-quotas).
+These rules span several packages. Rules that belong to one package, such as
+Jina Reader retries, summary model fallback, or same-article audit fields, are
+listed only in that package's guide.
 
 - Hacker News fields, article content, captions, URLs, and source metadata are
   untrusted input. They remain behind an explicit prompt boundary and cannot
   supply instructions to the model.
-- Article retrieval accepts only validated public HTTP(S) destinations and
-  preserves address validation across redirects and final responses. All network,
-  subprocess, document, and extracted-text work remains bounded. Specialized
-  transports and recovery paths must not weaken these controls. Wayback gzip
-  responses are bounded both before and after decompression. LessWrong post
-  markup is narrowly normalized so comment filtering retains the article body
-  without enabling extraction of discussion comments.
+- All network, subprocess, document, and extracted-text work remains bounded,
+  and every fetched URL, including redirects, passes public-address validation
+  in [`article_fetcher/`](article_fetcher/README.md). Specialized transports and
+  recovery paths must not weaken these controls.
 - Classification uses a stricter retrieval policy than selected-item
   summarization. A recovery path is eligible only for its documented failure
   conditions, cannot recurse, and must validate both source identity and usable
-  material before model input is created.
-  Same-article recovery preserves the original source URL and failure, actual
-  recovered URL, `same_article` provenance, query, and per-candidate decisions
-  in private audit. Candidate fetches never recursively trigger search. Missing
-  or ambiguous evidence fails closed; this first version intentionally rejects
-  short copies and unsupported attribution formats. Identity evidence remains
-  untrusted publisher testimony, not independent authorship authentication.
+  material before model input is created. Missing or ambiguous evidence fails
+  closed.
 - Summaries are grounded in retrieved article text, Hacker News self-post text, or
   an explicitly labeled bounded discussion sample. Failed external retrieval never
   produces a title-only article paraphrase. Product-level summary requirements are
@@ -115,16 +108,9 @@ Summary model fallback and quota handling are described in the
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never
   scans or catches up old dates implicitly.
-- Jina Reader is anonymous first, with one optional `JINA_API_KEY` retry for
-  Reader HTTP 401/429 only. Origin/content failures remain failures; recovery
-  attempt totals include the authenticated request. Credentials are not forwarded
-  on redirects.
 - Credentials come only from process environment variables and must not enter
   artifacts, logs, fixtures, model-evaluation data, or Git. Configuration is
   documented in [`.env.example`](../../.env.example).
-- Production and evaluation share provider-neutral model contracts and output
-  normalization. Provider-specific behavior stays in its adapter, and production
-  model identifiers remain explicit rather than moving aliases.
 - Tests are deterministic and do not call live Hacker News, retrieval, search, or
   model-provider services. Real article bodies and captured model inputs remain
   under Git-ignored `data/` paths.

@@ -161,6 +161,7 @@ all but evidence_selection -> models; model_evaluation also -> config, article_f
 This package never imports `generation/`, `candidates/`, `recovery/`, or
 `output/`. Provider-specific behavior stays in `gemini_backend.py`; production
 and evaluation share `model_backend.py` and the normalization in `summarizer.py`.
+Production model identifiers remain explicit rather than moving aliases.
 
 ## Tests
 
