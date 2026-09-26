@@ -66,8 +66,8 @@ from HN self-post text; source prefixes are defined in one shared location.
 
 `evidence_selection.py` selects excerpts; `summarizer.py` and
 `topic_classifier.py` apply them at the model boundary. Full retrieved text is
-kept outside this package, as described under Retrieved Material Limits in the
-[package guide](../README.md#retrieved-material-limits).
+kept outside this package, as described under Retrieval Flow in the
+[article_fetcher guide](../article_fetcher/README.md#retrieval-flow).
 
 `llm/evidence_selection.py` supplies deterministic title/URL-fragment-aware excerpts
 at the model boundary: 6,000 characters for classification and 24,000 for ordinary

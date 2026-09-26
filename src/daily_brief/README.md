@@ -16,8 +16,8 @@ points, see [the architecture guide](../../docs/architecture.md).
 - `generation/` implements the generation pipeline. Start at its
   [guide](generation/README.md) for changes to stage order, selection, material
   retrieval, recovery, or summary fallback.
-- `candidates/keyword_evaluation.py` provides the corpus collection and replay utility used
-  to evaluate production keyword matching. It can be run through
+- `candidates/keyword_evaluation.py` provides the corpus collection and replay
+  utility used to evaluate production keyword matching. It can be run through
   `scripts/evaluate_keywords.py`.
 
 ## Generation Flow
@@ -32,67 +32,47 @@ Publishing is a separate, explicitly targeted operation. `output/publisher.py`
 validates the public payload, sends it to the website, and records successful
 content hashes for idempotent retries.
 
-## Retrieved Material Limits
-
-Retrieval retains complete extracted text up to a 2 MiB hard ceiling; HTML/PDF
-response limits remain 4/20 MiB. Oversized responses or extraction still fail,
-never silently truncate. Source identity and republication validators continue to
-inspect full retrieved material before any model-input selection.
-
-Model-input excerpts, summary sufficiency, and model evaluation are described in
-the [llm guide](llm/README.md).
-
 ## Module Map
 
-| File | Responsibility |
+Each package with its own guide lists its files there.
+
+| Path | Responsibility |
 | --- | --- |
 | `__init__.py` | Package metadata |
 | `__main__.py` | `python -m daily_brief` entry point |
 | `cli.py` | Command-line parsing and command dispatch |
-| [`generation/`](generation/README.md) | Generation pipeline behind `daily-brief generate` |
 | `config.py` | Timezone, topic vocabulary, quotas, thresholds, and scoring limits |
 | `models.py` | Shared story, candidate, retrieval, and model-diagnostic structures |
 | `time_window.py` | Daily collection window |
-| [`candidates/`](candidates/README.md) | Stable facade for rule-based candidate collection, scoring, history, and selection |
-| `candidates/hn_client.py` | Algolia collection, hot stories, and bounded HN discussion sampling (the latter used by summary fallback) |
-| `candidates/keywords.py` | Keyword and URL-token matching |
-| `candidates/keyword_evaluation.py` | Keyword corpus collection and deterministic replay |
-| `candidates/scoring.py` | Candidate scoring and recommendation explanations |
-| `candidates/selection.py` | Deduplication and final section selection |
-| `candidates/history.py` | Recent recommendation history |
-| [`llm/`](llm/README.md) | Stable facade for model backends, summary helpers, and model evaluation |
-| `llm/model_backend.py` | Provider-neutral classification and summarization contracts |
-| `llm/gemini_backend.py` | Gemini adapter, pacing, structured output, and bounded retry |
-| `llm/topic_classifier.py` | Article-evidence topic classification |
-| `llm/summarizer.py` | Grounded prompts, route selection, evidence selection, and normalization |
-| `llm/evidence_selection.py` | Bounded title-aware source excerpts with explicit omissions |
-| `llm/model_evaluation.py` | Versioned model-input capture and side-effect-free replay |
-| [`article_fetcher/`](article_fetcher/README.md) | Stable facade for bounded public article retrieval |
-| `article_fetcher/contracts.py` | Shared retrieval policies, results, errors, and limits |
-| `article_fetcher/fetch.py` | Transport routing and direct-request retry |
-| `article_fetcher/recovery.py` | Jina and Wayback fallback orchestration |
-| `article_fetcher/responses.py` | Response decoding plus HTML/PDF extraction dispatch |
-| `article_fetcher/wayback.py` | Internet Archive capture lookup and replay validation |
-| `article_fetcher/jina.py` | Jina Reader transport and response validation |
-| `article_fetcher/github.py` | GitHub README and exact blob retrieval |
-| `article_fetcher/extract.py` | HTML body and semantic-table extraction |
-| `article_fetcher/http_safety.py` | Public-address validation and pinned connections |
-| `article_fetcher/challenges.py` | Browser-challenge and network-failure detection |
-| `article_fetcher/youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
-| `article_fetcher/source_evidence.py` | Bounded publisher-declared identity signals from page headers and video descriptions |
-| [`recovery/`](recovery/README.md) | Stable facade for search-based recovery after the original source is blocked |
-| `recovery/search_recovery.py` | Same-article, Reuters syndicated-copy, and alternate-reporting recovery attempts |
-| `recovery/same_article.py` | Bounded discovery and conservative validation of same-article copies |
-| `recovery/syndicated_copy.py` | Discovery and validation of Reuters syndicated copies |
-| `recovery/alternate_reporting.py` | Discovery and validation of Reuters reporting on the same event |
-| `recovery/fetched_material.py` | Normalized fetched material shared by direct retrieval and recovery |
-| `pdf_workers/__init__.py` | Import-free package for PDF workers run as `python -m` subprocesses |
-| `pdf_workers/adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
-| `pdf_workers/pdf_extractor.py` | Resource-bounded local PDF text worker |
+| [`generation/`](generation/README.md) | Generation pipeline behind `daily-brief generate`: stage order, routing, material, and summaries |
+| [`candidates/`](candidates/README.md) | Rule-based collection, keyword matching, scoring, history, and section selection |
+| [`llm/`](llm/README.md) | Prompts, evidence excerpts, summary sufficiency, the Gemini adapter, and model evaluation |
+| [`article_fetcher/`](article_fetcher/README.md) | Bounded public article retrieval, extraction, and Jina/Wayback fallbacks |
+| [`recovery/`](recovery/README.md) | Search-based recovery after the original source is blocked |
 | `output/__init__.py` | Stable facade for rendering, public payload validation, and publishing |
 | `output/render.py` | Markdown, public JSON, and private candidate-audit serialization |
 | `output/public_schema.py` | Public payload contract shared by generation and publishing |
 | `output/publisher.py` | Website delivery, retry, and local success state |
+| `pdf_workers/__init__.py` | Import-free package for PDF workers run as `python -m` subprocesses |
+| `pdf_workers/adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
+| `pdf_workers/pdf_extractor.py` | Resource-bounded local PDF text worker |
+
+## Package Dependencies
+
+```text
+cli             -> generation, llm, output
+generation      -> candidates, llm, recovery, article_fetcher, output
+recovery        -> article_fetcher
+llm             -> article_fetcher (model evaluation's extracted-text limit only)
+article_fetcher -> pdf_workers
+every package   -> config / models / time_window as needed
+```
+
+Dependencies point one way. Only `cli.py` imports `generation/`, nothing imports
+`cli.py`, and `candidates/`, `output/`, and `pdf_workers/` import no other
+package. Keep new code on the same side of these arrows; a package that needs
+something from a package above it usually means the code belongs in
+`generation/`.
 
 ## Core Invariants
 
