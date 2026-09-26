@@ -153,7 +153,7 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `article_fetcher/challenges.py` | Browser-challenge and network-failure detection |
 | `article_fetcher/youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
 | `article_fetcher/source_evidence.py` | Bounded publisher-declared identity signals from page headers and video descriptions |
-| `recovery/__init__.py` | Stable facade for search-based recovery after the original source is blocked |
+| [`recovery/`](recovery/README.md) | Stable facade for search-based recovery after the original source is blocked |
 | `recovery/search_recovery.py` | Same-article, Reuters syndicated-copy, and alternate-reporting recovery attempts |
 | `recovery/same_article.py` | Bounded discovery and conservative validation of same-article copies |
 | `recovery/syndicated_copy.py` | Discovery and validation of Reuters syndicated copies |
