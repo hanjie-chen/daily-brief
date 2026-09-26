@@ -77,8 +77,7 @@ pip install -e .
 daily-brief generate
 ```
 
-生成当天的简报，输出文件见 [Output](#output)。当天没有合适内容时，只写出 `briefs/YYYY-MM-DD.no-content` 标记。
-
+生成当天的简报，输出文件见 [Output](#output)。
 ### Publish
 
 ```sh
