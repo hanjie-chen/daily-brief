@@ -28,7 +28,7 @@ collection. The [generation guide](generation/README.md) describes each pipeline
 stage: candidate collection, classification and selection, material retrieval and
 recovery, summaries, and artifact writes.
 
-Publishing is a separate, explicitly targeted operation. `publisher.py`
+Publishing is a separate, explicitly targeted operation. `output/publisher.py`
 validates the public payload, sends it to the website, and records successful
 content hashes for idempotent retries.
 
@@ -52,7 +52,7 @@ never count a restatement of the question as a useful overview. Their dedicated
 prompt returns a short introduction and two or three structured entries (name and plain-language description), with comments as substantive
 evidence and the self-post question only as context. The adapter validates this
 route-specific response and formats a plain-text introduction and bullet list;
-`render.py` preserves those line breaks in Markdown and the existing public
+`output/render.py` preserves those line breaks in Markdown and the existing public
 `summary` string. Ordinary summaries retain their existing response schemas and
 whitespace normalization. `content_kind` and rejection
 details are private audit fields; public schema remains unchanged.
@@ -157,9 +157,10 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `pdf_workers/pdf_extractor.py` | Resource-bounded local PDF text worker |
 | `evidence_selection.py` | Bounded title-aware source excerpts with explicit omissions |
 | `summarizer.py` | Grounded prompts, route selection, evidence selection, and normalization |
-| `render.py` | Markdown, public JSON, and private candidate-audit serialization |
-| `public_schema.py` | Public payload contract shared by generation and publishing |
-| `publisher.py` | Website delivery, retry, and local success state |
+| `output/__init__.py` | Stable facade for rendering, public payload validation, and publishing |
+| `output/render.py` | Markdown, public JSON, and private candidate-audit serialization |
+| `output/public_schema.py` | Public payload contract shared by generation and publishing |
+| `output/publisher.py` | Website delivery, retry, and local success state |
 
 ## Core Invariants
 
@@ -218,7 +219,7 @@ record model and error code without credentials. Public output is unchanged.
   Local Markdown labels the core section `Tech picks`, while the website displays
   it as 技术精选. Changing either display label is not a schema migration.
 - Public JSON and private audit data have different trust and compatibility
-  boundaries. Public output uses the strict schema in `public_schema.py` and never
+  boundaries. Public output uses the strict schema in `output/public_schema.py` and never
   exposes raw provider diagnostics, recovery URLs, or private evaluation material.
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never
@@ -248,7 +249,8 @@ record model and error code without credentials. Public output is unchanged.
   -> `summarizer.py` -> `generation/summaries.py`.
 - Summary quality: `summarizer.py` -> the model adapter -> relevant orchestration
   and rendering tests.
-- Generated or published data: `render.py` -> `public_schema.py` -> `publisher.py`
+- Generated or published data: `output/render.py` -> `output/public_schema.py`
+  -> `output/publisher.py`
   -> `generation/pipeline.py` or `cli.py`.
 
 Keep external calls injectable, update tests at the boundary whose behavior

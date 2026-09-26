@@ -1,7 +1,7 @@
 import json
 
 from daily_brief.models import ArticleRetrieval, Candidate, KeywordMatch, Story
-from daily_brief.render import (
+from daily_brief.output import (
     render_candidates_json,
     render_markdown,
     render_public_brief_json,
@@ -423,7 +423,7 @@ def test_render_marks_summary_failure_as_distinct_from_fetch_failure():
 
 
 def test_roundup_list_survives_markdown_and_public_json_rendering():
-    from daily_brief.public_schema import validate_public_brief
+    from daily_brief.output import validate_public_brief
 
     item = candidate(title="Ask HN: What are you working on?")
     item.content_kind = "community_roundup"

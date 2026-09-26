@@ -14,7 +14,7 @@ material preparation, search-based recovery, summary orchestration, and writing
 date-scoped artifacts. Argument parsing and command dispatch stay in `cli.py`.
 Article transport and extraction stay in [`article_fetcher/`](../article_fetcher/README.md);
 prompts, routes, and evidence selection stay in `summarizer.py`; ranking rules
-stay in `scoring.py` and `selection.py`; publishing stays in `publisher.py`.
+stay in `scoring.py` and `selection.py`; rendering and publishing stay in `output/`.
 
 ## Generation Flow
 
@@ -74,7 +74,7 @@ this package that owns it.
    `summarizer.py` selects the generic, memorial, research, or HN-discussion route
    from available evidence. An external-source retrieval failure never becomes a
    title- or model-knowledge-based article summary.
-8. `pipeline.py`: `render.py` writes the readable Markdown, validated public JSON,
+8. `pipeline.py`: `output/render.py` writes the readable Markdown, validated public JSON,
    and private candidate audit. `history.py` then records selected item IDs. An
    empty brief writes a `.no-content` marker instead of public JSON.
 

@@ -5,7 +5,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from daily_brief.publisher import PublishError, publish_brief
+from daily_brief.output import PublishError, publish_brief
 
 
 def _payload(date_label="2026-07-25"):

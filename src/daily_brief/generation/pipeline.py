@@ -19,8 +19,13 @@ from ..keywords import match_keywords
 from ..model_backend import ModelBackend
 from ..model_evaluation import capture_model_evaluation_input
 from ..models import Candidate, Story
-from ..public_schema import EmptyPublicBriefError, validate_public_brief
-from ..render import render_candidates_json, render_markdown, render_public_brief_json
+from ..output import (
+    EmptyPublicBriefError,
+    render_candidates_json,
+    render_markdown,
+    render_public_brief_json,
+    validate_public_brief,
+)
 from ..same_article import SameArticleFinder
 from ..scoring import score_candidate
 from ..selection import dedupe_candidates

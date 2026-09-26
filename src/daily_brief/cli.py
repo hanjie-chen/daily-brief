@@ -8,7 +8,7 @@ from .gemini_backend import GeminiBackend
 from .generation import SourceCollectionError, run_generate
 from .model_backend import ModelBackend
 from .model_evaluation import ModelEvaluationInputError, run_model_evaluation
-from .publisher import PublishError, publish_brief
+from .output import PublishError, publish_brief
 from .time_window import daily_window
 
 LOGGER = logging.getLogger(__name__)
