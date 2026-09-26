@@ -117,4 +117,4 @@ Daily Brief 每天从 Hacker News 收集内容，挑选值得关注的条目，�
 
 需要还原完整尝试顺序时，再结合运行日志查看。抓取日志标有 `component=article_fetch`，PDF 提取标有 `component=pdf_extract`，搜索恢复的标记与上面的三个记录名称相同。
 
-进一步核对实现时，主流程见 [`cli.py`](../src/daily_brief/cli.py)，抓取与恢复见 [article_fetcher 说明](../src/daily_brief/article_fetcher/README.md)，诊断字段的写出逻辑见 [`render.py`](../src/daily_brief/render.py)。完整模块说明见 [包内 README](../src/daily_brief/README.md)。
+进一步核对实现时，主流程见 [`generation/pipeline.py`](../src/daily_brief/generation/pipeline.py)，原文获取与搜索恢复的编排见 [`generation/material.py`](../src/daily_brief/generation/material.py) 和 [`generation/search_recovery.py`](../src/daily_brief/generation/search_recovery.py)，抓取与恢复见 [article_fetcher 说明](../src/daily_brief/article_fetcher/README.md)，诊断字段的写出逻辑见 [`render.py`](../src/daily_brief/render.py)。完整模块说明见 [包内 README](../src/daily_brief/README.md)。

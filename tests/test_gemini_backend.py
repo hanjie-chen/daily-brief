@@ -754,7 +754,7 @@ def test_combined_insufficient_cannot_include_source_claims():
 
 
 def test_production_roundup_summary_has_exactly_one_partial_comment_attribution():
-    from daily_brief.cli import _generate_candidate_summary
+    from daily_brief.generation.summaries import generate_candidate_summary
 
     summary = (
         "这是一个分享近期项目的征集帖。\n\n"
@@ -778,7 +778,7 @@ def test_production_roundup_summary_has_exactly_one_partial_comment_attribution(
     item.summary_basis = "hn_comments"
     item.discussion_text = "I use GPU terrain editing. Another author built an offline calendar."
 
-    _generate_candidate_summary(item, backend)
+    generate_candidate_summary(item, backend)
 
     assert item.summary_status == "success"
     assert item.summary == "根据 Hacker News 部分评论：" + summary

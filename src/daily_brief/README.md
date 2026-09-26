@@ -11,16 +11,18 @@ points, see [the architecture guide](../../docs/architecture.md).
 ## Entry Points
 
 - `__main__.py` runs the primary CLI through `python -m daily_brief`.
-- `cli.py` provides the `daily-brief` commands for generation, publishing, and
-  model evaluation. Start here for changes to pipeline order or cross-module
-  fallback behavior.
+- `cli.py` parses the `daily-brief` commands for generation, publishing, and
+  model evaluation and dispatches them. It contains no pipeline logic.
+- `generation/` implements the generation pipeline. Start at
+  `generation/pipeline.py` for changes to pipeline order, and at the stage module
+  that owns the behavior for cross-module fallback changes.
 - `keyword_evaluation.py` provides the corpus collection and replay utility used
   to evaluate production keyword matching. It can be run through
   `scripts/evaluate_keywords.py`.
 
 ## Generation Flow
 
-Production generation spans CLI setup and `cli.run_generate(...)`:
+Production generation spans CLI setup and `generation.run_generate(...)`:
 
 1. `time_window.py` calculates the daily collection window in the
    Asia/Singapore timezone.
@@ -70,7 +72,7 @@ Production generation spans CLI setup and `cli.run_generate(...)`:
    insufficient. Rejections continue to the existing Reuters recovery routes.
 8. If every external-source retrieval and recovery path fails for a selected
    story, or its summary call explicitly finds the retrieved material insufficient,
-   `cli.py` asks `hn_client.py` for a bounded HN discussion sample as the final fallback.
+   `generation/material.py` asks `hn_client.py` for a bounded HN discussion sample as the final fallback.
    `summarizer.py` selects the generic, memorial, research, or HN-discussion route
    from available evidence. An external-source retrieval failure never becomes a
    title- or model-knowledge-based article summary.
@@ -166,7 +168,14 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | --- | --- |
 | `__init__.py` | Package metadata |
 | `__main__.py` | `python -m daily_brief` entry point |
-| `cli.py` | Primary CLI and end-to-end orchestration |
+| `cli.py` | Command-line parsing and command dispatch |
+| `generation/__init__.py` | Stable facade: `run_generate`, `GenerateResult`, `SourceCollectionError` |
+| `generation/pipeline.py` | Generation stage order, candidate collection, history exclusion, and artifact writes |
+| `generation/classification.py` | Keyword routing, bounded topic classification, roundup assessment, and section selection |
+| `generation/summaries.py` | Selected-item summary loop, discussion fallback, and summary diagnostics |
+| `generation/material.py` | Classification/summary retrieval modes, recovery dispatch, and HN discussion material |
+| `generation/search_recovery.py` | Same-article, Reuters syndicated-copy, and alternate-reporting recovery attempts |
+| `generation/fetched_material.py` | Normalized fetched material shared by direct retrieval and recovery |
 | `config.py` | Timezone, topic vocabulary, quotas, thresholds, and scoring limits |
 | `models.py` | Shared story, candidate, retrieval, and model-diagnostic structures |
 | `time_window.py` | Daily collection window |
@@ -283,14 +292,16 @@ record model and error code without credentials. Public output is unchanged.
 ## Common Change Paths
 
 - Core-topic recognition: `config.py` -> `keywords.py` -> `topic_classifier.py`
-  -> `cli.py`.
-- Ranking or quotas: `config.py` -> `scoring.py` -> `selection.py` -> `cli.py`.
+  -> `generation/classification.py`.
+- Ranking or quotas: `config.py` -> `scoring.py` -> `selection.py`
+  -> `generation/classification.py`.
 - Article material: the relevant transport or extractor -> `article_fetcher/`
-  -> `summarizer.py` -> `cli.py`.
+  -> `generation/material.py` or `generation/search_recovery.py`
+  -> `summarizer.py` -> `generation/summaries.py`.
 - Summary quality: `summarizer.py` -> the model adapter -> relevant orchestration
   and rendering tests.
 - Generated or published data: `render.py` -> `public_schema.py` -> `publisher.py`
-  -> `cli.py`.
+  -> `generation/pipeline.py` or `cli.py`.
 
 Keep external calls injectable, update tests at the boundary whose behavior
 changes, and update the root README or product document when a change affects

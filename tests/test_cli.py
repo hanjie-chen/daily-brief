@@ -8,9 +8,11 @@ from daily_brief import article_fetcher as article_fetcher_module
 from daily_brief import cli
 from daily_brief.alternate_reporting import AlternateReportingCandidate
 from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
-from daily_brief.cli import SourceCollectionError, build_parser, main, run_generate
+from daily_brief.cli import build_parser, main
 from daily_brief.gemini_backend import GeminiAPIError
 from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
+from daily_brief.generation import SourceCollectionError, run_generate
+from daily_brief.generation import material, pipeline, summaries
 from daily_brief.hn_client import HNDiscussionResult
 from daily_brief.model_evaluation import capture_model_evaluation_input
 from daily_brief.models import Candidate, Story
@@ -28,13 +30,14 @@ from daily_brief.syndicated_copy import (
 @pytest.fixture(autouse=True)
 def prevent_live_classifier_and_article_calls(monkeypatch):
     monkeypatch.setattr(cli, "GeminiBackend", FakeGeminiBackendFactory)
+    monkeypatch.setattr(pipeline, "GeminiBackend", FakeGeminiBackendFactory)
     monkeypatch.setattr(
-        cli,
+        material,
         "fetch_article",
         lambda url, **kwargs: "Test article facts.",
     )
     monkeypatch.setattr(
-        cli,
+        material,
         "fetch_hn_discussion",
         lambda item_id: HNDiscussionResult(
             text="",
@@ -61,7 +64,7 @@ def test_parser_defaults_to_generate_command():
 
 
 def test_bounded_error_message_is_single_line_and_limited():
-    message = cli._bounded_error_message(RuntimeError("first\n" + "x" * 600))
+    message = material.bounded_error_message(RuntimeError("first\n" + "x" * 600))
 
     assert message.startswith("first ")
     assert "\n" not in message
@@ -71,8 +74,8 @@ def test_bounded_error_message_is_single_line_and_limited():
 def test_summary_diagnostics_use_safe_defaults_for_generic_exceptions():
     error = RuntimeError("boom")
 
-    assert cli._summary_error_code(error) == "unexpected_error"
-    assert cli._summary_http_status(error) is None
+    assert summaries._summary_error_code(error) == "unexpected_error"
+    assert summaries._summary_http_status(error) is None
 
 
 def test_run_generate_writes_markdown_and_json(tmp_path):
@@ -387,7 +390,7 @@ def test_default_classification_fetch_uses_bounded_policy(tmp_path, monkeypatch)
         calls.append((url, kwargs))
         return "Grounded outside evidence."
 
-    monkeypatch.setattr(cli, "fetch_article", fetch)
+    monkeypatch.setattr(material, "fetch_article", fetch)
 
     run_generate(
         output_dir=tmp_path / "briefs",
@@ -401,12 +404,12 @@ def test_default_classification_fetch_uses_bounded_policy(tmp_path, monkeypatch)
 
     assert len(calls) == 1
     _, kwargs = calls[0]
-    assert kwargs["timeout_seconds"] == cli.CLASSIFICATION_HTTP_TIMEOUT_SECONDS
+    assert kwargs["timeout_seconds"] == material.CLASSIFICATION_HTTP_TIMEOUT_SECONDS
     assert (
         kwargs["pdf_parse_timeout_seconds"]
-        == cli.CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
+        == material.CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
     )
-    assert kwargs["policy"] is cli.CLASSIFICATION_FETCH_POLICY
+    assert kwargs["policy"] is material.CLASSIFICATION_FETCH_POLICY
 
 
 def test_injected_classification_fetch_receives_bounded_policy(tmp_path):
@@ -429,12 +432,12 @@ def test_injected_classification_fetch_receives_bounded_policy(tmp_path):
 
     assert len(calls) == 1
     _, kwargs = calls[0]
-    assert kwargs["timeout_seconds"] == cli.CLASSIFICATION_HTTP_TIMEOUT_SECONDS
+    assert kwargs["timeout_seconds"] == material.CLASSIFICATION_HTTP_TIMEOUT_SECONDS
     assert (
         kwargs["pdf_parse_timeout_seconds"]
-        == cli.CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
+        == material.CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
     )
-    assert kwargs["policy"] is cli.CLASSIFICATION_FETCH_POLICY
+    assert kwargs["policy"] is material.CLASSIFICATION_FETCH_POLICY
 
 
 def test_injected_summary_fetch_receives_full_policy_and_wayback_bounds(tmp_path):
@@ -456,7 +459,7 @@ def test_injected_summary_fetch_receives_full_policy_and_wayback_bounds(tmp_path
 
     assert len(calls) == 1
     _, kwargs = calls[0]
-    assert kwargs["policy"] is cli.SUMMARY_FETCH_POLICY
+    assert kwargs["policy"] is material.SUMMARY_FETCH_POLICY
     assert kwargs["wayback_not_before"] < kwargs["wayback_not_after"]
     assert "timeout_seconds" not in kwargs
 
@@ -506,7 +509,7 @@ def test_classification_youtube_skip_is_audited_with_zero_attempts(
             **kwargs,
         )
 
-    monkeypatch.setattr(cli, "fetch_article", fetch)
+    monkeypatch.setattr(material, "fetch_article", fetch)
     classifier = FakeClassifier()
 
     result = run_generate(
@@ -576,7 +579,7 @@ def test_exploration_self_post_uses_story_text_without_external_fetch(tmp_path):
 
 
 def test_run_generate_records_summary_failure_diagnostics(tmp_path, caplog):
-    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+    with caplog.at_level(logging.ERROR, logger="daily_brief"):
         result = run_generate(
             output_dir=tmp_path / "briefs",
             data_dir=tmp_path / "data",
@@ -648,9 +651,9 @@ def test_run_generate_fails_when_algolia_fetch_fails(tmp_path, monkeypatch):
     def raise_algolia_error(window):
         raise RuntimeError("algolia unavailable")
 
-    monkeypatch.setattr(cli, "fetch_algolia_stories", raise_algolia_error)
+    monkeypatch.setattr(pipeline, "fetch_algolia_stories", raise_algolia_error)
     monkeypatch.setattr(
-        cli,
+        pipeline,
         "fetch_hot_stories",
         lambda: pytest.fail("HN API must not run after Algolia fails"),
     )
@@ -674,7 +677,7 @@ def test_run_generate_fails_when_hot_fetch_fails(tmp_path, monkeypatch):
     def raise_hot_error():
         raise RuntimeError("hn unavailable")
 
-    monkeypatch.setattr(cli, "fetch_hot_stories", raise_hot_error)
+    monkeypatch.setattr(pipeline, "fetch_hot_stories", raise_hot_error)
 
     with pytest.raises(SourceCollectionError, match="hn_official"):
         run_generate(
@@ -710,9 +713,9 @@ def test_source_failure_does_not_replace_existing_date_artifacts(
     def raise_algolia_error(window):
         raise RuntimeError("algolia unavailable")
 
-    monkeypatch.setattr(cli, "fetch_algolia_stories", raise_algolia_error)
+    monkeypatch.setattr(pipeline, "fetch_algolia_stories", raise_algolia_error)
     monkeypatch.setattr(
-        cli,
+        pipeline,
         "fetch_hot_stories",
         lambda: pytest.fail("HN API must not run after Algolia fails"),
     )
@@ -731,16 +734,16 @@ def test_source_failure_does_not_replace_existing_date_artifacts(
 
 def test_run_generate_logs_source_success_and_completion(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(
-        cli,
+        pipeline,
         "fetch_algolia_stories",
         lambda window: [
             story("1", "AI coding agent with Claude", points=40, comments=8)
         ],
     )
-    monkeypatch.setattr(cli, "fetch_hot_stories", lambda: [])
+    monkeypatch.setattr(pipeline, "fetch_hot_stories", lambda: [])
     clock = iter([10.0, 12.5, 20.0, 23.0, 30.0, 31.25]).__next__
 
-    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+    with caplog.at_level(logging.INFO, logger="daily_brief"):
         run_generate(
             output_dir=tmp_path / "briefs",
             data_dir=tmp_path / "data",
@@ -759,11 +762,11 @@ def test_run_generate_logs_terminal_source_failure(tmp_path, monkeypatch, caplog
     def raise_algolia_error(window):
         raise RuntimeError("algolia unavailable")
 
-    monkeypatch.setattr(cli, "fetch_algolia_stories", raise_algolia_error)
-    monkeypatch.setattr(cli, "fetch_hot_stories", lambda: [])
+    monkeypatch.setattr(pipeline, "fetch_algolia_stories", raise_algolia_error)
+    monkeypatch.setattr(pipeline, "fetch_hot_stories", lambda: [])
     clock = iter([10.0, 100.0, 200.0, 201.0, 300.0, 301.0]).__next__
 
-    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+    with caplog.at_level(logging.INFO, logger="daily_brief"):
         with pytest.raises(SourceCollectionError):
             run_generate(
                 output_dir=tmp_path / "briefs",
@@ -981,7 +984,7 @@ def test_main_reports_inconclusive_no_content_as_generate_failure(
         ),
     )
 
-    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+    with caplog.at_level(logging.ERROR, logger="daily_brief"):
         exit_code = main(["generate"])
 
     assert exit_code == 1
@@ -993,7 +996,7 @@ def test_main_reports_missing_gemini_key_for_production_generate(monkeypatch, ca
     monkeypatch.setattr(cli, "GeminiBackend", RealGeminiBackend)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
-    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+    with caplog.at_level(logging.ERROR, logger="daily_brief"):
         exit_code = main(["generate"])
 
     assert exit_code == 1
@@ -1004,7 +1007,7 @@ def test_main_reports_missing_gemini_key_for_evaluation(tmp_path, monkeypatch, c
     monkeypatch.setattr(cli, "GeminiBackend", RealGeminiBackend)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
-    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+    with caplog.at_level(logging.ERROR, logger="daily_brief"):
         exit_code = main(
             [
                 "evaluate-model",
@@ -1050,7 +1053,7 @@ def test_main_evaluate_model_replays_captured_input(tmp_path):
 def test_article_ai_enters_core_pool_with_article_evidence_bonus(tmp_path, caplog):
     classifier = FakeClassifier({"2": "ai"})
 
-    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+    with caplog.at_level(logging.INFO, logger="daily_brief"):
         result = run_generate(
             output_dir=tmp_path / "briefs",
             data_dir=tmp_path / "data",
@@ -1094,7 +1097,7 @@ def test_article_ai_enters_core_pool_with_article_evidence_bonus(tmp_path, caplo
 
 
 def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
-    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+    with caplog.at_level(logging.ERROR, logger="daily_brief"):
         result = run_generate(
             output_dir=tmp_path / "briefs",
             data_dir=tmp_path / "data",
@@ -1237,7 +1240,7 @@ def test_selected_external_article_text_reaches_summarizer(tmp_path, caplog):
         fetched_urls.append(url)
         return "Grounded article facts."
 
-    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+    with caplog.at_level(logging.INFO, logger="daily_brief"):
         result = run_generate(
             output_dir=tmp_path / "briefs",
             data_dir=tmp_path / "data",
@@ -1414,7 +1417,7 @@ A bibliography that should not enter the summary evidence.
 
     selected = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
     assert len(calls) == 1
-    assert calls[0][1]["policy"] is cli.CLASSIFICATION_FETCH_POLICY
+    assert calls[0][1]["policy"] is material.CLASSIFICATION_FETCH_POLICY
     assert summarizer.fetched_texts == [body.strip()]
     assert summarizer.summary_modes == [SUMMARY_MODE_RESEARCH_REPORT]
     assert selected["article_retrieval"]["extractor"] == "adobe_pdf_to_markdown"
@@ -1643,7 +1646,7 @@ def test_github_readme_retrieval_provenance_is_persisted(tmp_path):
 
 
 def test_github_pdf_retrieval_provenance_and_logging_are_persisted(tmp_path, caplog):
-    with caplog.at_level(logging.INFO, logger="daily_brief.cli"):
+    with caplog.at_level(logging.INFO, logger="daily_brief"):
         result = run_generate(
             output_dir=tmp_path / "briefs",
             data_dir=tmp_path / "data",
@@ -1866,7 +1869,7 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
 
     summarizer = FakeSummarizer()
 
-    with caplog.at_level(logging.ERROR, logger="daily_brief.cli"):
+    with caplog.at_level(logging.ERROR, logger="daily_brief"):
         result = run_generate(
             output_dir=tmp_path / "briefs",
             data_dir=tmp_path / "data",

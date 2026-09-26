@@ -268,25 +268,25 @@ def test_summary_pacing_is_shared_across_retries_and_model_switches():
 
 
 def test_cli_records_the_actual_fallback_model_and_total_attempts():
-    from daily_brief.cli import _generate_candidate_summary
+    from daily_brief.generation.summaries import generate_candidate_summary
 
     opener = RecordingOpener(daily_quota_error(), daily_quota_error(), sufficient("来自 3.8。"))
     backend = models(opener, max_retries=0)
     candidate = item()
 
-    assert _generate_candidate_summary(candidate, backend) is False
+    assert generate_candidate_summary(candidate, backend) is False
     assert candidate.summary_generation.model == "gemini-3.8-flash"
     assert candidate.summary_generation.attempts == 3
 
 
 def test_cli_records_actual_model_for_insufficient_fallback_decision():
-    from daily_brief.cli import _generate_candidate_summary
+    from daily_brief.generation.summaries import generate_candidate_summary
 
     opener = RecordingOpener(daily_quota_error(), insufficient())
     backend = models(opener, max_retries=0)
     candidate = item()
 
-    assert _generate_candidate_summary(candidate, backend) is True
+    assert generate_candidate_summary(candidate, backend) is True
     assert candidate.summary_generation.model == "gemini-3.7-flash"
     assert candidate.summary_generation.attempts == 2
 
