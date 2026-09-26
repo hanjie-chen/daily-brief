@@ -27,11 +27,9 @@ from ..models import (
 )
 from ..recovery import (
     AlternateReportingFinder,
-    AlternateReportingOutcome,
+    RecoveryOutcome,
     SameArticleFinder,
-    SameArticleOutcome,
     SyndicatedCopyFinder,
-    SyndicatedOutcome,
     attempt_alternate_reporting_recovery,
     attempt_same_article_recovery,
     attempt_syndicated_recovery,
@@ -96,16 +94,10 @@ def prepare_candidate_material(
             )
         except Exception as exc:
             original_failure = _retrieval_failure(exc)
-            recovery = SyndicatedOutcome(
-                material=None,
-                audit=SyndicatedRecovery(),
-            )
-            alternate_recovery = AlternateReportingOutcome(
-                material=None,
-                audit=AlternateReportingRecovery(),
-            )
+            recovery = RecoveryOutcome(None, SyndicatedRecovery())
+            alternate_recovery = RecoveryOutcome(None, AlternateReportingRecovery())
             material_origin = ""
-            same_recovery = SameArticleOutcome(None, SameArticleRecovery())
+            same_recovery = RecoveryOutcome(None, SameArticleRecovery())
             if (
                 retrieval_mode == RETRIEVAL_MODE_SUMMARY
                 and original_failure.fallback_attempted

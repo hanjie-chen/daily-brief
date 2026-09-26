@@ -8,9 +8,7 @@ from .alternate_reporting import (
 from .fetched_material import FetchedMaterial, coerce_fetched_material
 from .same_article import SameArticleCandidate, SameArticleFinder, SameArticleFinderError
 from .search_recovery import (
-    AlternateReportingOutcome,
-    SameArticleOutcome,
-    SyndicatedOutcome,
+    RecoveryOutcome,
     attempt_alternate_reporting_recovery,
     attempt_same_article_recovery,
     attempt_syndicated_recovery,
@@ -27,16 +25,14 @@ __all__ = [
     "AlternateReportingCandidate",
     "AlternateReportingFinder",
     "AlternateReportingFinderError",
-    "AlternateReportingOutcome",
     "FetchedMaterial",
+    "RecoveryOutcome",
     "SameArticleCandidate",
     "SameArticleFinder",
     "SameArticleFinderError",
-    "SameArticleOutcome",
     "SyndicatedCandidate",
     "SyndicatedCopyFinder",
     "SyndicatedFinderError",
-    "SyndicatedOutcome",
     "attempt_alternate_reporting_recovery",
     "attempt_same_article_recovery",
     "attempt_syndicated_recovery",

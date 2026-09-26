@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
@@ -48,36 +49,20 @@ from .syndicated_copy import (
 
 LOGGER = logging.getLogger(__name__)
 
+RecoveryAudit = SameArticleRecovery | SyndicatedRecovery | AlternateReportingRecovery
+
 
 @dataclass(frozen=True)
-class SyndicatedOutcome:
+class RecoveryOutcome:
     material: FetchedMaterial | None
-    audit: SyndicatedRecovery
-
-
-@dataclass(frozen=True)
-class AlternateReportingOutcome:
-    material: FetchedMaterial | None
-    audit: AlternateReportingRecovery
-
-
-@dataclass(frozen=True)
-class SameArticleOutcome:
-    material: FetchedMaterial | None
-    audit: SameArticleRecovery
-
-
-@dataclass(frozen=True)
-class _ValidatedAlternateReporting:
-    material: FetchedMaterial
-    validation: AlternateReportingValidation
+    audit: RecoveryAudit
 
 
 def attempt_same_article_recovery(
     candidate: Candidate,
     article_client,
     finder: SameArticleFinder | None,
-) -> SameArticleOutcome:
+) -> RecoveryOutcome:
     active_finder = finder or TavilySameArticleFinder.from_environment()
     audit = SameArticleRecovery(
         status="exhausted",
@@ -87,18 +72,16 @@ def attempt_same_article_recovery(
     try:
         discovered = active_finder.find(candidate)
     except Exception as exc:
-        audit.error_code = (
-            exc.error_code if isinstance(exc, SameArticleFinderError) else "finder_failed"
-        )
+        audit.error_code = _finder_error_code(exc, SameArticleFinderError)
         audit.status = "not_configured" if audit.error_code == "not_configured" else "finder_failed"
         LOGGER.info(
             "component=same_article_recovery item_id=%s status=%s code=%s",
             candidate.story.hn_item_id, audit.status, audit.error_code,
         )
-        return SameArticleOutcome(None, audit)
+        return RecoveryOutcome(None, audit)
     if not isinstance(discovered, list):
         audit.status, audit.error_code = "finder_failed", "malformed_results"
-        return SameArticleOutcome(None, audit)
+        return RecoveryOutcome(None, audit)
 
     bounded = discovered[:MAX_SAME_ARTICLE_CANDIDATES]
     audit.discovered_candidates = len(bounded)
@@ -159,73 +142,47 @@ def attempt_same_article_recovery(
             "component=same_article_recovery item_id=%s status=success attempted=%d",
             candidate.story.hn_item_id, audit.attempted_candidates,
         )
-        return SameArticleOutcome(material, audit)
+        return RecoveryOutcome(material, audit)
     LOGGER.info(
         "component=same_article_recovery item_id=%s status=exhausted attempted=%d",
         candidate.story.hn_item_id, audit.attempted_candidates,
     )
-    return SameArticleOutcome(None, audit)
+    return RecoveryOutcome(None, audit)
 
 
 def attempt_alternate_reporting_recovery(
     candidate: Candidate,
     article_client,
     finder: AlternateReportingFinder | None,
-) -> AlternateReportingOutcome:
+) -> RecoveryOutcome:
+    component = "alternate_reporting_recovery"
     active_finder = finder
     if active_finder is None:
         active_finder = TavilyAlternateReportingFinder.from_environment()
-    provider = getattr(active_finder, "provider", "unknown")
-    try:
-        discovered = active_finder.find(candidate)
-    except Exception as exc:
-        error_code = (
-            exc.error_code
-            if isinstance(exc, AlternateReportingFinderError)
-            else "finder_failed"
-        )
-        LOGGER.warning(
-            "component=alternate_reporting_recovery item_id=%s provider=%s "
-            "status=finder_failed code=%s",
-            candidate.story.hn_item_id,
-            provider,
-            error_code,
-        )
-        return AlternateReportingOutcome(
-            material=None,
-            audit=AlternateReportingRecovery(
-                status="finder_failed",
-                provider=provider,
-                error_code=error_code,
-            ),
-        )
-
-    if not isinstance(discovered, list):
-        return AlternateReportingOutcome(
-            material=None,
-            audit=AlternateReportingRecovery(
-                status="finder_failed",
-                provider=provider,
-                error_code="malformed_results",
-            ),
-        )
+    provider, discovered, failure = _discover(
+        candidate,
+        active_finder,
+        error_type=AlternateReportingFinderError,
+        component=component,
+        audit_type=AlternateReportingRecovery,
+    )
+    if failure is not None:
+        return RecoveryOutcome(None, failure)
 
     rejection_reasons: list[str] = []
     seen_urls: set[str] = set()
     yahoo_candidates: list[tuple[AlternateReportingCandidate, str]] = []
     reuters_candidates: list[tuple[AlternateReportingCandidate, str]] = []
     for alternate in discovered[:MAX_ALTERNATE_REPORTING_CANDIDATES]:
-        if not isinstance(alternate, AlternateReportingCandidate):
-            rejection_reasons.append("malformed_candidate")
-            continue
-        normalized_url = normalize_alternate_reporting_url(alternate.url)
+        normalized_url = _allowed_candidate_url(
+            alternate,
+            AlternateReportingCandidate,
+            normalize_alternate_reporting_url,
+            seen_urls,
+            rejection_reasons,
+        )
         if normalized_url is None:
-            rejection_reasons.append("unsupported_url")
             continue
-        if normalized_url in seen_urls:
-            rejection_reasons.append("duplicate_url")
-            continue
-        seen_urls.add(normalized_url)
         target = (
             yahoo_candidates
             if is_yahoo_url(normalized_url)
@@ -237,47 +194,24 @@ def attempt_alternate_reporting_recovery(
 
     def validate_group(
         group: list[tuple[AlternateReportingCandidate, str]],
-    ) -> list[_ValidatedAlternateReporting]:
+    ) -> list[tuple[FetchedMaterial, AlternateReportingValidation]]:
         nonlocal attempted
-        accepted: list[_ValidatedAlternateReporting] = []
+        accepted = []
         for alternate, normalized_url in group:
             attempted += 1
-            try:
-                material = coerce_fetched_material(
-                    article_client(normalized_url),
-                    normalized_url,
-                )
-            except Exception as exc:
-                rejection_reasons.append("fetch_failed")
-                LOGGER.warning(
-                    "component=alternate_reporting_recovery item_id=%s "
-                    "provider=%s status=candidate_fetch_failed code=%s",
-                    candidate.story.hn_item_id,
-                    provider,
-                    getattr(exc, "error_code", "fetch_failed"),
-                )
-                continue
-            effective_url = normalize_alternate_reporting_url(
-                material.retrieved_url
-            )
-            if effective_url is None:
-                rejection_reasons.append("redirected_to_unsupported_url")
-                continue
-            material = replace(material, retrieved_url=effective_url)
-            validation = validate_alternate_reporting(
+            verified = _fetch_and_validate(
                 candidate,
                 alternate,
-                material.text,
+                normalized_url,
+                article_client,
+                normalize_url=normalize_alternate_reporting_url,
+                validate=validate_alternate_reporting,
+                component=component,
+                provider=provider,
+                rejection_reasons=rejection_reasons,
             )
-            if not validation.accepted:
-                rejection_reasons.append(validation.reason)
-                continue
-            accepted.append(
-                _ValidatedAlternateReporting(
-                    material=material,
-                    validation=validation,
-                )
-            )
+            if verified is not None:
+                accepted.append(verified)
         return accepted
 
     accepted = validate_group(yahoo_candidates)
@@ -285,10 +219,10 @@ def attempt_alternate_reporting_recovery(
         accepted = validate_group(reuters_candidates)
 
     if accepted and validations_conflict(
-        [item.validation for item in accepted]
+        [validation for _material, validation in accepted]
     ):
         rejection_reasons.append("event_identity_conflict")
-        return AlternateReportingOutcome(
+        return RecoveryOutcome(
             material=None,
             audit=AlternateReportingRecovery(
                 status="conflict",
@@ -301,12 +235,9 @@ def attempt_alternate_reporting_recovery(
         )
 
     if accepted:
-        selected = min(
+        selected, _validation = min(
             accepted,
-            key=lambda item: (
-                -len(item.material.text),
-                item.material.retrieved_url,
-            ),
+            key=lambda item: (-len(item[0].text), item[0].retrieved_url),
         )
         audit = AlternateReportingRecovery(
             status="success",
@@ -315,18 +246,11 @@ def attempt_alternate_reporting_recovery(
             attempted_candidates=attempted,
             rejection_reasons=rejection_reasons,
         )
-        LOGGER.info(
-            "component=alternate_reporting_recovery item_id=%s provider=%s "
-            "status=success discovered=%d attempted=%d",
-            candidate.story.hn_item_id,
-            provider,
-            len(discovered),
-            attempted,
-        )
-        return AlternateReportingOutcome(material=selected.material, audit=audit)
+        _log_success(component, candidate, provider, len(discovered), attempted)
+        return RecoveryOutcome(material=selected, audit=audit)
 
     status = "not_found" if not discovered else "exhausted"
-    return AlternateReportingOutcome(
+    return RecoveryOutcome(
         material=None,
         audit=AlternateReportingRecovery(
             status=status,
@@ -342,85 +266,47 @@ def attempt_syndicated_recovery(
     candidate: Candidate,
     article_client,
     finder: SyndicatedCopyFinder | None,
-) -> SyndicatedOutcome:
+) -> RecoveryOutcome:
+    component = "syndicated_recovery"
     active_finder = finder
     if active_finder is None:
         active_finder = TavilySyndicatedCopyFinder.from_environment()
-    provider = getattr(active_finder, "provider", "unknown")
-    try:
-        discovered = active_finder.find(candidate)
-    except Exception as exc:
-        error_code = (
-            exc.error_code
-            if isinstance(exc, SyndicatedFinderError)
-            else "finder_failed"
-        )
-        LOGGER.warning(
-            "component=syndicated_recovery item_id=%s provider=%s "
-            "status=finder_failed code=%s",
-            candidate.story.hn_item_id,
-            provider,
-            error_code,
-        )
-        return SyndicatedOutcome(
-            material=None,
-            audit=SyndicatedRecovery(
-                status="finder_failed",
-                provider=provider,
-                error_code=error_code,
-            ),
-        )
-
-    if not isinstance(discovered, list):
-        return SyndicatedOutcome(
-            material=None,
-            audit=SyndicatedRecovery(
-                status="finder_failed",
-                provider=provider,
-                error_code="malformed_results",
-            ),
-        )
+    provider, discovered, failure = _discover(
+        candidate,
+        active_finder,
+        error_type=SyndicatedFinderError,
+        component=component,
+        audit_type=SyndicatedRecovery,
+    )
+    if failure is not None:
+        return RecoveryOutcome(None, failure)
 
     attempted = 0
     rejection_reasons: list[str] = []
     seen_urls: set[str] = set()
-    bounded_candidates = discovered[:MAX_SYNDICATED_CANDIDATES]
-    for syndicated in bounded_candidates:
-        if not isinstance(syndicated, SyndicatedCandidate):
-            rejection_reasons.append("malformed_candidate")
-            continue
-        normalized_url = normalize_allowed_candidate_url(syndicated.url)
+    for syndicated in discovered[:MAX_SYNDICATED_CANDIDATES]:
+        normalized_url = _allowed_candidate_url(
+            syndicated,
+            SyndicatedCandidate,
+            normalize_allowed_candidate_url,
+            seen_urls,
+            rejection_reasons,
+        )
         if normalized_url is None:
-            rejection_reasons.append("unsupported_url")
             continue
-        if normalized_url in seen_urls:
-            rejection_reasons.append("duplicate_url")
-            continue
-        seen_urls.add(normalized_url)
         attempted += 1
-        try:
-            material = coerce_fetched_material(
-                article_client(normalized_url),
-                normalized_url,
-            )
-        except Exception as exc:
-            rejection_reasons.append("fetch_failed")
-            LOGGER.warning(
-                "component=syndicated_recovery item_id=%s provider=%s "
-                "status=candidate_fetch_failed code=%s",
-                candidate.story.hn_item_id,
-                provider,
-                getattr(exc, "error_code", "fetch_failed"),
-            )
-            continue
-        effective_url = normalize_allowed_candidate_url(material.retrieved_url)
-        if effective_url is None:
-            rejection_reasons.append("redirected_to_unsupported_url")
-            continue
-        material = replace(material, retrieved_url=effective_url)
-        validation = validate_syndicated_copy(candidate, syndicated, material.text)
-        if not validation.accepted:
-            rejection_reasons.append(validation.reason)
+        verified = _fetch_and_validate(
+            candidate,
+            syndicated,
+            normalized_url,
+            article_client,
+            normalize_url=normalize_allowed_candidate_url,
+            validate=validate_syndicated_copy,
+            component=component,
+            provider=provider,
+            rejection_reasons=rejection_reasons,
+        )
+        if verified is None:
             continue
         audit = SyndicatedRecovery(
             status="success",
@@ -429,15 +315,8 @@ def attempt_syndicated_recovery(
             attempted_candidates=attempted,
             rejection_reasons=rejection_reasons,
         )
-        LOGGER.info(
-            "component=syndicated_recovery item_id=%s provider=%s "
-            "status=success discovered=%d attempted=%d",
-            candidate.story.hn_item_id,
-            provider,
-            len(discovered),
-            attempted,
-        )
-        return SyndicatedOutcome(material=material, audit=audit)
+        _log_success(component, candidate, provider, len(discovered), attempted)
+        return RecoveryOutcome(material=verified[0], audit=audit)
 
     status = "not_found" if not discovered else "exhausted"
     audit = SyndicatedRecovery(
@@ -448,12 +327,126 @@ def attempt_syndicated_recovery(
         rejection_reasons=rejection_reasons,
     )
     LOGGER.warning(
-        "component=syndicated_recovery item_id=%s provider=%s "
-        "status=%s discovered=%d attempted=%d",
+        "component=%s item_id=%s provider=%s status=%s discovered=%d attempted=%d",
+        component,
         candidate.story.hn_item_id,
         provider,
         status,
         len(discovered),
         attempted,
     )
-    return SyndicatedOutcome(material=None, audit=audit)
+    return RecoveryOutcome(material=None, audit=audit)
+
+
+def _finder_error_code(exc: Exception, error_type: type[Exception]) -> str:
+    return exc.error_code if isinstance(exc, error_type) else "finder_failed"
+
+
+def _discover(
+    candidate: Candidate,
+    finder,
+    *,
+    error_type: type[Exception],
+    component: str,
+    audit_type: type[SyndicatedRecovery] | type[AlternateReportingRecovery],
+):
+    """Run an allowlisted route's finder.
+
+    Returns (provider, results, None), or (provider, None, failure_audit).
+    """
+    provider = getattr(finder, "provider", "unknown")
+    try:
+        discovered = finder.find(candidate)
+    except Exception as exc:
+        error_code = _finder_error_code(exc, error_type)
+        LOGGER.warning(
+            "component=%s item_id=%s provider=%s status=finder_failed code=%s",
+            component,
+            candidate.story.hn_item_id,
+            provider,
+            error_code,
+        )
+        return provider, None, audit_type(
+            status="finder_failed", provider=provider, error_code=error_code
+        )
+    if not isinstance(discovered, list):
+        return provider, None, audit_type(
+            status="finder_failed", provider=provider, error_code="malformed_results"
+        )
+    return provider, discovered, None
+
+
+def _allowed_candidate_url(
+    item,
+    candidate_type: type,
+    normalize_url: Callable[[str], str | None],
+    seen_urls: set[str],
+    rejection_reasons: list[str],
+) -> str | None:
+    """Return a new allowlisted URL for a search result, or record why not."""
+    if not isinstance(item, candidate_type):
+        rejection_reasons.append("malformed_candidate")
+        return None
+    normalized_url = normalize_url(item.url)
+    if normalized_url is None:
+        rejection_reasons.append("unsupported_url")
+        return None
+    if normalized_url in seen_urls:
+        rejection_reasons.append("duplicate_url")
+        return None
+    seen_urls.add(normalized_url)
+    return normalized_url
+
+
+def _fetch_and_validate(
+    candidate: Candidate,
+    alternative,
+    url: str,
+    article_client,
+    *,
+    normalize_url: Callable[[str], str | None],
+    validate,
+    component: str,
+    provider: str,
+    rejection_reasons: list[str],
+):
+    """Fetch one allowlisted page and validate it.
+
+    Returns (material, validation) when accepted; otherwise records the reason
+    and returns None. A redirect off the allowlist is rejected.
+    """
+    try:
+        material = coerce_fetched_material(article_client(url), url)
+    except Exception as exc:
+        rejection_reasons.append("fetch_failed")
+        LOGGER.warning(
+            "component=%s item_id=%s provider=%s status=candidate_fetch_failed code=%s",
+            component,
+            candidate.story.hn_item_id,
+            provider,
+            getattr(exc, "error_code", "fetch_failed"),
+        )
+        return None
+    effective_url = normalize_url(material.retrieved_url)
+    if effective_url is None:
+        rejection_reasons.append("redirected_to_unsupported_url")
+        return None
+    material = replace(material, retrieved_url=effective_url)
+    validation = validate(candidate, alternative, material.text)
+    if not validation.accepted:
+        rejection_reasons.append(validation.reason)
+        return None
+    return material, validation
+
+
+def _log_success(
+    component: str, candidate: Candidate, provider: str, discovered: int, attempted: int
+) -> None:
+    LOGGER.info(
+        "component=%s item_id=%s provider=%s status=success discovered=%d attempted=%d",
+        component,
+        candidate.story.hn_item_id,
+        provider,
+        discovered,
+        attempted,
+    )
