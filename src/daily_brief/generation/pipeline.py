@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ..alternate_reporting import AlternateReportingFinder
 from ..candidates import (
     dedupe_candidates,
     fetch_algolia_stories,
@@ -33,8 +32,7 @@ from ..output import (
     render_public_brief_json,
     validate_public_brief,
 )
-from ..same_article import SameArticleFinder
-from ..syndicated_copy import SyndicatedCopyFinder
+from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow, daily_window
 from .classification import SelectionResult, classify_and_select_candidates
 from .summaries import summarize_selected_candidates

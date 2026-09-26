@@ -10,9 +10,10 @@ from daily_brief.generation import run_generate
 ```
 
 The package is responsible for stage order, candidate routing and selection,
-material preparation, search-based recovery, summary orchestration, and writing
+material preparation, recovery dispatch, summary orchestration, and writing
 date-scoped artifacts. Argument parsing and command dispatch stay in `cli.py`.
 Article transport and extraction stay in [`article_fetcher/`](../article_fetcher/README.md);
+search-based recovery attempts and their validation stay in `recovery/`;
 prompts, routes, and evidence selection stay in `summarizer.py`; rule-based
 collection, scoring, history, and selection stay in `candidates/`; rendering
 and publishing stay in `output/`.
@@ -52,7 +53,7 @@ this package that owns it.
    attribution. This preselection work is bounded by the classification pool.
    Confirmed core candidates join one ranked pool. Confirmed outside candidates
    must also satisfy the exploration eligibility rules and are ranked separately.
-6. `material.py` and `search_recovery.py`: Selected external stories are
+6. `material.py` (with `recovery/`): Selected external stories are
    retrieved under the fuller summary policy.
    Material fetched during classification is reused. Every fetched public PDF is
    Adobe PDF-to-Markdown first when credentials are configured, with the same
@@ -62,7 +63,7 @@ this package that owns it.
    retrieval interface; recovery material is accepted only after deterministic
    validation.
    After an origin browser challenge exhausts retrieval, selected-item summary
-   retrieval first tries `same_article.py`: one title-based Tavily basic query,
+   retrieval first tries `recovery/same_article.py`: one title-based Tavily basic query,
    ten discovery candidates, and at most three unique candidate fetches. Only HN
    is excluded. An independently fetched matching title, explicit publisher
    cross-post/republication backlink to the source, and substantive body are
@@ -89,26 +90,22 @@ this package that owns it.
 | `classification.py` | Keyword routing, bounded topic classification, roundup assessment, and section selection |
 | `summaries.py` | Selected-item summary loop, discussion fallback, and summary diagnostics |
 | `material.py` | Classification/summary retrieval modes, recovery dispatch, and HN discussion material |
-| `search_recovery.py` | Same-article, Reuters syndicated-copy, and alternate-reporting recovery attempts |
-| `fetched_material.py` | Normalized fetched material shared by direct retrieval and recovery |
 
 ## Dependency Direction
 
 Keep dependencies directed from the pipeline toward later, lower-level stages:
 
 ```text
-__init__        -> pipeline
-pipeline        -> classification, summaries
-classification  -> summaries, material
-summaries       -> material
-material        -> search_recovery, fetched_material
-search_recovery -> fetched_material
+__init__       -> pipeline
+pipeline       -> classification, summaries
+classification -> summaries, material
+summaries      -> material
 ```
 
 A module must not import a module above it in this list, and no module in this
-package imports `cli.py`. `cli.py` imports only the package facade. Shared
-structures used by both retrieval and recovery belong in `fetched_material.py`;
-this keeps the package free of circular imports.
+package imports `cli.py`. `cli.py` imports only the package facade. Other
+packages, including `recovery/`, never import this package; this keeps the
+dependency graph free of cycles.
 
 ## Invariants
 

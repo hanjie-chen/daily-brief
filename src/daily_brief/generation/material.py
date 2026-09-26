@@ -5,7 +5,6 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from functools import partial
 
-from ..alternate_reporting import AlternateReportingFinder
 from ..article_fetcher import (
     CLASSIFICATION_FETCH_POLICY,
     CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
@@ -25,18 +24,20 @@ from ..models import (
     SyndicatedRecovery,
     is_origin_block_reason,
 )
-from ..same_article import SameArticleFinder
-from ..summarizer import article_fetch_failure_summary
-from ..syndicated_copy import SyndicatedCopyFinder, is_reuters_url
-from .fetched_material import coerce_fetched_material
-from .search_recovery import (
-    SyndicatedOutcome,
+from ..recovery import (
+    AlternateReportingFinder,
     AlternateReportingOutcome,
+    SameArticleFinder,
     SameArticleOutcome,
-    attempt_same_article_recovery,
+    SyndicatedCopyFinder,
+    SyndicatedOutcome,
     attempt_alternate_reporting_recovery,
+    attempt_same_article_recovery,
     attempt_syndicated_recovery,
+    coerce_fetched_material,
+    is_reuters_url,
 )
+from ..summarizer import article_fetch_failure_summary
 
 LOGGER = logging.getLogger(__name__)
 RETRIEVAL_MODE_CLASSIFICATION = "classification"

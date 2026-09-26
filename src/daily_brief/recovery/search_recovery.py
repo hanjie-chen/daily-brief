@@ -4,7 +4,15 @@ import logging
 from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
-from ..alternate_reporting import (
+from ..article_fetcher import ArticleFetchResult
+from ..models import (
+    AlternateReportingRecovery,
+    Candidate,
+    SameArticleAttempt,
+    SameArticleRecovery,
+    SyndicatedRecovery,
+)
+from .alternate_reporting import (
     MAX_ALTERNATE_REPORTING_CANDIDATES,
     AlternateReportingCandidate,
     AlternateReportingFinder,
@@ -16,15 +24,8 @@ from ..alternate_reporting import (
     validate_alternate_reporting,
     validations_conflict,
 )
-from ..article_fetcher import ArticleFetchResult
-from ..models import (
-    AlternateReportingRecovery,
-    Candidate,
-    SameArticleAttempt,
-    SameArticleRecovery,
-    SyndicatedRecovery,
-)
-from ..same_article import (
+from .fetched_material import FetchedMaterial, coerce_fetched_material
+from .same_article import (
     MAX_SAME_ARTICLE_CANDIDATES,
     MAX_SAME_ARTICLE_FETCHES,
     SameArticleCandidate,
@@ -35,7 +36,7 @@ from ..same_article import (
     same_source_url,
     validate_same_article,
 )
-from ..syndicated_copy import (
+from .syndicated_copy import (
     MAX_SYNDICATED_CANDIDATES,
     SyndicatedCandidate,
     SyndicatedCopyFinder,
@@ -44,7 +45,6 @@ from ..syndicated_copy import (
     normalize_allowed_candidate_url,
     validate_syndicated_copy,
 )
-from .fetched_material import FetchedMaterial, coerce_fetched_material
 
 LOGGER = logging.getLogger(__name__)
 

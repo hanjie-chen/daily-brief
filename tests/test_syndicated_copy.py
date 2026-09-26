@@ -4,7 +4,7 @@ from io import BytesIO
 import pytest
 
 from daily_brief.models import Candidate, Story
-from daily_brief.syndicated_copy import (
+from daily_brief.recovery.syndicated_copy import (
     MAX_SYNDICATED_CANDIDATES,
     TAVILY_MAX_RESPONSE_BYTES,
     SyndicatedCandidate,

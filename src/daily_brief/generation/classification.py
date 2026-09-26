@@ -5,7 +5,6 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 
-from ..alternate_reporting import AlternateReportingFinder
 from ..candidates import (
     apply_article_evidence_bonus,
     meets_exploration_minimum,
@@ -16,7 +15,7 @@ from ..candidates import (
 from ..config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES
 from ..model_backend import ensure_topic_decisions
 from ..models import Candidate
-from ..syndicated_copy import SyndicatedCopyFinder
+from ..recovery import AlternateReportingFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow
 from .material import (
     RETRIEVAL_MODE_CLASSIFICATION,

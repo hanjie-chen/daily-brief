@@ -11,10 +11,14 @@ from daily_brief.article_fetcher import (
     SourceEvidence,
     SourceRelation,
 )
-from daily_brief.generation import material, run_generate, search_recovery, summaries
 from daily_brief.candidates import HNDiscussionResult
+from daily_brief.generation import material, run_generate, summaries
 from daily_brief.models import Candidate, Story
-from daily_brief.same_article import SameArticleCandidate, SameArticleFinderError
+from daily_brief.recovery import (
+    SameArticleCandidate,
+    SameArticleFinderError,
+    attempt_same_article_recovery,
+)
 from daily_brief.time_window import TimeWindow
 
 
@@ -116,7 +120,7 @@ def test_candidate_budget_skips_original_hn_duplicates_and_does_not_recurse():
     def fetch(url):
         seen.append(url)
         raise blocked()
-    outcome = search_recovery.attempt_same_article_recovery(candidate(), fetch, finder)
+    outcome = attempt_same_article_recovery(candidate(), fetch, finder)
     assert outcome.material is None
     assert finder.calls == 1
     assert len(seen) == outcome.audit.attempted_candidates == 3
@@ -132,7 +136,7 @@ def test_candidate_budget_skips_original_hn_duplicates_and_does_not_recurse():
 ])
 def test_youtube_requires_explicit_narration_not_similar_topic(method, kind, expected):
     video = 'https://www.youtube.com/watch?v=abcdefghijk'
-    outcome = search_recovery.attempt_same_article_recovery(
+    outcome = attempt_same_article_recovery(
         candidate(), lambda url: recovered(url, method, kind), Finder([video]),
     )
     assert (outcome.material is not None) == expected
@@ -179,7 +183,7 @@ def test_search_never_runs_during_classification_or_nonchallenge_failure(mode, e
 
 
 def test_no_credentials_skips_search_without_network_and_keeps_audit():
-    outcome = search_recovery.attempt_same_article_recovery(candidate(), lambda url: pytest.fail('fetch'), None)
+    outcome = attempt_same_article_recovery(candidate(), lambda url: pytest.fail('fetch'), None)
     assert outcome.audit.status == 'not_configured'
     assert outcome.audit.error_code == 'not_configured'
     assert outcome.audit.attempted_candidates == 0
@@ -188,7 +192,7 @@ def test_no_credentials_skips_search_without_network_and_keeps_audit():
 def test_provider_failure_is_audited_without_exposing_exception_text():
     def fail(item):
         raise SameArticleFinderError('secret must not be logged', error_code='provider_http_error')
-    outcome = search_recovery.attempt_same_article_recovery(
+    outcome = attempt_same_article_recovery(
         candidate(), lambda url: pytest.fail('fetch'), SimpleNamespace(find=fail, provider='test'),
     )
     assert outcome.audit.status == 'finder_failed'

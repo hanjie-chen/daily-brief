@@ -6,7 +6,6 @@ import pytest
 
 from daily_brief import article_fetcher as article_fetcher_module
 from daily_brief import cli
-from daily_brief.alternate_reporting import AlternateReportingCandidate
 from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
 from daily_brief.candidates import HNDiscussionResult
 from daily_brief.cli import build_parser, main
@@ -16,14 +15,15 @@ from daily_brief.generation import SourceCollectionError, run_generate
 from daily_brief.generation import material, pipeline, summaries
 from daily_brief.model_evaluation import capture_model_evaluation_input
 from daily_brief.models import Candidate, Story
+from daily_brief.recovery import (
+    AlternateReportingCandidate,
+    SyndicatedCandidate,
+    SyndicatedFinderError,
+)
 from daily_brief.summarizer import (
     SUMMARY_CONTEXT_RESEARCH_SECTIONS,
     SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY,
     SUMMARY_MODE_RESEARCH_REPORT,
-)
-from daily_brief.syndicated_copy import (
-    SyndicatedCandidate,
-    SyndicatedFinderError,
 )
 
 

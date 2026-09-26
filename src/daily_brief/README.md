@@ -150,9 +150,12 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `article_fetcher/challenges.py` | Browser-challenge and network-failure detection |
 | `article_fetcher/youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
 | `article_fetcher/source_evidence.py` | Bounded publisher-declared identity signals from page headers and video descriptions |
-| `syndicated_copy.py` | Discovery and validation of Reuters syndicated copies |
-| `alternate_reporting.py` | Discovery and validation of Reuters reporting on the same event |
-| `same_article.py` | Bounded discovery and conservative validation of same-article copies |
+| `recovery/__init__.py` | Stable facade for search-based recovery after the original source is blocked |
+| `recovery/search_recovery.py` | Same-article, Reuters syndicated-copy, and alternate-reporting recovery attempts |
+| `recovery/same_article.py` | Bounded discovery and conservative validation of same-article copies |
+| `recovery/syndicated_copy.py` | Discovery and validation of Reuters syndicated copies |
+| `recovery/alternate_reporting.py` | Discovery and validation of Reuters reporting on the same event |
+| `recovery/fetched_material.py` | Normalized fetched material shared by direct retrieval and recovery |
 | `pdf_workers/__init__.py` | Import-free package for PDF workers run as `python -m` subprocesses |
 | `pdf_workers/adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
 | `pdf_workers/pdf_extractor.py` | Resource-bounded local PDF text worker |
@@ -246,7 +249,7 @@ record model and error code without credentials. Public output is unchanged.
 - Ranking or quotas: `config.py` -> `candidates/scoring.py` -> `candidates/selection.py`
   -> `generation/classification.py`.
 - Article material: the relevant transport or extractor -> `article_fetcher/`
-  -> `generation/material.py` or `generation/search_recovery.py`
+  -> `generation/material.py` or `recovery/`
   -> `summarizer.py` -> `generation/summaries.py`.
 - Summary quality: `summarizer.py` -> the model adapter -> relevant orchestration
   and rendering tests.

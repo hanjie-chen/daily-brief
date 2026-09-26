@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from daily_brief.alternate_reporting import (
+from daily_brief.recovery.alternate_reporting import (
     ALTERNATE_REPORTING_HOST_ALLOWLIST,
     MAX_ALTERNATE_REPORTING_CANDIDATES,
     TAVILY_MAX_RESPONSE_BYTES,

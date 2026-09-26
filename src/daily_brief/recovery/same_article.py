@@ -18,8 +18,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from .article_fetcher import ArticleFetchResult
-from .models import Candidate
+from ..article_fetcher import ArticleFetchResult
+from ..models import Candidate
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 TAVILY_TIMEOUT_SECONDS = 10

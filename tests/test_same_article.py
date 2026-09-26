@@ -6,7 +6,7 @@ import pytest
 
 from daily_brief.article_fetcher import ArticleFetchResult
 from daily_brief.models import Candidate, Story
-from daily_brief.same_article import (
+from daily_brief.recovery.same_article import (
     HN_DOMAIN,
     MAX_SAME_ARTICLE_CANDIDATES,
     TAVILY_MAX_RESPONSE_BYTES,

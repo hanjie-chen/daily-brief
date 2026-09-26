@@ -3,9 +3,8 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 
-from ..alternate_reporting import AlternateReportingFinder
 from ..models import Candidate, SummaryGeneration
-from ..same_article import SameArticleFinder
+from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..summarizer import (
     InsufficientSummaryMaterial,
     article_fetch_failure_summary,
@@ -17,7 +16,6 @@ from ..summarizer import (
     normalize_summary_text,
     route_summary_mode,
 )
-from ..syndicated_copy import SyndicatedCopyFinder
 from ..time_window import TimeWindow
 from .material import (
     RETRIEVAL_MODE_SUMMARY,

@@ -12,7 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from .models import Candidate
+from ..models import Candidate
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 TAVILY_TIMEOUT_SECONDS = 10
