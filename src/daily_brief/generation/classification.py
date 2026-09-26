@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from ..candidates import (
     apply_article_evidence_bonus,
+    has_non_weak_keyword_match,
     meets_exploration_minimum,
     rank_exploration_candidates,
     select_ai_candidates,
@@ -50,14 +51,14 @@ def classify_and_select_candidates(
     known_core_candidates = [
         candidate
         for candidate in eligible_candidates
-        if _has_non_weak_keyword_match(candidate) and not _is_self_post(candidate)
+        if has_non_weak_keyword_match(candidate) and not _is_self_post(candidate)
     ]
     for candidate in known_core_candidates:
         candidate.topic_route = "keyword"
     unmatched_candidates = [
         candidate
         for candidate in eligible_candidates
-        if not _has_non_weak_keyword_match(candidate) or _is_self_post(candidate)
+        if not has_non_weak_keyword_match(candidate) or _is_self_post(candidate)
     ]
     core_candidates = list(known_core_candidates)
     ranked_exploration = rank_exploration_candidates(unmatched_candidates)
@@ -148,7 +149,7 @@ def classify_and_select_candidates(
         elif label_decision == "uncertain":
             candidate.rejection_reason = "topic_uncertain"
         else:
-            if not _has_non_weak_keyword_match(candidate):
+            if not has_non_weak_keyword_match(candidate):
                 apply_article_evidence_bonus(candidate)
             core_candidates.append(candidate)
             LOGGER.info(
@@ -185,7 +186,3 @@ def _is_self_post(candidate: Candidate) -> bool:
         bool(candidate.story.source_url)
         and candidate.story.source_url == candidate.story.hn_discussion_url
     )
-
-
-def _has_non_weak_keyword_match(candidate: Candidate) -> bool:
-    return any(match.weight != "weak" for match in candidate.matched_keywords)

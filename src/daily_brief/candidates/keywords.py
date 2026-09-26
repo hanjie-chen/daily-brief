@@ -12,7 +12,7 @@ from ..config import (
     MEDIUM_WEIGHT_KEYWORDS,
     WEAK_KEYWORDS,
 )
-from ..models import KeywordMatch
+from ..models import Candidate, KeywordMatch
 
 WEIGHT_BONUS = {
     "high": 4.0,
@@ -30,6 +30,11 @@ def match_keywords(title: str, story_text: str, url: str) -> list[KeywordMatch]:
     matches = _match_primary_text(primary_text)
     matches.extend(_match_url_tokens(url))
     return matches
+
+
+def has_non_weak_keyword_match(candidate: Candidate) -> bool:
+    """Return whether any match is strong enough to route a story as core."""
+    return any(match.weight != "weak" for match in candidate.matched_keywords)
 
 
 def _match_primary_text(text: str) -> list[KeywordMatch]:

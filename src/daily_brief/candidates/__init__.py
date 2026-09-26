@@ -8,7 +8,7 @@ from .hn_client import (
     fetch_hn_discussion,
     fetch_hot_stories,
 )
-from .keywords import match_keywords
+from .keywords import has_non_weak_keyword_match, match_keywords
 from .scoring import apply_article_evidence_bonus, score_candidate
 from .selection import (
     dedupe_candidates,
@@ -27,6 +27,7 @@ __all__ = [
     "fetch_algolia_stories",
     "fetch_hn_discussion",
     "fetch_hot_stories",
+    "has_non_weak_keyword_match",
     "load_history",
     "match_keywords",
     "meets_exploration_minimum",

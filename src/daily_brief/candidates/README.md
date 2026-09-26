@@ -124,7 +124,7 @@ per-keyword counts and every matching story.
 | --- | --- |
 | `__init__.py` | Stable package facade and supported imports |
 | `hn_client.py` | Algolia and official-API collection, and bounded discussion sampling |
-| `keywords.py` | Weighted keyword and URL-token matching |
+| `keywords.py` | Weighted keyword and URL-token matching, and the non-weak match check used for routing and deduplication |
 | `scoring.py` | Heat, keyword and topic bonuses, article evidence bonus, and `why` text |
 | `selection.py` | Deduplication, exploration ranking and minimum, and section selection |
 | `history.py` | Recent recommendation history |

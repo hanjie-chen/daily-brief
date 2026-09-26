@@ -1,7 +1,8 @@
 import pytest
 
 from daily_brief.config import CORE_TOPIC_HIGH_WEIGHT_KEYWORDS
-from daily_brief.candidates import match_keywords
+from daily_brief.candidates import has_non_weak_keyword_match, match_keywords
+from daily_brief.models import Candidate, Story
 
 
 def names(matches):
@@ -152,3 +153,25 @@ def test_approved_core_topic_keywords_are_high_weight(keyword):
         match.keyword == keyword and match.weight == "high"
         for match in matches
     )
+
+
+def test_has_non_weak_keyword_match_ignores_weak_and_url_matches():
+    def candidate(title, url=""):
+        story = Story(
+            source="algolia",
+            hn_item_id="1",
+            title=title,
+            source_url=url,
+            hn_discussion_url="https://news.ycombinator.com/item?id=1",
+            created_at="",
+            points=0,
+            comments=0,
+        )
+        return Candidate(story=story, matched_keywords=match_keywords(title, "", url))
+
+    assert not has_non_weak_keyword_match(candidate("A quiet gardening essay"))
+    assert not has_non_weak_keyword_match(candidate("A new workflow tool"))
+    assert not has_non_weak_keyword_match(
+        candidate("Show HN: something", "https://example.com/AI-news")
+    )
+    assert has_non_weak_keyword_match(candidate("Running LLMs locally"))

@@ -9,13 +9,14 @@ from ..config import (
     NON_AI_POINTS_THRESHOLD,
 )
 from ..models import Candidate
+from .keywords import has_non_weak_keyword_match
 
 
 def dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:
     return _dedupe_candidates(
         candidates,
         key=lambda candidate, index: (
-            _has_non_weak_keyword_match(candidate),
+            has_non_weak_keyword_match(candidate),
             candidate.score,
             *_hn_heat(candidate),
             -index,
@@ -28,7 +29,7 @@ def _dedupe_ai_candidates(candidates: list[Candidate]) -> list[Candidate]:
         candidates,
         key=lambda candidate, index: (
             _meets_ai_minimum(candidate),
-            _has_non_weak_keyword_match(candidate),
+            has_non_weak_keyword_match(candidate),
             candidate.score,
             *_hn_heat(candidate),
             -index,
@@ -164,10 +165,6 @@ def _select_ai(candidates: list[Candidate]) -> list[Candidate]:
 
 def _meets_ai_minimum(candidate: Candidate) -> bool:
     return candidate.score >= AI_MIN_SCORE and candidate.story.points >= AI_MIN_POINTS
-
-
-def _has_non_weak_keyword_match(candidate: Candidate) -> bool:
-    return any(match.weight != "weak" for match in candidate.matched_keywords)
 
 
 def _hn_heat(candidate: Candidate) -> tuple[int, int]:
