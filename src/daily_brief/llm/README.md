@@ -21,7 +21,8 @@ writing summaries into the brief stays in `output/`.
 | --- | --- |
 | `__init__.py` | Stable package facade and supported imports |
 | `model_backend.py` | Provider-neutral classification and summarization contract |
-| `gemini_backend.py` | Gemini adapter: structured output, validation, pacing, retry, and summary model fallback |
+| `gemini_backend.py` | Gemini adapter: configuration, pacing, requests and retries, and summary model fallback |
+| `gemini_output.py` | Structured-output schemas for classification and summaries, and response validation |
 | `gemini_api.py` | Gemini errors, HTTP error and daily-quota interpretation, retry delays, response text and usage extraction, and interaction logs |
 | `topic_classifier.py` | Topic-classification prompt and labels |
 | `summarizer.py` | Summary routes, prompts, sufficiency rules, source prefixes, and normalization |
@@ -30,7 +31,7 @@ writing summaries into the brief stays in `output/`.
 
 ## Summary Sufficiency
 
-Prompts and sufficiency rules live in `summarizer.py`; `gemini_backend.py`
+Prompts and sufficiency rules live in `summarizer.py`; `gemini_output.py`
 validates each route's structured response.
 
 The existing summary call returns a validated sufficient/insufficient decision.
@@ -104,8 +105,9 @@ quality gate; evidence selection and provider-call counts are unchanged.
 
 ## Summary Model Fallback and Quotas
 
-These rules live in `gemini_backend.py`. Quota values and their operational
-meaning are listed in [the API quota guide](../../../docs/api-quotas.md) (Chinese).
+These rules live in `gemini_backend.py`, with daily-quota detection in
+`gemini_api.py`. Quota values and their operational meaning are listed in
+[the API quota guide](../../../docs/api-quotas.md) (Chinese).
 
 Production `GeminiBackend.from_environment()` enables ordered summary fallback
 from `gemini-3.6-flash` to `gemini-3.7-flash` and `gemini-3.8-flash`. A custom
@@ -151,16 +153,17 @@ provider failures and does not retrieve fallback material.
 
 ```text
 __init__           -> gemini_backend, model_backend, model_evaluation, summarizer
-gemini_backend     -> gemini_api, summarizer, topic_classifier
+gemini_backend     -> gemini_output, gemini_api, summarizer, topic_classifier
+gemini_output      -> gemini_api, summarizer, topic_classifier
 model_evaluation   -> model_backend, summarizer
 model_backend      -> topic_classifier
 summarizer         -> evidence_selection
 topic_classifier   -> evidence_selection
-all but evidence_selection -> models; model_evaluation also -> config, article_fetcher.contracts
+all but evidence_selection and gemini_api -> models; model_evaluation also -> config, article_fetcher.contracts
 ```
 
 This package never imports `generation/`, `candidates/`, `recovery/`, or
-`output/`. Provider-specific behavior stays in `gemini_backend.py`; production
+`output/`. Provider-specific behavior stays in the `gemini_*.py` modules; production
 and evaluation share `model_backend.py` and the normalization in `summarizer.py`.
 Production model identifiers remain explicit rather than moving aliases.
 

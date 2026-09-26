@@ -31,24 +31,24 @@ from .gemini_api import (
     response_status,
     retry_delay_from_error,
 )
+from .gemini_output import (
+    classification_schema,
+    classifier_labels,
+    summary_schema,
+    validate_and_format_community_roundup,
+    validate_classification,
+    validate_summary,
+)
 from .summarizer import (
-    MAX_COMMUNITY_ROUNDUP_ENTRY_DESCRIPTION_CHARS,
-    MAX_COMMUNITY_ROUNDUP_ENTRY_NAME_CHARS,
-    MAX_COMMUNITY_ROUNDUP_INTRODUCTION_CHARS,
-    MAX_INSUFFICIENT_REASON_CHARS,
     COMMUNITY_ROUNDUP_SYSTEM_INSTRUCTION,
     SUMMARY_MODE_COMMUNITY_ROUNDUP,
     SUMMARY_SYSTEM_INSTRUCTION,
-    InsufficientSummaryMaterial,
     build_summary_prompt,
     has_discussion_source,
-    HN_DISCUSSION_SUMMARY_PREFIX,
     route_summary_mode,
-    source_summary_prefix,
 )
 from .topic_classifier import (
     TOPIC_CLASSIFIER_SYSTEM_INSTRUCTION,
-    TOPIC_LABELS,
     build_topic_classifier_prompt,
 )
 
@@ -61,74 +61,10 @@ DEFAULT_SUMMARIZER_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.8-flash")
 DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS = 6.0
 DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS = 20.0
 MODEL_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
-MAX_SUMMARY_CHARS = 1000
 CLASSIFIER_MAX_OUTPUT_TOKENS = 512
 SUMMARY_MAX_OUTPUT_TOKENS = 8192
 SUMMARY_THINKING_LEVEL = "high"
 SUMMARY_INCOMPLETE_RETRIES = 1
-
-
-def _classifier_labels(candidates: list[Candidate]) -> set[str]:
-    labels = set(TOPIC_LABELS) - {"community_roundup"}
-    if any(
-        candidate.story.source_url == candidate.story.hn_discussion_url
-        and candidate.content_kind != "community_roundup"
-        for candidate in candidates
-    ):
-        labels.add("community_roundup")
-    return labels
-
-
-def _validate_and_format_community_roundup(output: object) -> str:
-    expected_keys = {"status", "introduction", "entries", "reason"}
-    if not isinstance(output, dict) or set(output) != expected_keys:
-        raise GeminiResponseError("Gemini community roundup returned an invalid object")
-    if not isinstance(output["status"], str) or output["status"] not in {
-        "sufficient",
-        "insufficient",
-    }:
-        raise GeminiResponseError("Gemini community roundup returned an invalid object")
-    if not isinstance(output["introduction"], str) or not isinstance(output["reason"], str):
-        raise GeminiResponseError("Gemini community roundup returned an invalid object")
-    if any("\n" in value or "\r" in value for value in (output["introduction"], output["reason"])):
-        raise GeminiResponseError("Gemini community roundup returned a multiline field")
-
-    introduction = output["introduction"].strip()
-    reason = output["reason"].strip()
-    entries = output["entries"]
-    if len(output["reason"]) > MAX_INSUFFICIENT_REASON_CHARS:
-        raise GeminiResponseError("Gemini community roundup returned an oversized reason")
-    if len(introduction) > MAX_COMMUNITY_ROUNDUP_INTRODUCTION_CHARS:
-        raise GeminiResponseError("Gemini community roundup returned an oversized introduction")
-    if output["status"] == "insufficient":
-        if introduction or entries != [] or not reason:
-            raise GeminiResponseError("Gemini community roundup returned an inconsistent decision")
-        raise InsufficientSummaryMaterial(reason)
-    if reason or not introduction or not isinstance(entries, list) or not 2 <= len(entries) <= 3:
-        raise GeminiResponseError("Gemini community roundup returned an inconsistent decision")
-
-    formatted_entries = []
-    for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {"name", "description"}:
-            raise GeminiResponseError("Gemini community roundup returned an invalid entry")
-        name = entry["name"]
-        description = entry["description"]
-        if not isinstance(name, str) or not isinstance(description, str):
-            raise GeminiResponseError("Gemini community roundup returned an invalid entry")
-        if "\n" in name or "\r" in name or "\n" in description or "\r" in description:
-            raise GeminiResponseError("Gemini community roundup returned a multiline field")
-        name = name.strip()
-        description = description.strip()
-        if not name or not description:
-            raise GeminiResponseError("Gemini community roundup returned an empty entry")
-        if len(name) > MAX_COMMUNITY_ROUNDUP_ENTRY_NAME_CHARS or len(description) > MAX_COMMUNITY_ROUNDUP_ENTRY_DESCRIPTION_CHARS:
-            raise GeminiResponseError("Gemini community roundup returned an oversized entry")
-        formatted_entries.append(f"- {name}：{description}")
-
-    summary = introduction + "\n\n" + "\n".join(formatted_entries)
-    if len(summary) > MAX_SUMMARY_CHARS:
-        raise GeminiResponseError("Gemini community roundup returned an oversized summary")
-    return summary
 
 
 class GeminiBackend:
@@ -295,7 +231,7 @@ class GeminiBackend:
             return {}
         self._reset_request_diagnostics(self.classifier_model)
         allowed_ids = [candidate.story.hn_item_id for candidate in candidates]
-        allowed_labels = _classifier_labels(candidates)
+        allowed_labels = classifier_labels(candidates)
         output = self._interact(
             task="classify",
             model=self.classifier_model,
@@ -307,66 +243,10 @@ class GeminiBackend:
                     "Do not include Markdown or explanations."
                 ),
             ),
-            schema={
-                "type": "object",
-                "properties": {
-                    "decisions": {
-                        "type": "array",
-                        "description": "One topic decision for every supplied item.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "string", "enum": allowed_ids},
-                                "label": {
-                                    "type": "string",
-                                    "enum": sorted(allowed_labels),
-                                },
-                            },
-                            "required": ["id", "label"],
-                            "additionalProperties": False,
-                        },
-                        "minItems": len(allowed_ids),
-                        "maxItems": len(allowed_ids),
-                    }
-                },
-                "required": ["decisions"],
-                "additionalProperties": False,
-            },
+            schema=classification_schema(allowed_ids, allowed_labels),
             max_output_tokens=CLASSIFIER_MAX_OUTPUT_TOKENS,
         )
-        if set(output) != {"decisions"} or not isinstance(output["decisions"], list):
-            raise GeminiResponseError("Gemini classifier returned an invalid object")
-        decisions = output["decisions"]
-        if not all(
-            isinstance(item, dict)
-            and set(item) == {"id", "label"}
-            and isinstance(item["id"], str)
-            and isinstance(item["label"], str)
-            for item in decisions
-        ):
-            raise GeminiResponseError("Gemini classifier returned invalid decisions")
-        decision_ids = [item["id"] for item in decisions]
-        if len(set(decision_ids)) != len(decision_ids):
-            raise GeminiResponseError("Gemini classifier returned duplicate IDs")
-        unknown_ids = set(decision_ids) - set(allowed_ids)
-        if unknown_ids:
-            raise GeminiResponseError("Gemini classifier returned unknown IDs")
-        if set(decision_ids) != set(allowed_ids):
-            raise GeminiResponseError("Gemini classifier omitted item IDs")
-        if any(item["label"] not in allowed_labels for item in decisions):
-            raise GeminiResponseError("Gemini classifier returned unknown labels")
-        candidates_by_id = {candidate.story.hn_item_id: candidate for candidate in candidates}
-        if any(
-            item["label"] == "community_roundup"
-            and (
-                candidates_by_id[item["id"]].story.source_url
-                != candidates_by_id[item["id"]].story.hn_discussion_url
-                or candidates_by_id[item["id"]].content_kind == "community_roundup"
-            )
-            for item in decisions
-        ):
-            raise GeminiResponseError("Gemini classifier returned invalid community roundup")
-        return {item["id"]: item["label"] for item in decisions}
+        return validate_classification(output, candidates, allowed_ids, allowed_labels)
 
     def summarize(self, candidate: Candidate) -> str:
         self._summary_attempt_models = []
@@ -407,54 +287,7 @@ class GeminiBackend:
     def _summarize_with_model(self, candidate: Candidate, model: str) -> str:
         combined = has_discussion_source(candidate)
         community_roundup = route_summary_mode(candidate) == SUMMARY_MODE_COMMUNITY_ROUNDUP
-        summary_schema = (
-            {
-                "type": "object",
-                "properties": {
-                    "status": {"type": "string", "enum": ["sufficient", "insufficient"]},
-                    "introduction": {"type": "string", "maxLength": MAX_COMMUNITY_ROUNDUP_INTRODUCTION_CHARS},
-                    "entries": {
-                        "type": "array",
-                        "minItems": 0,
-                        "maxItems": 3,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string", "maxLength": MAX_COMMUNITY_ROUNDUP_ENTRY_NAME_CHARS},
-                                "description": {"type": "string", "maxLength": MAX_COMMUNITY_ROUNDUP_ENTRY_DESCRIPTION_CHARS},
-                            },
-                            "required": ["name", "description"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "reason": {"type": "string", "maxLength": MAX_INSUFFICIENT_REASON_CHARS},
-                },
-                "required": ["status", "introduction", "entries", "reason"],
-                "additionalProperties": False,
-            }
-            if community_roundup
-            else {
-                "type": "object",
-                "properties": {
-                    **({"source_summary": {"type": "string"}} if combined else {}),
-                    "status": {
-                        "type": "string",
-                        "enum": ["sufficient", "insufficient"],
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": "A concise Chinese summary, or empty if insufficient.",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "maxLength": MAX_INSUFFICIENT_REASON_CHARS,
-                        "description": "Why material is insufficient; empty if sufficient.",
-                    },
-                },
-                "required": ["status", "summary", "reason"] + (["source_summary"] if combined else []),
-                "additionalProperties": False,
-            }
-        )
+        schema = summary_schema(community_roundup=community_roundup, combined=combined)
         output = self._interact(
             task="summarize",
             model=model,
@@ -464,42 +297,14 @@ class GeminiBackend:
                 else SUMMARY_SYSTEM_INSTRUCTION
             ),
             prompt=build_summary_prompt(candidate),
-            schema=summary_schema,
+            schema=schema,
             max_output_tokens=SUMMARY_MAX_OUTPUT_TOKENS,
             thinking_level=SUMMARY_THINKING_LEVEL,
             incomplete_retries=SUMMARY_INCOMPLETE_RETRIES,
         )
         if community_roundup:
-            return _validate_and_format_community_roundup(output)
-        if (
-            set(output) != ({"status", "summary", "reason"} | ({"source_summary"} if combined else set()))
-            or not all(isinstance(value, str) for value in output.values())
-            or output["status"] not in {"sufficient", "insufficient"}
-        ):
-            raise GeminiResponseError("Gemini summarizer returned an invalid object")
-        summary = output["summary"].strip()
-        source_summary = output.get("source_summary", "").strip()
-        reason = output["reason"].strip()
-        if len(output["reason"]) > MAX_INSUFFICIENT_REASON_CHARS:
-            raise GeminiResponseError("Gemini summarizer returned an oversized reason")
-        if output["status"] == "insufficient":
-            if summary or source_summary or not reason:
-                raise GeminiResponseError("Gemini summarizer returned an inconsistent decision")
-            raise InsufficientSummaryMaterial(reason)
-        if reason:
-            raise GeminiResponseError("Gemini summarizer returned an inconsistent decision")
-        if not summary and not source_summary:
-            raise GeminiResponseError("Gemini summarizer returned an empty summary")
-        if combined:
-            parts = []
-            if source_summary:
-                parts.append(source_summary_prefix(candidate) + source_summary)
-            if summary:
-                parts.append(HN_DISCUSSION_SUMMARY_PREFIX + summary)
-            summary = " ".join(parts)
-        if len(summary) > MAX_SUMMARY_CHARS:
-            raise GeminiResponseError("Gemini summarizer returned an oversized summary")
-        return summary
+            return validate_and_format_community_roundup(output)
+        return validate_summary(output, candidate, combined=combined)
 
     def _interact(
         self,

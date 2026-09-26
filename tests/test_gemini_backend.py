@@ -17,8 +17,8 @@ from daily_brief.llm.gemini_backend import (
     GeminiConfigurationError,
     GeminiResponseError,
     INTERACTIONS_URL,
-    MAX_SUMMARY_CHARS,
 )
+from daily_brief.llm.gemini_output import MAX_SUMMARY_CHARS
 from daily_brief.models import Candidate, Story
 
 
