@@ -1,6 +1,6 @@
 import pytest
 
-from daily_brief.evidence_selection import select_evidence
+from daily_brief.llm.evidence_selection import select_evidence
 
 
 def test_short_announcement_preserved_without_title_based_expansion():

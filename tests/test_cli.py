@@ -9,21 +9,21 @@ from daily_brief import cli
 from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
 from daily_brief.candidates import HNDiscussionResult
 from daily_brief.cli import build_parser, main
-from daily_brief.gemini_backend import GeminiAPIError
-from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
 from daily_brief.generation import SourceCollectionError, run_generate
 from daily_brief.generation import material, pipeline, summaries
-from daily_brief.model_evaluation import capture_model_evaluation_input
+from daily_brief.llm.gemini_backend import GeminiAPIError
+from daily_brief.llm.gemini_backend import GeminiBackend as RealGeminiBackend
+from daily_brief.llm.model_evaluation import capture_model_evaluation_input
+from daily_brief.llm.summarizer import (
+    SUMMARY_CONTEXT_RESEARCH_SECTIONS,
+    SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY,
+    SUMMARY_MODE_RESEARCH_REPORT,
+)
 from daily_brief.models import Candidate, Story
 from daily_brief.recovery import (
     AlternateReportingCandidate,
     SyndicatedCandidate,
     SyndicatedFinderError,
-)
-from daily_brief.summarizer import (
-    SUMMARY_CONTEXT_RESEARCH_SECTIONS,
-    SUMMARY_MODE_MEMORIAL_OR_PERSONAL_ESSAY,
-    SUMMARY_MODE_RESEARCH_REPORT,
 )
 
 
@@ -3104,8 +3104,8 @@ def story(
 
 @pytest.mark.parametrize("fallback", ["success", "too_short", "fetch_error", "model_error", "insufficient"])
 def test_insufficient_source_material_uses_bounded_discussion_fallback(tmp_path, fallback):
-    from daily_brief.summarizer import InsufficientSummaryMaterial
-    from daily_brief.model_evaluation import load_model_evaluation_input
+    from daily_brief.llm.summarizer import InsufficientSummaryMaterial
+    from daily_brief.llm.model_evaluation import load_model_evaluation_input
 
     calls = []
     discussion_calls = []
@@ -3194,8 +3194,8 @@ def test_short_sufficient_material_does_not_fetch_discussion(tmp_path):
 def test_roundup_is_assessed_before_selection_and_replaced_when_unusable(
     tmp_path, keyword_title, outcome,
 ):
-    from daily_brief.model_evaluation import load_model_evaluation_input
-    from daily_brief.summarizer import InsufficientSummaryMaterial
+    from daily_brief.llm.model_evaluation import load_model_evaluation_input
+    from daily_brief.llm.summarizer import InsufficientSummaryMaterial
 
     calls = []
     overview = "一位开发者的体素引擎支持 GPU 地形编辑；另一位开发者的日程工具可在本地运行。"
@@ -3314,8 +3314,8 @@ def test_roundup_route_cannot_be_used_for_an_external_article(tmp_path):
 @pytest.mark.parametrize('long_source', [False, True])
 @pytest.mark.parametrize('relevant', [False, True])
 def test_item_evidence_selection_and_discussion_fallback(tmp_path, long_source, relevant):
-    from daily_brief.summarizer import InsufficientSummaryMaterial, build_summary_context
-    from daily_brief.model_evaluation import load_model_evaluation_input
+    from daily_brief.llm.summarizer import InsufficientSummaryMaterial, build_summary_context
+    from daily_brief.llm.model_evaluation import load_model_evaluation_input
 
     announcement = 'AGENTS.md is read only if CLAUDE.md is absent; cloud editions are excluded.'
     source = ('Old release: unrelated maintenance.\n' * 10000 if long_source else '')

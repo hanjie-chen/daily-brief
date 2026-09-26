@@ -83,7 +83,7 @@ response limits remain 4/20 MiB. Oversized responses or extraction still fail,
 never silently truncate. Source identity and republication validators continue to
 inspect full retrieved material before any model-input selection.
 
-`evidence_selection.py` supplies deterministic title/URL-fragment-aware excerpts
+`llm/evidence_selection.py` supplies deterministic title/URL-fragment-aware excerpts
 at the model boundary: 6,000 characters for classification and 24,000 for ordinary
 source summaries. Full `Story.fetched_text` is never replaced by excerpts, including
 when classification material is reused for a selected item. Capture/replay accepts
@@ -133,10 +133,13 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `candidates/scoring.py` | Candidate scoring and recommendation explanations |
 | `candidates/selection.py` | Deduplication and final section selection |
 | `candidates/history.py` | Recent recommendation history |
-| `model_backend.py` | Provider-neutral classification and summarization contracts |
-| `gemini_backend.py` | Gemini adapter, pacing, structured output, and bounded retry |
-| `model_evaluation.py` | Versioned model-input capture and side-effect-free replay |
-| `topic_classifier.py` | Article-evidence topic classification |
+| `llm/__init__.py` | Stable facade for model backends, summary helpers, and model evaluation |
+| `llm/model_backend.py` | Provider-neutral classification and summarization contracts |
+| `llm/gemini_backend.py` | Gemini adapter, pacing, structured output, and bounded retry |
+| `llm/topic_classifier.py` | Article-evidence topic classification |
+| `llm/summarizer.py` | Grounded prompts, route selection, evidence selection, and normalization |
+| `llm/evidence_selection.py` | Bounded title-aware source excerpts with explicit omissions |
+| `llm/model_evaluation.py` | Versioned model-input capture and side-effect-free replay |
 | [`article_fetcher/`](article_fetcher/README.md) | Stable facade for bounded public article retrieval |
 | `article_fetcher/contracts.py` | Shared retrieval policies, results, errors, and limits |
 | `article_fetcher/fetch.py` | Transport routing and direct-request retry |
@@ -159,8 +162,6 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `pdf_workers/__init__.py` | Import-free package for PDF workers run as `python -m` subprocesses |
 | `pdf_workers/adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
 | `pdf_workers/pdf_extractor.py` | Resource-bounded local PDF text worker |
-| `evidence_selection.py` | Bounded title-aware source excerpts with explicit omissions |
-| `summarizer.py` | Grounded prompts, route selection, evidence selection, and normalization |
 | `output/__init__.py` | Stable facade for rendering, public payload validation, and publishing |
 | `output/render.py` | Markdown, public JSON, and private candidate-audit serialization |
 | `output/public_schema.py` | Public payload contract shared by generation and publishing |
@@ -244,14 +245,14 @@ record model and error code without credentials. Public output is unchanged.
 
 ## Common Change Paths
 
-- Core-topic recognition: `config.py` -> `candidates/keywords.py` -> `topic_classifier.py`
+- Core-topic recognition: `config.py` -> `candidates/keywords.py` -> `llm/topic_classifier.py`
   -> `generation/classification.py`.
 - Ranking or quotas: `config.py` -> `candidates/scoring.py` -> `candidates/selection.py`
   -> `generation/classification.py`.
 - Article material: the relevant transport or extractor -> `article_fetcher/`
   -> `generation/material.py` or `recovery/`
-  -> `summarizer.py` -> `generation/summaries.py`.
-- Summary quality: `summarizer.py` -> the model adapter -> relevant orchestration
+  -> `llm/summarizer.py` -> `generation/summaries.py`.
+- Summary quality: `llm/summarizer.py` -> the model adapter -> relevant orchestration
   and rendering tests.
 - Generated or published data: `output/render.py` -> `output/public_schema.py`
   -> `output/publisher.py`

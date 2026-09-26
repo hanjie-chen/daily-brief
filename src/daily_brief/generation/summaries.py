@@ -3,19 +3,19 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 
-from ..models import Candidate, SummaryGeneration
-from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
-from ..summarizer import (
+from ..llm import (
+    ALTERNATE_REPORTING_SUMMARY_PREFIX,
+    HN_DISCUSSION_SUMMARY_PREFIX,
     InsufficientSummaryMaterial,
     article_fetch_failure_summary,
     build_summary_context,
     fallback_summary,
     has_discussion_source,
-    ALTERNATE_REPORTING_SUMMARY_PREFIX,
-    HN_DISCUSSION_SUMMARY_PREFIX,
     normalize_summary_text,
     route_summary_mode,
 )
+from ..models import Candidate, SummaryGeneration
+from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow
 from .material import (
     RETRIEVAL_MODE_SUMMARY,

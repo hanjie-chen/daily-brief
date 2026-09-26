@@ -1,8 +1,7 @@
 import pytest
 
 from daily_brief.article_fetcher import extract_html
-from daily_brief.models import Candidate, KeywordMatch, Story
-from daily_brief.summarizer import (
+from daily_brief.llm.summarizer import (
     MEMORIAL_OR_PERSONAL_ESSAY_MODULE,
     RESEARCH_REPORT_MODULE,
     SUMMARY_CONTEXT_RESEARCH_FULL_TEXT_FALLBACK,
@@ -20,6 +19,7 @@ from daily_brief.summarizer import (
     route_summary_mode,
     has_discussion_source,
 )
+from daily_brief.models import Candidate, KeywordMatch, Story
 
 
 def research_body(*, short_sections: bool = False) -> str:
@@ -557,7 +557,7 @@ def test_discussion_prompt_assesses_comment_evidence_without_requiring_article()
 
 
 def test_source_sufficiency_standard_is_shared_and_not_case_specific():
-    from daily_brief.summarizer import SUMMARY_SUFFICIENCY_INSTRUCTION
+    from daily_brief.llm.summarizer import SUMMARY_SUFFICIENCY_INSTRUCTION
     item = candidate(fetched_text="A small utility for comparing folders.")
     assert SUMMARY_SUFFICIENCY_INSTRUCTION in build_summary_prompt(item)
     item.summary_basis = "hn_comments"
@@ -568,7 +568,7 @@ def test_source_sufficiency_standard_is_shared_and_not_case_specific():
 
 
 def test_combined_self_post_is_labeled_as_hn_post_not_retrieved_webpage():
-    from daily_brief.summarizer import source_summary_prefix
+    from daily_brief.llm.summarizer import source_summary_prefix
     item = candidate(story_text="How do teams review patches?", fetched_text="")
     item.summary_basis = "hn_comments"
     item.discussion_text = "We use peer reviews."

@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from .models import Candidate
+from ..models import Candidate
 from .summarizer import (
     MAX_COMMUNITY_ROUNDUP_ENTRY_DESCRIPTION_CHARS,
     MAX_COMMUNITY_ROUNDUP_ENTRY_NAME_CHARS,

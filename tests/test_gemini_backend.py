@@ -7,7 +7,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from daily_brief.gemini_backend import (
+from daily_brief.llm.gemini_backend import (
     DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS,
     DEFAULT_CLASSIFIER_MODEL,
     DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS,
@@ -357,7 +357,7 @@ def test_summarizer_uses_fetched_text_and_logs_usage(caplog):
     )
     backend = GeminiBackend(api_key="secret-key", opener=opener)
 
-    with caplog.at_level(logging.INFO, logger="daily_brief.gemini_backend"):
+    with caplog.at_level(logging.INFO, logger="daily_brief.llm.gemini_backend"):
         summary = backend.summarize(
             candidate("1", "AI tool", fetched_text="Grounded article facts.")
         )
@@ -570,7 +570,7 @@ def test_incomplete_summary_interaction_retries_once_and_succeeds(caplog):
         min_request_interval_seconds=0,
     )
 
-    with caplog.at_level(logging.WARNING, logger="daily_brief.gemini_backend"):
+    with caplog.at_level(logging.WARNING, logger="daily_brief.llm.gemini_backend"):
         assert backend.summarize(candidate("1", "AI tool")) == "完整摘要。"
 
     assert len(opener.calls) == 2
@@ -603,7 +603,7 @@ def test_incomplete_summary_interaction_stops_after_one_retry(caplog):
         min_request_interval_seconds=0,
     )
 
-    with caplog.at_level(logging.WARNING, logger="daily_brief.gemini_backend"):
+    with caplog.at_level(logging.WARNING, logger="daily_brief.llm.gemini_backend"):
         with pytest.raises(
             GeminiResponseError, match="ended with status incomplete"
         ) as caught:
@@ -689,7 +689,7 @@ def test_invalid_configuration_is_rejected(kwargs):
 
 @pytest.mark.parametrize("basis", ["original", "hn_comments"])
 def test_summarizer_returns_insufficient_as_completed_material_decision(basis):
-    from daily_brief.summarizer import InsufficientSummaryMaterial
+    from daily_brief.llm.summarizer import InsufficientSummaryMaterial
 
     opener = RecordingOpener(FakeResponse(interaction({
         "status": "insufficient", "summary": "", "reason": "仅有开场指令。"

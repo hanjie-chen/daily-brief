@@ -1,10 +1,10 @@
 import json
 
-from daily_brief.models import Candidate, Story
-from daily_brief.topic_classifier import (
+from daily_brief.llm.topic_classifier import (
     TOPIC_CLASSIFIER_ARTICLE_TEXT_MAX_CHARS,
     build_topic_classifier_prompt,
 )
+from daily_brief.models import Candidate, Story
 
 
 def candidate(

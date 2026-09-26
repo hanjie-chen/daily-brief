@@ -1,6 +1,6 @@
 import pytest
 
-from daily_brief.model_backend import ensure_topic_decisions
+from daily_brief.llm.model_backend import ensure_topic_decisions
 from daily_brief.models import Candidate, Story
 
 

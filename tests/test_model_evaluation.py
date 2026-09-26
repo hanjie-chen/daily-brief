@@ -2,14 +2,14 @@ import json
 
 import pytest
 
-from daily_brief.model_evaluation import (
+from daily_brief.llm.model_evaluation import (
     ModelEvaluationInputError,
     capture_model_evaluation_input,
     load_model_evaluation_input,
     run_model_evaluation,
 )
+from daily_brief.llm.summarizer import build_summary_prompt
 from daily_brief.models import Candidate, Story
-from daily_brief.summarizer import build_summary_prompt
 
 
 def candidate(item_id: str, title: str, *, fetched_text: str = "") -> Candidate:
@@ -301,7 +301,7 @@ def test_load_rejects_discussion_text_without_matching_summary_basis(tmp_path):
 
 def test_source_and_discussion_attempts_replay_independently(tmp_path):
     from copy import deepcopy
-    from daily_brief.summarizer import InsufficientSummaryMaterial
+    from daily_brief.llm.summarizer import InsufficientSummaryMaterial
 
     source = candidate("1", "Interactive game", fetched_text="Click to start")
     source.summary_basis = "fetched_article"
@@ -384,7 +384,7 @@ def test_load_accepts_version_three_and_keeps_its_unique_id_constraint(tmp_path)
 
 
 def test_capture_supports_two_attempts_for_every_selected_item(tmp_path):
-    from daily_brief.model_evaluation import MAX_SUMMARY_ITEMS
+    from daily_brief.llm.model_evaluation import MAX_SUMMARY_ITEMS
 
     attempts = []
     for index in range(MAX_SUMMARY_ITEMS):
@@ -403,7 +403,7 @@ def test_capture_supports_two_attempts_for_every_selected_item(tmp_path):
 
 
 def test_schema_five_preserves_community_roundup_inputs_and_prompts(tmp_path):
-    from daily_brief.topic_classifier import build_topic_classifier_prompt
+    from daily_brief.llm.topic_classifier import build_topic_classifier_prompt
 
     original = community_roundup("7")
     input_path = tmp_path / "input.json"
@@ -458,7 +458,7 @@ def test_old_schemas_reject_content_kind_field(tmp_path):
 
 
 def test_legacy_schema_bounds_and_retries_are_preserved(tmp_path):
-    from daily_brief.model_evaluation import MAX_SUMMARY_ITEMS
+    from daily_brief.llm.model_evaluation import MAX_SUMMARY_ITEMS
 
     attempts = []
     for index in range(MAX_SUMMARY_ITEMS):
@@ -582,7 +582,7 @@ def test_schema_five_rejects_article_and_roundup_summary_for_same_item(tmp_path)
 
 def test_schema_five_accepts_the_combined_summary_bound(tmp_path):
     from daily_brief.config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES
-    from daily_brief.model_evaluation import MAX_SUMMARY_CANDIDATES, MAX_SUMMARY_ITEMS
+    from daily_brief.llm.model_evaluation import MAX_SUMMARY_CANDIDATES, MAX_SUMMARY_ITEMS
 
     summaries = []
     for index in range(MAX_SUMMARY_ITEMS):

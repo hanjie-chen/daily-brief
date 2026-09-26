@@ -14,7 +14,7 @@ material preparation, recovery dispatch, summary orchestration, and writing
 date-scoped artifacts. Argument parsing and command dispatch stay in `cli.py`.
 Article transport and extraction stay in [`article_fetcher/`](../article_fetcher/README.md);
 search-based recovery attempts and their validation stay in `recovery/`;
-prompts, routes, and evidence selection stay in `summarizer.py`; rule-based
+prompts, routes, evidence selection, and model adapters stay in `llm/`; rule-based
 collection, scoring, history, and selection stay in `candidates/`; rendering
 and publishing stay in `output/`.
 
@@ -74,7 +74,7 @@ this package that owns it.
    recovery path fails for a selected story, or its summary call explicitly finds
    the retrieved material insufficient, `material.py` asks `candidates/hn_client.py` for a
    bounded HN discussion sample as the final fallback.
-   `summarizer.py` selects the generic, memorial, research, or HN-discussion route
+   `llm/summarizer.py` selects the generic, memorial, research, or HN-discussion route
    from available evidence. An external-source retrieval failure never becomes a
    title- or model-knowledge-based article summary.
 8. `pipeline.py`: `output/render.py` writes the readable Markdown, validated public JSON,

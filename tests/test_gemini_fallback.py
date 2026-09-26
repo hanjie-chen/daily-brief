@@ -6,14 +6,14 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from daily_brief.gemini_backend import (
+from daily_brief.llm.gemini_backend import (
     GeminiAPIError,
     GeminiBackend,
     GeminiResponseError,
     INTERACTIONS_URL,
 )
+from daily_brief.llm.summarizer import InsufficientSummaryMaterial
 from daily_brief.models import Candidate, Story
-from daily_brief.summarizer import InsufficientSummaryMaterial
 
 
 class FakeResponse:

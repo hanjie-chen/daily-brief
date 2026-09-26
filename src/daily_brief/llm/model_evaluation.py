@@ -10,15 +10,15 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from .article_fetcher.contracts import DEFAULT_MAX_EXTRACTED_BYTES
-from .config import (
+from ..article_fetcher.contracts import DEFAULT_MAX_EXTRACTED_BYTES
+from ..config import (
     AI_MAX_ITEMS,
     EXPLORATION_CLASSIFIER_MAX_CANDIDATES,
     NON_AI_MAX_ITEMS,
     TIMEZONE,
 )
+from ..models import Candidate, Story
 from .model_backend import ModelBackend, ensure_topic_decisions
-from .models import Candidate, Story
 from .summarizer import InsufficientSummaryMaterial, normalize_summary_text
 
 SCHEMA_VERSION = 5

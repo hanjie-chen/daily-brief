@@ -4,8 +4,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from ..models import Candidate
 from .evidence_selection import select_evidence
-from .models import Candidate
 
 SUMMARY_SYSTEM_INSTRUCTION = (
     "Write a concise, fact-grounded Chinese summary for this Hacker News item. "

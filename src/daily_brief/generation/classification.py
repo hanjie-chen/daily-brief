@@ -13,7 +13,7 @@ from ..candidates import (
     select_exploration_candidates,
 )
 from ..config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES
-from ..model_backend import ensure_topic_decisions
+from ..llm import ensure_topic_decisions
 from ..models import Candidate
 from ..recovery import AlternateReportingFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow

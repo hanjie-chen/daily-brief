@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .models import Candidate
+from ..models import Candidate
 from .topic_classifier import TOPIC_LABELS
 
 

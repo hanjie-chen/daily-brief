@@ -2866,7 +2866,7 @@ def test_fetch_jina_reader_text_enforces_content_limit_after_json_decode():
 
 
 def test_long_extracted_html_is_available_for_evidence_selection(monkeypatch):
-    from daily_brief.evidence_selection import select_evidence
+    from daily_brief.llm.evidence_selection import select_evidence
     text = 'Old release notes.\n' * 16000 + '\n2.1.277\nAdded AGENTS.md support when CLAUDE.md is absent.'
     monkeypatch.setattr(article_responses_module, 'extract_html', lambda markup: text)
     result = fetch_article(

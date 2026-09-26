@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from urllib.parse import urlparse
 
+from ..models import Candidate
 from .evidence_selection import select_evidence
-from .models import Candidate
 
 TOPIC_CLASSIFIER_SYSTEM_INSTRUCTION = (
     "Classify supplied Hacker News articles for Daily Brief section routing. "

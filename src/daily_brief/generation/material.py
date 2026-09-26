@@ -13,6 +13,7 @@ from ..article_fetcher import (
     fetch_article,
 )
 from ..candidates import HNDiscussionFetchError, HNDiscussionResult, fetch_hn_discussion
+from ..llm import article_fetch_failure_summary
 from ..models import (
     AlternateReportingRecovery,
     ArticleRetrieval,
@@ -37,7 +38,6 @@ from ..recovery import (
     coerce_fetched_material,
     is_reuters_url,
 )
-from ..summarizer import article_fetch_failure_summary
 
 LOGGER = logging.getLogger(__name__)
 RETRIEVAL_MODE_CLASSIFICATION = "classification"
