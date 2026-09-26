@@ -126,7 +126,7 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `config.py` | Timezone, topic vocabulary, quotas, thresholds, and scoring limits |
 | `models.py` | Shared story, candidate, retrieval, and model-diagnostic structures |
 | `time_window.py` | Daily collection window |
-| `candidates/__init__.py` | Stable facade for rule-based candidate collection, scoring, history, and selection |
+| [`candidates/`](candidates/README.md) | Stable facade for rule-based candidate collection, scoring, history, and selection |
 | `candidates/hn_client.py` | Algolia collection, hot stories, and bounded HN discussion sampling (the latter used by summary fallback) |
 | `candidates/keywords.py` | Keyword and URL-token matching |
 | `candidates/keyword_evaluation.py` | Keyword corpus collection and deterministic replay |
