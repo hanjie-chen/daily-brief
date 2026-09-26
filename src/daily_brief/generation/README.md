@@ -13,8 +13,9 @@ The package is responsible for stage order, candidate routing and selection,
 material preparation, search-based recovery, summary orchestration, and writing
 date-scoped artifacts. Argument parsing and command dispatch stay in `cli.py`.
 Article transport and extraction stay in [`article_fetcher/`](../article_fetcher/README.md);
-prompts, routes, and evidence selection stay in `summarizer.py`; ranking rules
-stay in `scoring.py` and `selection.py`; rendering and publishing stay in `output/`.
+prompts, routes, and evidence selection stay in `summarizer.py`; rule-based
+collection, scoring, history, and selection stay in `candidates/`; rendering
+and publishing stay in `output/`.
 
 ## Generation Flow
 
@@ -23,11 +24,12 @@ this package that owns it.
 
 1. `pipeline.py`: `time_window.py` calculates the daily collection window in the
    Asia/Singapore timezone.
-2. `pipeline.py`: `hn_client.py` collects recent Algolia stories and hot stories
+2. `pipeline.py`: `candidates/hn_client.py` collects recent Algolia stories and hot stories
    from the official Hacker News API. Both sources are required; failure of either
    source aborts the run before date-scoped artifacts are written or replaced.
-3. `pipeline.py`: `selection.py` deduplicates candidates, while `history.py`
-   excludes recently recommended stories. `keywords.py` and `scoring.py` establish
+3. `pipeline.py`: `candidates/selection.py` deduplicates candidates, while
+   `candidates/history.py` excludes recently recommended stories.
+   `candidates/keywords.py` and `candidates/scoring.py` establish
    the initial core candidates and ranking order.
 4. `classification.py`: A bounded set of remaining candidates, including
    keyword-matched HN self-posts, is fetched under the classification retrieval
@@ -69,13 +71,13 @@ this package that owns it.
    insufficient. Rejections continue to the existing Reuters recovery routes.
 7. `summaries.py` and `material.py`: If every external-source retrieval and
    recovery path fails for a selected story, or its summary call explicitly finds
-   the retrieved material insufficient, `material.py` asks `hn_client.py` for a
+   the retrieved material insufficient, `material.py` asks `candidates/hn_client.py` for a
    bounded HN discussion sample as the final fallback.
    `summarizer.py` selects the generic, memorial, research, or HN-discussion route
    from available evidence. An external-source retrieval failure never becomes a
    title- or model-knowledge-based article summary.
 8. `pipeline.py`: `output/render.py` writes the readable Markdown, validated public JSON,
-   and private candidate audit. `history.py` then records selected item IDs. An
+   and private candidate audit. `candidates/history.py` then records selected item IDs. An
    empty brief writes a `.no-content` marker instead of public JSON.
 
 ## Module Map

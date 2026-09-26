@@ -8,12 +8,12 @@ from daily_brief import article_fetcher as article_fetcher_module
 from daily_brief import cli
 from daily_brief.alternate_reporting import AlternateReportingCandidate
 from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
+from daily_brief.candidates import HNDiscussionResult
 from daily_brief.cli import build_parser, main
 from daily_brief.gemini_backend import GeminiAPIError
 from daily_brief.gemini_backend import GeminiBackend as RealGeminiBackend
 from daily_brief.generation import SourceCollectionError, run_generate
 from daily_brief.generation import material, pipeline, summaries
-from daily_brief.hn_client import HNDiscussionResult
 from daily_brief.model_evaluation import capture_model_evaluation_input
 from daily_brief.models import Candidate, Story
 from daily_brief.summarizer import (

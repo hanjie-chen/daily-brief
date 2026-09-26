@@ -6,16 +6,16 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from ..alternate_reporting import AlternateReportingFinder
-from ..config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES
-from ..model_backend import ensure_topic_decisions
-from ..models import Candidate
-from ..scoring import apply_article_evidence_bonus
-from ..selection import (
+from ..candidates import (
+    apply_article_evidence_bonus,
     meets_exploration_minimum,
     rank_exploration_candidates,
     select_ai_candidates,
     select_exploration_candidates,
 )
+from ..config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES
+from ..model_backend import ensure_topic_decisions
+from ..models import Candidate
 from ..syndicated_copy import SyndicatedCopyFinder
 from ..time_window import TimeWindow
 from .material import (

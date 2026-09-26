@@ -1,7 +1,7 @@
 import json
 import logging
 
-from daily_brief.history import load_history, recent_ids, save_history
+from daily_brief.candidates import load_history, recent_ids, save_history
 
 
 def test_load_history_returns_empty_for_missing_file(tmp_path):
@@ -12,7 +12,7 @@ def test_load_history_logs_and_returns_empty_for_malformed_file(tmp_path, caplog
     path = tmp_path / "recommendation-history.json"
     path.write_text("not json", encoding="utf-8")
 
-    with caplog.at_level(logging.WARNING, logger="daily_brief.history"):
+    with caplog.at_level(logging.WARNING, logger="daily_brief.candidates.history"):
         result = load_history(path)
 
     assert result == {}

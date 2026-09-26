@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from .config import (
+from ..config import (
     ARTICLE_EVIDENCE_BONUS,
     HIGH_WEIGHT_BONUS_CAP,
     KEYWORD_BONUS_CAP,
@@ -12,7 +12,7 @@ from .config import (
     TOPIC_BONUS_CAP,
     TOPIC_KEYWORDS,
 )
-from .models import Candidate
+from ..models import Candidate
 
 ARTICLE_CORE_WHY = "正文确认属于计算与软件领域；按 HN 热度入选"
 

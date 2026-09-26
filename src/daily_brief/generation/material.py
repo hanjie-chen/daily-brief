@@ -13,7 +13,7 @@ from ..article_fetcher import (
     SUMMARY_FETCH_POLICY,
     fetch_article,
 )
-from ..hn_client import HNDiscussionFetchError, HNDiscussionResult, fetch_hn_discussion
+from ..candidates import HNDiscussionFetchError, HNDiscussionResult, fetch_hn_discussion
 from ..models import (
     AlternateReportingRecovery,
     ArticleRetrieval,

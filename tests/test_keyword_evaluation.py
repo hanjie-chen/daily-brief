@@ -3,7 +3,7 @@ from datetime import date, datetime
 import pytest
 
 from daily_brief.config import TIMEZONE
-from daily_brief.keyword_evaluation import collect_corpus, evaluate_corpus
+from daily_brief.candidates.keyword_evaluation import collect_corpus, evaluate_corpus
 from daily_brief.models import Story
 
 

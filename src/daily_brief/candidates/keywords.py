@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from .config import (
+from ..config import (
     ABBREVIATIONS,
     CASE_SENSITIVE_KEYWORDS,
     HIGH_WEIGHT_KEYWORDS,
@@ -12,7 +12,7 @@ from .config import (
     MEDIUM_WEIGHT_KEYWORDS,
     WEAK_KEYWORDS,
 )
-from .models import KeywordMatch
+from ..models import KeywordMatch
 
 WEIGHT_BONUS = {
     "high": 4.0,

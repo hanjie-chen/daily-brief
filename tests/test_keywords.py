@@ -1,7 +1,7 @@
 import pytest
 
 from daily_brief.config import CORE_TOPIC_HIGH_WEIGHT_KEYWORDS
-from daily_brief.keywords import match_keywords
+from daily_brief.candidates import match_keywords
 
 
 def names(matches):

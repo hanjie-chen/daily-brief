@@ -11,8 +11,8 @@ from html.parser import HTMLParser
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
-from .models import Story
-from .time_window import TimeWindow
+from ..models import Story
+from ..time_window import TimeWindow
 
 ALGOLIA_URL = "https://hn.algolia.com/api/v1/search_by_date"
 HN_TOPSTORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"

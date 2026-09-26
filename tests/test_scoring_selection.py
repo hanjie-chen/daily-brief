@@ -1,9 +1,9 @@
 from daily_brief.models import Candidate, KeywordMatch, Story
 from daily_brief.config import AI_MIN_POINTS, AI_MIN_SCORE
-from daily_brief.scoring import score_candidate
-from daily_brief.selection import (
+from daily_brief.candidates import (
     dedupe_candidates,
     rank_exploration_candidates,
+    score_candidate,
     select_ai_candidates,
     select_exploration_candidates,
 )

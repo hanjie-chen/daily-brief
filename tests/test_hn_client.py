@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from daily_brief.hn_client import (
+from daily_brief.candidates.hn_client import (
     HN_BESTSTORIES_URL,
     HNDiscussionFetchError,
     HN_ITEM_URL,
@@ -57,7 +57,7 @@ def test_get_json_retries_with_configured_backoff(caplog):
             raise outcome
         return outcome
 
-    with caplog.at_level(logging.WARNING, logger="daily_brief.hn_client"):
+    with caplog.at_level(logging.WARNING, logger="daily_brief.candidates.hn_client"):
         result = _get_json(
             "https://hn.algolia.com/test",
             opener=opener,
@@ -80,7 +80,7 @@ def test_get_json_raises_after_exactly_three_attempts(caplog):
         attempts.append(timeout)
         raise TimeoutError(f"failure {len(attempts)}")
 
-    with caplog.at_level(logging.ERROR, logger="daily_brief.hn_client"):
+    with caplog.at_level(logging.ERROR, logger="daily_brief.candidates.hn_client"):
         with pytest.raises(RequestFailedError, match="algolia request failed after 3 attempts") as raised:
             _get_json(
                 "https://hn.algolia.com/test",
@@ -174,7 +174,7 @@ def test_fetch_algolia_stories_pages_through_time_window(monkeypatch):
             "hits": [{"objectID": "2", "title": "Second", "created_at": "2026-07-07T01:00:00Z"}],
         }
 
-    monkeypatch.setattr("daily_brief.hn_client._get_json", fake_get_json)
+    monkeypatch.setattr("daily_brief.candidates.hn_client._get_json", fake_get_json)
     window = TimeWindow(
         start=datetime(2026, 7, 7, 8, 0, tzinfo=ZoneInfo("Asia/Singapore")),
         end=datetime(2026, 7, 8, 8, 0, tzinfo=ZoneInfo("Asia/Singapore")),
@@ -204,7 +204,7 @@ def test_fetch_hot_stories_dedupes_ids_and_keeps_only_stories(monkeypatch):
         fetched.append(url)
         return responses[url]
 
-    monkeypatch.setattr("daily_brief.hn_client._get_json", fake_get_json)
+    monkeypatch.setattr("daily_brief.candidates.hn_client._get_json", fake_get_json)
 
     stories = fetch_hot_stories(limit_ids=2)
 
@@ -229,7 +229,7 @@ def test_fetch_hot_stories_keeps_successful_list_when_other_list_fails(monkeypat
             return [1]
         return {"id": 1, "type": "story", "title": "kept", "time": 0}
 
-    monkeypatch.setattr("daily_brief.hn_client._get_json", fake_get_json)
+    monkeypatch.setattr("daily_brief.candidates.hn_client._get_json", fake_get_json)
 
     stories = fetch_hot_stories()
 
@@ -246,9 +246,9 @@ def test_fetch_hot_stories_skips_failed_item_and_keeps_later_items(monkeypatch, 
             raise RequestFailedError("item unavailable")
         return {"id": 2, "type": "story", "title": "kept", "time": 0}
 
-    monkeypatch.setattr("daily_brief.hn_client._get_json", fake_get_json)
+    monkeypatch.setattr("daily_brief.candidates.hn_client._get_json", fake_get_json)
 
-    with caplog.at_level(logging.ERROR, logger="daily_brief.hn_client"):
+    with caplog.at_level(logging.ERROR, logger="daily_brief.candidates.hn_client"):
         stories = fetch_hot_stories()
 
     assert [story.hn_item_id for story in stories] == ["2"]
@@ -259,7 +259,7 @@ def test_fetch_hot_stories_raises_when_both_lists_fail(monkeypatch):
     def fake_get_json(url):
         raise RequestFailedError(f"unavailable: {url}")
 
-    monkeypatch.setattr("daily_brief.hn_client._get_json", fake_get_json)
+    monkeypatch.setattr("daily_brief.candidates.hn_client._get_json", fake_get_json)
 
     with pytest.raises(RequestFailedError, match="story lists failed"):
         fetch_hot_stories()

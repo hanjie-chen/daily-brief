@@ -16,7 +16,7 @@ points, see [the architecture guide](../../docs/architecture.md).
 - `generation/` implements the generation pipeline. Start at its
   [guide](generation/README.md) for changes to stage order, selection, material
   retrieval, recovery, or summary fallback.
-- `keyword_evaluation.py` provides the corpus collection and replay utility used
+- `candidates/keyword_evaluation.py` provides the corpus collection and replay utility used
   to evaluate production keyword matching. It can be run through
   `scripts/evaluate_keywords.py`.
 
@@ -126,12 +126,13 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `config.py` | Timezone, topic vocabulary, quotas, thresholds, and scoring limits |
 | `models.py` | Shared story, candidate, retrieval, and model-diagnostic structures |
 | `time_window.py` | Daily collection window |
-| `hn_client.py` | Algolia collection, hot stories, and bounded HN discussion sampling |
-| `keywords.py` | Keyword and URL-token matching |
-| `keyword_evaluation.py` | Keyword corpus collection and deterministic replay |
-| `scoring.py` | Candidate scoring and recommendation explanations |
-| `selection.py` | Deduplication and final section selection |
-| `history.py` | Recent recommendation history |
+| `candidates/__init__.py` | Stable facade for rule-based candidate collection, scoring, history, and selection |
+| `candidates/hn_client.py` | Algolia collection, hot stories, and bounded HN discussion sampling (the latter used by summary fallback) |
+| `candidates/keywords.py` | Keyword and URL-token matching |
+| `candidates/keyword_evaluation.py` | Keyword corpus collection and deterministic replay |
+| `candidates/scoring.py` | Candidate scoring and recommendation explanations |
+| `candidates/selection.py` | Deduplication and final section selection |
+| `candidates/history.py` | Recent recommendation history |
 | `model_backend.py` | Provider-neutral classification and summarization contracts |
 | `gemini_backend.py` | Gemini adapter, pacing, structured output, and bounded retry |
 | `model_evaluation.py` | Versioned model-input capture and side-effect-free replay |
@@ -240,9 +241,9 @@ record model and error code without credentials. Public output is unchanged.
 
 ## Common Change Paths
 
-- Core-topic recognition: `config.py` -> `keywords.py` -> `topic_classifier.py`
+- Core-topic recognition: `config.py` -> `candidates/keywords.py` -> `topic_classifier.py`
   -> `generation/classification.py`.
-- Ranking or quotas: `config.py` -> `scoring.py` -> `selection.py`
+- Ranking or quotas: `config.py` -> `candidates/scoring.py` -> `candidates/selection.py`
   -> `generation/classification.py`.
 - Article material: the relevant transport or extractor -> `article_fetcher/`
   -> `generation/material.py` or `generation/search_recovery.py`

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .config import (
+from ..config import (
     AI_MAX_ITEMS,
     AI_MIN_POINTS,
     AI_MIN_SCORE,
@@ -8,7 +8,7 @@ from .config import (
     NON_AI_MAX_ITEMS,
     NON_AI_POINTS_THRESHOLD,
 )
-from .models import Candidate
+from ..models import Candidate
 
 
 def dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:

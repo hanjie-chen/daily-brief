@@ -11,11 +11,18 @@ from datetime import datetime
 from pathlib import Path
 
 from ..alternate_reporting import AlternateReportingFinder
+from ..candidates import (
+    dedupe_candidates,
+    fetch_algolia_stories,
+    fetch_hot_stories,
+    load_history,
+    match_keywords,
+    recent_ids,
+    save_history,
+    score_candidate,
+)
 from ..config import TIMEZONE
 from ..gemini_backend import GeminiBackend
-from ..history import load_history, recent_ids, save_history
-from ..hn_client import fetch_algolia_stories, fetch_hot_stories
-from ..keywords import match_keywords
 from ..model_backend import ModelBackend
 from ..model_evaluation import capture_model_evaluation_input
 from ..models import Candidate, Story
@@ -27,8 +34,6 @@ from ..output import (
     validate_public_brief,
 )
 from ..same_article import SameArticleFinder
-from ..scoring import score_candidate
-from ..selection import dedupe_candidates
 from ..syndicated_copy import SyndicatedCopyFinder
 from ..time_window import TimeWindow, daily_window
 from .classification import SelectionResult, classify_and_select_candidates
