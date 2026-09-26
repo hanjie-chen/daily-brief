@@ -22,6 +22,7 @@ writing summaries into the brief stays in `output/`.
 | `__init__.py` | Stable package facade and supported imports |
 | `model_backend.py` | Provider-neutral classification and summarization contract |
 | `gemini_backend.py` | Gemini adapter: structured output, validation, pacing, retry, and summary model fallback |
+| `gemini_api.py` | Gemini errors, HTTP error and daily-quota interpretation, retry delays, response text and usage extraction, and interaction logs |
 | `topic_classifier.py` | Topic-classification prompt and labels |
 | `summarizer.py` | Summary routes, prompts, sufficiency rules, source prefixes, and normalization |
 | `evidence_selection.py` | Bounded title-aware excerpts with explicit omissions |
@@ -150,7 +151,7 @@ provider failures and does not retrieve fallback material.
 
 ```text
 __init__           -> gemini_backend, model_backend, model_evaluation, summarizer
-gemini_backend     -> summarizer, topic_classifier
+gemini_backend     -> gemini_api, summarizer, topic_classifier
 model_evaluation   -> model_backend, summarizer
 model_backend      -> topic_classifier
 summarizer         -> evidence_selection

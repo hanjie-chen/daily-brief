@@ -15,6 +15,22 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from ..models import Candidate
+from .gemini_api import (
+    MAX_RESPONSE_BYTES,
+    GeminiAPIError,
+    GeminiConfigurationError,
+    GeminiResponseError,
+    extract_output_text,
+    http_error_code,
+    http_error_message,
+    is_daily_quota_error,
+    is_retryable_status,
+    log_non_completed_interaction,
+    log_usage,
+    normalized_usage,
+    response_status,
+    retry_delay_from_error,
+)
 from .summarizer import (
     MAX_COMMUNITY_ROUNDUP_ENTRY_DESCRIPTION_CHARS,
     MAX_COMMUNITY_ROUNDUP_ENTRY_NAME_CHARS,
@@ -45,17 +61,11 @@ DEFAULT_SUMMARIZER_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.8-flash")
 DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS = 6.0
 DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS = 20.0
 MODEL_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
-RETRYABLE_HTTP_STATUSES = {408, 429}
-MAX_RESPONSE_BYTES = 256 * 1024
 MAX_SUMMARY_CHARS = 1000
 CLASSIFIER_MAX_OUTPUT_TOKENS = 512
 SUMMARY_MAX_OUTPUT_TOKENS = 8192
 SUMMARY_THINKING_LEVEL = "high"
 SUMMARY_INCOMPLETE_RETRIES = 1
-RETRY_DELAY_PATTERN = re.compile(r"^(\d+)(?:\.(\d{1,9}))?s$")
-RETRY_MESSAGE_PATTERN = re.compile(
-    r"(?:^|\s)Please retry in (\d+(?:\.\d{1,9})?)s(?:[.\s]|$)"
-)
 
 
 def _classifier_labels(candidates: list[Candidate]) -> set[str]:
@@ -67,35 +77,6 @@ def _classifier_labels(candidates: list[Candidate]) -> set[str]:
     ):
         labels.add("community_roundup")
     return labels
-
-
-class GeminiConfigurationError(ValueError):
-    pass
-
-
-class GeminiAPIError(RuntimeError):
-    def __init__(
-        self,
-        message: str,
-        *,
-        error_code: str = "provider_error",
-        http_status: int | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.error_code = error_code
-        self.http_status = http_status
-
-
-class GeminiResponseError(GeminiAPIError):
-    def __init__(
-        self,
-        message: str,
-        *,
-        error_code: str = "invalid_response",
-        provider_status: str = "",
-    ) -> None:
-        super().__init__(message, error_code=error_code)
-        self.provider_status = provider_status
 
 
 def _validate_and_format_community_roundup(output: object) -> str:
@@ -551,8 +532,8 @@ class GeminiBackend:
             self._last_response_status_by_model[model] = ""
             self._last_response_usage_by_model[model] = {}
             response = self._post_json(payload, model=model)
-            provider_status = _provider_status(response)
-            usage = _normalized_usage(response.get("usage"))
+            provider_status = response_status(response)
+            usage = normalized_usage(response.get("usage"))
             self._last_response_status_by_model[model] = provider_status
             self._last_response_usage_by_model[model] = usage
             if provider_status == "completed":
@@ -561,7 +542,7 @@ class GeminiBackend:
                 provider_status == "incomplete"
                 and incomplete_retry < incomplete_retries
             )
-            _log_non_completed_interaction(
+            log_non_completed_interaction(
                 task,
                 model,
                 provider_status,
@@ -576,7 +557,7 @@ class GeminiBackend:
                 f"Gemini interaction ended with status {provider_status}",
                 provider_status=provider_status,
             )
-        text = _extract_output_text(response)
+        text = extract_output_text(response)
         try:
             output = json.loads(text)
         except (json.JSONDecodeError, TypeError) as exc:
@@ -585,7 +566,7 @@ class GeminiBackend:
             ) from exc
         if not isinstance(output, dict):
             raise GeminiResponseError("Gemini structured output must be an object")
-        _log_usage(task, model, response.get("usage"))
+        log_usage(task, model, response.get("usage"))
         return output
 
     def _post_json(self, payload: dict, *, model: str) -> dict:
@@ -610,17 +591,17 @@ class GeminiBackend:
                     response_body = response.read(MAX_RESPONSE_BYTES + 1)
             except HTTPError as exc:
                 error_body = exc.read(MAX_RESPONSE_BYTES + 1)
-                if exc.code == 429 and _is_daily_quota_error(error_body):
+                if exc.code == 429 and is_daily_quota_error(error_body):
                     raise GeminiAPIError(
-                        _http_error_message(exc.code, error_body),
+                        http_error_message(exc.code, error_body),
                         error_code="daily_quota_exceeded", http_status=429,
                     ) from exc
-                if _is_retryable_status(exc.code) and attempt < self.max_retries:
+                if is_retryable_status(exc.code) and attempt < self.max_retries:
                     self.sleeper(self._retry_delay(attempt, exc.headers, error_body))
                     continue
                 raise GeminiAPIError(
-                    _http_error_message(exc.code, error_body),
-                    error_code=_http_error_code(exc.code),
+                    http_error_message(exc.code, error_body),
+                    error_code=http_error_code(exc.code),
                     http_status=exc.code,
                 ) from exc
             except TimeoutError as exc:
@@ -686,7 +667,7 @@ class GeminiBackend:
                 return min(max(float(retry_after), 0.0), 60.0)
             except ValueError:
                 pass
-        provider_delay = _retry_delay_from_error(error_body)
+        provider_delay = retry_delay_from_error(error_body)
         if provider_delay is not None:
             return min(max(provider_delay, 0.0), 60.0)
         base_delay = self.retry_base_seconds * (2**attempt)
@@ -722,206 +703,3 @@ def _environment_request_interval(
             else "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS"
         )
         raise GeminiConfigurationError(f"{source_name} must be numeric") from exc
-
-
-def _is_retryable_status(status: int) -> bool:
-    return status in RETRYABLE_HTTP_STATUSES or 500 <= status <= 599
-
-
-def _http_error_code(status: int) -> str:
-    if status == 429:
-        return "quota_exceeded"
-    if status == 408:
-        return "timeout"
-    if 500 <= status <= 599:
-        return "provider_unavailable"
-    return f"http_{status}"
-
-
-def _is_daily_quota_error(body: bytes) -> bool:
-    """Only explicit daily limits justify switching models without waiting.
-
-    An unqualified 429 can be RPM/TPM or another quota; never guess that it
-    means the daily request budget is exhausted.
-    """
-    if len(body) > MAX_RESPONSE_BYTES:
-        return False
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    error = payload.get("error") if isinstance(payload, dict) else None
-    if not isinstance(error, dict):
-        return False
-    details = error.get("details", [])
-    if isinstance(details, list):
-        for detail in details:
-            if not isinstance(detail, dict):
-                continue
-            violations = detail.get("violations", [])
-            if not isinstance(violations, list):
-                continue
-            for violation in violations:
-                if not isinstance(violation, dict):
-                    continue
-                for field in ("quotaId", "quotaMetric"):
-                    value = violation.get(field)
-                    if isinstance(value, str) and "perday" in re.sub(
-                        r"[^a-z]", "", value.lower()
-                    ):
-                        return True
-    message = error.get("message", "")
-    return isinstance(message, str) and bool(re.search(
-        r"\b(?:per[ _-]day|daily (?:request )?quota|requests? per day)\b",
-        message, re.IGNORECASE,
-    ))
-
-
-def _http_error_message(status: int, body: bytes) -> str:
-    message = ""
-    try:
-        payload = json.loads(body.decode("utf-8"))
-        error = payload.get("error") if isinstance(payload, dict) else None
-        if isinstance(error, dict) and isinstance(error.get("message"), str):
-            message = " ".join(error["message"].split())[:500]
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        pass
-    suffix = f": {message}" if message else ""
-    return f"Gemini API HTTP {status}{suffix}"
-
-
-def _retry_delay_from_error(body: bytes | None) -> float | None:
-    if not body or len(body) > MAX_RESPONSE_BYTES:
-        return None
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    error = payload.get("error") if isinstance(payload, dict) else None
-    details = error.get("details") if isinstance(error, dict) else None
-    if isinstance(details, list):
-        for detail in details:
-            if not isinstance(detail, dict):
-                continue
-            detail_type = detail.get("@type")
-            retry_delay = detail.get("retryDelay")
-            if (
-                not isinstance(detail_type, str)
-                or not detail_type.endswith("google.rpc.RetryInfo")
-                or not isinstance(retry_delay, str)
-            ):
-                continue
-            match = RETRY_DELAY_PATTERN.fullmatch(retry_delay)
-            if match is None:
-                continue
-            fraction = match.group(2) or ""
-            return float(match.group(1)) + (
-                int(fraction) / (10 ** len(fraction)) if fraction else 0.0
-            )
-    message = error.get("message") if isinstance(error, dict) else None
-    if isinstance(message, str):
-        match = RETRY_MESSAGE_PATTERN.search(message)
-        if match is not None:
-            return float(match.group(1))
-    return None
-
-
-def _extract_output_text(response: dict) -> str:
-    text_parts = []
-    steps = response.get("steps")
-    if not isinstance(steps, list):
-        raise GeminiResponseError("Gemini response does not contain output steps")
-    for step in steps:
-        if not isinstance(step, dict) or step.get("type") != "model_output":
-            continue
-        content = step.get("content")
-        if not isinstance(content, list):
-            continue
-        for part in content:
-            if (
-                isinstance(part, dict)
-                and part.get("type") == "text"
-                and isinstance(part.get("text"), str)
-            ):
-                text_parts.append(part["text"])
-    output_text = "".join(text_parts).strip()
-    if not output_text:
-        raise GeminiResponseError("Gemini response does not contain output text")
-    return output_text
-
-
-def _provider_status(response: dict) -> str:
-    status = response.get("status")
-    if not isinstance(status, str) or not status.strip():
-        return "unknown"
-    return " ".join(status.split())[:128]
-
-
-def _normalized_usage(usage) -> dict[str, int | None]:
-    if not isinstance(usage, dict):
-        return {}
-    return {
-        "input_tokens": _usage_integer(usage.get("total_input_tokens")),
-        "output_tokens": _usage_integer(usage.get("total_output_tokens")),
-        "thought_tokens": _usage_integer(usage.get("total_thought_tokens")),
-        "total_tokens": _usage_integer(usage.get("total_tokens")),
-    }
-
-
-def _usage_integer(value) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return None
-    return value
-
-
-def _interaction_error_codes(errors) -> str:
-    if not isinstance(errors, list):
-        return "none"
-    codes = []
-    for error in errors[:5]:
-        code = error.get("code") if isinstance(error, dict) else None
-        if isinstance(code, str) and code.strip():
-            codes.append(" ".join(code.split())[:128])
-    return ",".join(codes) if codes else "none"
-
-
-def _log_non_completed_interaction(
-    task: str,
-    model: str,
-    provider_status: str,
-    errors,
-    usage: dict[str, int | None],
-    *,
-    attempts: int,
-    will_retry: bool,
-) -> None:
-    LOGGER.warning(
-        "component=gemini_api task=%s model=%s status=%s attempts=%d "
-        "retry=%s error_codes=%s input_tokens=%s output_tokens=%s "
-        "thought_tokens=%s total_tokens=%s",
-        task,
-        model,
-        provider_status,
-        attempts,
-        str(will_retry).lower(),
-        _interaction_error_codes(errors),
-        usage.get("input_tokens", "unknown"),
-        usage.get("output_tokens", "unknown"),
-        usage.get("thought_tokens", "unknown"),
-        usage.get("total_tokens", "unknown"),
-    )
-
-
-def _log_usage(task: str, model: str, usage) -> None:
-    if not isinstance(usage, dict):
-        return
-    LOGGER.info(
-        "component=gemini_api task=%s model=%s input_tokens=%s output_tokens=%s "
-        "thought_tokens=%s total_tokens=%s",
-        task,
-        model,
-        usage.get("total_input_tokens", "unknown"),
-        usage.get("total_output_tokens", "unknown"),
-        usage.get("total_thought_tokens", "unknown"),
-        usage.get("total_tokens", "unknown"),
-    )

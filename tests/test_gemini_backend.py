@@ -357,7 +357,7 @@ def test_summarizer_uses_fetched_text_and_logs_usage(caplog):
     )
     backend = GeminiBackend(api_key="secret-key", opener=opener)
 
-    with caplog.at_level(logging.INFO, logger="daily_brief.llm.gemini_backend"):
+    with caplog.at_level(logging.INFO, logger="daily_brief.llm"):
         summary = backend.summarize(
             candidate("1", "AI tool", fetched_text="Grounded article facts.")
         )
@@ -570,7 +570,7 @@ def test_incomplete_summary_interaction_retries_once_and_succeeds(caplog):
         min_request_interval_seconds=0,
     )
 
-    with caplog.at_level(logging.WARNING, logger="daily_brief.llm.gemini_backend"):
+    with caplog.at_level(logging.WARNING, logger="daily_brief.llm"):
         assert backend.summarize(candidate("1", "AI tool")) == "完整摘要。"
 
     assert len(opener.calls) == 2
@@ -603,7 +603,7 @@ def test_incomplete_summary_interaction_stops_after_one_retry(caplog):
         min_request_interval_seconds=0,
     )
 
-    with caplog.at_level(logging.WARNING, logger="daily_brief.llm.gemini_backend"):
+    with caplog.at_level(logging.WARNING, logger="daily_brief.llm"):
         with pytest.raises(
             GeminiResponseError, match="ended with status incomplete"
         ) as caught:
