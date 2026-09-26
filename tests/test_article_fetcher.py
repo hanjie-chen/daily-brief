@@ -1396,7 +1396,7 @@ def test_adobe_pdf_worker_uses_bounded_subprocess_and_parses_markdown(monkeypatc
 
     assert text == "# Report\n\nClean text."
     command, kwargs = calls[0]
-    assert command[1:3] == ["-m", "daily_brief.adobe_pdf_extractor"]
+    assert command[1:3] == ["-m", "daily_brief.pdf_workers.adobe_pdf_extractor"]
     assert command[-1] == str(512 * 1024 * 1024)
     assert kwargs["input"] == b"%PDF-test"
     assert kwargs["timeout"] == 240

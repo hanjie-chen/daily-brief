@@ -3,7 +3,7 @@ from io import BytesIO
 import pytest
 from pypdf import PdfWriter
 
-from daily_brief.adobe_pdf_extractor import (
+from daily_brief.pdf_workers.adobe_pdf_extractor import (
     AdobePDFExtractionFailure,
     credentials_status,
     extract_pdf_bytes,

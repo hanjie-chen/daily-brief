@@ -98,6 +98,11 @@ Lower-level modules must not import `fetch.py` or the package facade. Shared
 types and limits belong in `contracts.py`; this keeps the package free of
 circular imports.
 
+`responses.py` runs PDF extraction in subprocesses from the separate
+[`pdf_workers`](../pdf_workers/__init__.py) package. Those workers must not
+live in or import this package: `python -m` would load the whole package
+before every PDF, adding startup time and memory inside the worker's limits.
+
 ## Invariants
 
 - Validate the initial URL, every redirect, and the final response URL.

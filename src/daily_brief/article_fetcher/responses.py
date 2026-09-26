@@ -11,7 +11,7 @@ from time import monotonic
 from urllib.parse import urlparse
 from urllib.request import Request
 
-from ..adobe_pdf_extractor import (
+from ..pdf_workers.adobe_pdf_extractor import (
     DEFAULT_CONNECT_TIMEOUT_MS as ADOBE_CONNECT_TIMEOUT_MS,
     DEFAULT_READ_TIMEOUT_MS as ADOBE_READ_TIMEOUT_MS,
     credentials_status as adobe_credentials_status,
@@ -345,7 +345,7 @@ def _extract_pdf_with_adobe_in_subprocess(
     command = [
         sys.executable,
         "-m",
-        "daily_brief.adobe_pdf_extractor",
+        "daily_brief.pdf_workers.adobe_pdf_extractor",
         str(max_pages),
         str(max_text_bytes),
         str(ADOBE_CONNECT_TIMEOUT_MS),
@@ -417,7 +417,7 @@ def _extract_pdf_in_subprocess(
     command = [
         sys.executable,
         "-m",
-        "daily_brief.pdf_extractor",
+        "daily_brief.pdf_workers.pdf_extractor",
         str(max_pages),
         str(max_text_bytes),
         str(address_space_bytes),

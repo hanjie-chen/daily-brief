@@ -152,8 +152,9 @@ quality gate; evidence selection and provider-call counts are unchanged.
 | `syndicated_copy.py` | Discovery and validation of Reuters syndicated copies |
 | `alternate_reporting.py` | Discovery and validation of Reuters reporting on the same event |
 | `same_article.py` | Bounded discovery and conservative validation of same-article copies |
-| `adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
-| `pdf_extractor.py` | Resource-bounded local PDF text worker |
+| `pdf_workers/__init__.py` | Import-free package for PDF workers run as `python -m` subprocesses |
+| `pdf_workers/adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
+| `pdf_workers/pdf_extractor.py` | Resource-bounded local PDF text worker |
 | `evidence_selection.py` | Bounded title-aware source excerpts with explicit omissions |
 | `summarizer.py` | Grounded prompts, route selection, evidence selection, and normalization |
 | `render.py` | Markdown, public JSON, and private candidate-audit serialization |
