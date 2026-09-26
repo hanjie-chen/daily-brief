@@ -71,7 +71,7 @@ def _match_primary_text(text: str) -> list[KeywordMatch]:
 def _iter_keyword_matches(text: str, keyword: str):
     if keyword in VERSIONED_KEYWORDS:
         escaped_keyword = re.escape(keyword)
-        suffix = rf"(?:s(?![A-Za-z0-9])|[-.]?\d+(?:\.\d+)*(?![A-Za-z0-9.])|(?![A-Za-z0-9]))"
+        suffix = r"(?:s(?![A-Za-z0-9])|[-.]?\d+(?:\.\d+)*(?![A-Za-z0-9.])|(?![A-Za-z0-9]))"
         pattern = rf"(?<![A-Za-z0-9]){escaped_keyword}{suffix}"
         flags = (
             0
