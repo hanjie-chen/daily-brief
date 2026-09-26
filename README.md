@@ -61,6 +61,32 @@ set +a
 
 修改 `.env` 后，手动运行需要重新执行上述命令。当前部署的每日 cron 任务会在每次运行前加载 `.env`，因此修改会在下一次任务中生效，无需重启 cron；已经运行中的任务不受影响。
 
+## Usage
+
+### Install
+
+需要 Python 3.12 及以上。在项目目录执行：
+
+```sh
+pip install -e .
+```
+
+### Generate
+
+```sh
+daily-brief generate
+```
+
+生成当天的简报，输出文件见 [Output](#output)。当天没有合适内容时，只写出 `briefs/YYYY-MM-DD.no-content` 标记。
+
+### Publish
+
+```sh
+daily-brief publish
+```
+
+把当天已生成的简报发布到网站，不会重新生成。发布其他日期时加 `--date YYYY-MM-DD`。内容没有变化时会跳过；需要重新发送时加 `--force`。
+
 ## Next
 
 - 等到项目稳定之后，在考虑部署到 gcp-vm
