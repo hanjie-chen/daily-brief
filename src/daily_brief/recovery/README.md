@@ -144,18 +144,20 @@ The other two routes list rejection reasons in `rejection_reasons`.
 | `syndicated_copy.py` | Reuters syndicated-copy finder, allowlist, and validation |
 | `alternate_reporting.py` | Alternate-reporting finder, allowlist, validation, and conflict check |
 | `fetched_material.py` | Normalized fetched material shared with `generation/material.py` |
+| `tavily.py` | Shared Tavily Search request, bounds, error codes, and result parsing for all three finders |
 
 ## Dependency Direction
 
 ```text
 __init__        -> search_recovery, same_article, syndicated_copy, alternate_reporting, fetched_material
 search_recovery -> same_article, syndicated_copy, alternate_reporting, fetched_material
+same_article, syndicated_copy, alternate_reporting -> tavily
 all modules     -> models; search_recovery, same_article, fetched_material also
                    -> article_fetcher (result and error types only)
 ```
 
 This package never imports `generation/`. The finder and validator modules do
-not import each other.
+not import each other; what they share lives in `tavily.py`.
 
 ## Tests
 

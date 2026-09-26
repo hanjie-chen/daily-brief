@@ -7,27 +7,17 @@ result is the same work: the fetched page must make that relationship explicit.
 from __future__ import annotations
 
 import ipaddress
-import json
-import os
 import re
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from http.client import HTTPResponse
 from typing import Protocol
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
-from urllib.request import Request, urlopen
 
 from ..article_fetcher import ArticleFetchResult
 from ..models import Candidate
+from .tavily import MAX_RESULT_TITLE_CHARS, MAX_RESULT_URL_CHARS, TavilyFinder
 
-TAVILY_SEARCH_URL = "https://api.tavily.com/search"
-TAVILY_TIMEOUT_SECONDS = 10
-TAVILY_MAX_RESPONSE_BYTES = 256 * 1024
 MAX_SAME_ARTICLE_CANDIDATES = 10
 MAX_SAME_ARTICLE_FETCHES = 3
-MAX_RESULT_TITLE_CHARS = 500
-MAX_RESULT_URL_CHARS = 2048
 MIN_SAME_ARTICLE_BODY_CHARS = 800
 HN_DOMAIN = "news.ycombinator.com"
 
@@ -77,111 +67,28 @@ class SameArticleFinder(Protocol):
     def find(self, candidate: Candidate) -> list[SameArticleCandidate]: ...
 
 
-class TavilySameArticleFinder:
-    provider = "tavily"
-
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        opener: Callable[..., HTTPResponse] = urlopen,
-        timeout_seconds: int = TAVILY_TIMEOUT_SECONDS,
-    ) -> None:
-        self.api_key = api_key.strip()
-        self.opener = opener
-        self.timeout_seconds = timeout_seconds
-
-    @classmethod
-    def from_environment(
-        cls, env: Mapping[str, str] | None = None, **kwargs: object
-    ) -> "TavilySameArticleFinder":
-        environment = os.environ if env is None else env
-        return cls(api_key=environment.get("TAVILY_API_KEY", ""), **kwargs)
-
+class TavilySameArticleFinder(TavilyFinder):
     def find(self, candidate: Candidate) -> list[SameArticleCandidate]:
-        if not self.api_key:
-            raise SameArticleFinderError(
-                "TAVILY_API_KEY is not configured", error_code="not_configured"
-            )
+        self._require_api_key(SameArticleFinderError)
         title = candidate.story.title.strip()
         if not title or len(title) > MAX_RESULT_TITLE_CHARS:
             raise SameArticleFinderError(
                 "Source title is missing or too long", error_code="invalid_source_metadata"
             )
-        body = json.dumps(
-            {
-                "query": title,
-                "search_depth": "basic",
-                "topic": "general",
-                "max_results": MAX_SAME_ARTICLE_CANDIDATES,
-                "include_answer": False,
-                "include_raw_content": False,
-                "include_images": False,
-                "exclude_domains": [HN_DOMAIN],
-                "auto_parameters": False,
-                "exact_match": False,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        request = Request(
-            TAVILY_SEARCH_URL,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "daily-brief/0.1",
-            },
-            method="POST",
-        )
-        try:
-            with self.opener(request, timeout=self.timeout_seconds) as response:
-                response_body = response.read(TAVILY_MAX_RESPONSE_BYTES + 1)
-        except HTTPError as exc:
-            raise SameArticleFinderError(
-                f"Tavily Search returned HTTP {exc.code}",
-                error_code="provider_http_error",
-            ) from exc
-        except (TimeoutError, URLError) as exc:
-            raise SameArticleFinderError(
-                "Tavily Search request failed", error_code="provider_request_failed"
-            ) from exc
-        if len(response_body) > TAVILY_MAX_RESPONSE_BYTES:
-            raise SameArticleFinderError(
-                "Tavily Search response exceeded the size limit",
-                error_code="response_too_large",
-            )
-        try:
-            payload = json.loads(response_body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise SameArticleFinderError(
-                "Tavily Search returned invalid JSON", error_code="malformed_response"
-            ) from exc
-        if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
-            raise SameArticleFinderError(
-                "Tavily Search returned an invalid result envelope",
-                error_code="malformed_response",
-            )
         found: list[SameArticleCandidate] = []
         seen: set[str] = set()
-        for item in payload["results"][:MAX_SAME_ARTICLE_CANDIDATES]:
-            if not isinstance(item, dict):
-                continue
-            title, url = item.get("title"), item.get("url")
-            if not isinstance(title, str) or not isinstance(url, str):
-                continue
-            title, url = title.strip(), url.strip()
+        for result_title, url in self._search(
+            SameArticleFinderError,
+            query=title,
+            max_results=MAX_SAME_ARTICLE_CANDIDATES,
+            exclude_domains=[HN_DOMAIN],
+            exact_match=False,
+        ):
             normalized_url = normalize_candidate_url(url)
-            if (
-                not title
-                or len(title) > MAX_RESULT_TITLE_CHARS
-                or len(url) > MAX_RESULT_URL_CHARS
-                or normalized_url is None
-                or normalized_url in seen
-            ):
+            if normalized_url is None or normalized_url in seen:
                 continue
             seen.add(normalized_url)
-            found.append(SameArticleCandidate(title=title, url=normalized_url))
+            found.append(SameArticleCandidate(title=result_title, url=normalized_url))
         return found
 
 

@@ -1,25 +1,15 @@
 from __future__ import annotations
 
-import json
-import os
 import re
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
-from http.client import HTTPResponse
 from typing import Protocol
-from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
 
 from ..models import Candidate
+from .tavily import TavilyFinder
 
-TAVILY_SEARCH_URL = "https://api.tavily.com/search"
-TAVILY_TIMEOUT_SECONDS = 10
-TAVILY_MAX_RESPONSE_BYTES = 256 * 1024
 MAX_ALTERNATE_REPORTING_CANDIDATES = 5
-MAX_RESULT_TITLE_CHARS = 500
-MAX_RESULT_URL_CHARS = 2048
 MIN_ALTERNATE_REPORTING_BODY_CHARS = 400
 REUTERS_HOSTS = {"reuters.com", "www.reuters.com"}
 YAHOO_HOSTS = {"finance.yahoo.com", "ca.finance.yahoo.com"}
@@ -133,112 +123,17 @@ class AlternateReportingFinder(Protocol):
     def find(self, candidate: Candidate) -> list[AlternateReportingCandidate]: ...
 
 
-class TavilyAlternateReportingFinder:
-    provider = "tavily"
-
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        opener: Callable[..., HTTPResponse] = urlopen,
-        timeout_seconds: int = TAVILY_TIMEOUT_SECONDS,
-    ) -> None:
-        self.api_key = api_key.strip()
-        self.opener = opener
-        self.timeout_seconds = timeout_seconds
-
-    @classmethod
-    def from_environment(
-        cls, env: Mapping[str, str] | None = None, **kwargs
-    ) -> TavilyAlternateReportingFinder:
-        environment = os.environ if env is None else env
-        return cls(api_key=environment.get("TAVILY_API_KEY", ""), **kwargs)
-
+class TavilyAlternateReportingFinder(TavilyFinder):
     def find(self, candidate: Candidate) -> list[AlternateReportingCandidate]:
-        if not self.api_key:
-            raise AlternateReportingFinderError(
-                "TAVILY_API_KEY is not configured",
-                error_code="not_configured",
-            )
-        body = json.dumps(
-            {
-                "query": build_tavily_query(candidate),
-                "search_depth": "basic",
-                "topic": "general",
-                "max_results": MAX_ALTERNATE_REPORTING_CANDIDATES,
-                "include_answer": False,
-                "include_raw_content": False,
-                "include_images": False,
-                "include_domains": sorted(ALTERNATE_REPORTING_HOST_ALLOWLIST),
-                "auto_parameters": False,
-                "exact_match": False,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        request = Request(
-            TAVILY_SEARCH_URL,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "daily-brief/0.1",
-            },
-            method="POST",
+        self._require_api_key(AlternateReportingFinderError)
+        results = self._search(
+            AlternateReportingFinderError,
+            query=build_tavily_query(candidate),
+            max_results=MAX_ALTERNATE_REPORTING_CANDIDATES,
+            include_domains=sorted(ALTERNATE_REPORTING_HOST_ALLOWLIST),
+            exact_match=False,
         )
-        try:
-            with self.opener(request, timeout=self.timeout_seconds) as response:
-                response_body = response.read(TAVILY_MAX_RESPONSE_BYTES + 1)
-        except HTTPError as exc:
-            raise AlternateReportingFinderError(
-                f"Tavily Search returned HTTP {exc.code}",
-                error_code="provider_http_error",
-            ) from exc
-        except (TimeoutError, URLError) as exc:
-            raise AlternateReportingFinderError(
-                "Tavily Search request failed",
-                error_code="provider_request_failed",
-            ) from exc
-
-        if len(response_body) > TAVILY_MAX_RESPONSE_BYTES:
-            raise AlternateReportingFinderError(
-                "Tavily Search response exceeded the size limit",
-                error_code="response_too_large",
-            )
-        try:
-            payload = json.loads(response_body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AlternateReportingFinderError(
-                "Tavily Search returned invalid JSON",
-                error_code="malformed_response",
-            ) from exc
-        if not isinstance(payload, dict) or not isinstance(
-            payload.get("results"), list
-        ):
-            raise AlternateReportingFinderError(
-                "Tavily Search returned an invalid result envelope",
-                error_code="malformed_response",
-            )
-
-        candidates = []
-        for item in payload["results"][:MAX_ALTERNATE_REPORTING_CANDIDATES]:
-            if not isinstance(item, dict):
-                continue
-            title = item.get("title")
-            url = item.get("url")
-            if not isinstance(title, str) or not isinstance(url, str):
-                continue
-            title = title.strip()
-            url = url.strip()
-            if (
-                not title
-                or not url
-                or len(title) > MAX_RESULT_TITLE_CHARS
-                or len(url) > MAX_RESULT_URL_CHARS
-            ):
-                continue
-            candidates.append(AlternateReportingCandidate(title=title, url=url))
-        return candidates
+        return [AlternateReportingCandidate(title=title, url=url) for title, url in results]
 
 
 def normalize_allowed_candidate_url(url: str) -> str | None:

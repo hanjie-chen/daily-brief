@@ -6,7 +6,6 @@ import pytest
 from daily_brief.models import Candidate, Story
 from daily_brief.recovery.syndicated_copy import (
     MAX_SYNDICATED_CANDIDATES,
-    TAVILY_MAX_RESPONSE_BYTES,
     SyndicatedCandidate,
     SyndicatedFinderError,
     TavilySyndicatedCopyFinder,
@@ -14,6 +13,7 @@ from daily_brief.recovery.syndicated_copy import (
     normalize_allowed_candidate_url,
     validate_syndicated_copy,
 )
+from daily_brief.recovery.tavily import TAVILY_MAX_RESPONSE_BYTES
 
 REUTERS_URL = (
     "https://www.reuters.com/business/"

@@ -9,7 +9,6 @@ from daily_brief.models import Candidate, Story
 from daily_brief.recovery.same_article import (
     HN_DOMAIN,
     MAX_SAME_ARTICLE_CANDIDATES,
-    TAVILY_MAX_RESPONSE_BYTES,
     SameArticleCandidate,
     SameArticleFinderError,
     TavilySameArticleFinder,
@@ -17,6 +16,7 @@ from daily_brief.recovery.same_article import (
     same_source_url,
     validate_same_article,
 )
+from daily_brief.recovery.tavily import TAVILY_MAX_RESPONSE_BYTES
 
 LESSWRONG_URL = "https://www.lesswrong.com/posts/F7WmSWLJAHZ/"
 GOODHART_URL = "https://goodhartlabs.com/blog/frontier-models-still-hack-alignment-evals"

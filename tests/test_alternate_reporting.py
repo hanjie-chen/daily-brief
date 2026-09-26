@@ -9,7 +9,6 @@ import pytest
 from daily_brief.recovery.alternate_reporting import (
     ALTERNATE_REPORTING_HOST_ALLOWLIST,
     MAX_ALTERNATE_REPORTING_CANDIDATES,
-    TAVILY_MAX_RESPONSE_BYTES,
     AlternateReportingCandidate,
     AlternateReportingFinderError,
     TavilyAlternateReportingFinder,
@@ -18,6 +17,7 @@ from daily_brief.recovery.alternate_reporting import (
     validate_alternate_reporting,
     validations_conflict,
 )
+from daily_brief.recovery.tavily import TAVILY_MAX_RESPONSE_BYTES
 from daily_brief.models import Candidate, Story
 
 NYTIMES_URL = (
