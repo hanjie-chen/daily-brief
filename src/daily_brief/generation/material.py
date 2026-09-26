@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
 
@@ -27,7 +27,7 @@ from ..models import (
 )
 from ..recovery import (
     AlternateReportingFinder,
-    RecoveryOutcome,
+    FetchedMaterial,
     SameArticleFinder,
     SyndicatedCopyFinder,
     attempt_alternate_reporting_recovery,
@@ -54,167 +54,142 @@ def prepare_candidate_material(
     retrieval_mode: str = RETRIEVAL_MODE_SUMMARY,
     same_article_finder: SameArticleFinder | None = None,
 ) -> bool:
-    if (
-        candidate.story.source_url
-        and candidate.story.source_url != candidate.story.hn_discussion_url
-    ):
-        if retrieval_mode not in {
-            RETRIEVAL_MODE_CLASSIFICATION,
-            RETRIEVAL_MODE_SUMMARY,
-        }:
-            raise ValueError(f"unknown retrieval mode: {retrieval_mode}")
-        active_fetcher = (
-            article_fetcher_fn
-            if article_fetcher_fn is not None
-            else fetch_article
-        )
-        if retrieval_mode == RETRIEVAL_MODE_CLASSIFICATION:
-            article_client = partial(
-                active_fetcher,
-                timeout_seconds=CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
-                pdf_parse_timeout_seconds=(
-                    CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
-                ),
-                policy=CLASSIFICATION_FETCH_POLICY,
-            )
-        else:
-            article_client = partial(
-                active_fetcher,
-                policy=SUMMARY_FETCH_POLICY,
-                wayback_not_before=_wayback_not_before(
-                    candidate.story.created_at,
-                    window.start,
-                ),
-                wayback_not_after=window.end,
-            )
-        try:
-            material = coerce_fetched_material(
-                article_client(candidate.story.source_url),
-                candidate.story.source_url,
-            )
-        except Exception as exc:
-            original_failure = _retrieval_failure(exc)
-            recovery = RecoveryOutcome(None, SyndicatedRecovery())
-            alternate_recovery = RecoveryOutcome(None, AlternateReportingRecovery())
-            material_origin = ""
-            same_recovery = RecoveryOutcome(None, SameArticleRecovery())
-            if (
-                retrieval_mode == RETRIEVAL_MODE_SUMMARY
-                and original_failure.fallback_attempted
-                and is_origin_block_reason(original_failure.fallback_reason)
-            ):
-                same_recovery = attempt_same_article_recovery(
-                    candidate, article_client, same_article_finder
-                )
-                if same_recovery.material is not None:
-                    material_origin = "same_article"
-            if (
-                same_recovery.material is None
-                and retrieval_mode == RETRIEVAL_MODE_SUMMARY
-                and _should_attempt_reuters_recovery(candidate, original_failure)
-            ):
-                recovery = attempt_syndicated_recovery(
-                    candidate,
-                    article_client,
-                    syndicated_finder,
-                )
-                material_origin = "syndicated_copy"
-            elif (
-                same_recovery.material is None
-                and retrieval_mode == RETRIEVAL_MODE_SUMMARY
-                and _should_attempt_alternate_reporting(
-                    candidate, original_failure
-                )
-            ):
-                alternate_recovery = attempt_alternate_reporting_recovery(
-                    candidate,
-                    article_client,
-                    alternate_reporting_finder,
-                )
-                material_origin = "alternate_reporting"
-            recovered_material = (
-                same_recovery.material or recovery.material or alternate_recovery.material
-            )
-            if recovered_material is None:
-                candidate.article_retrieval = ArticleRetrieval(
-                    status="failed",
-                    method=original_failure.method,
-                    extractor=original_failure.extractor,
-                    attempts=original_failure.attempts,
-                    fallback_attempted=original_failure.fallback_attempted,
-                    fallback_reason=original_failure.fallback_reason,
-                    error_type=original_failure.error_type,
-                    error_code=original_failure.error_code,
-                    error_message=original_failure.error_message,
-                    same_article_recovery=same_recovery.audit,
-                    syndicated_recovery=recovery.audit,
-                    alternate_reporting_recovery=alternate_recovery.audit,
-                )
-                candidate.summary = article_fetch_failure_summary(candidate)
-                candidate.summary_basis = "none"
-                candidate.summary_status = "skipped"
-                candidate.summary_generation = SummaryGeneration(status="skipped")
-                LOGGER.error(
-                    "component=article_fetch item_id=%s status=failed method=%s "
-                    "extractor=%s error=%s code=%s attempts=%d message=%s",
-                    candidate.story.hn_item_id,
-                    original_failure.method,
-                    original_failure.extractor or "none",
-                    original_failure.error_type,
-                    original_failure.error_code,
-                    original_failure.attempts,
-                    original_failure.error_message,
-                )
-                return False
+    """Fetch a candidate's source, trying search recovery for summaries.
 
-            material = recovered_material
-            candidate.story = replace(candidate.story, fetched_text=material.text)
-            candidate.article_retrieval = ArticleRetrieval(
-                status="success",
-                method=material.method,
-                extractor=material.extractor,
-                attempts=material.attempts,
-                fallback_attempted=bool(material.fallback_reason),
-                fallback_reason=material.fallback_reason,
-                retrieved_url=material.retrieved_url,
-                material_origin=material_origin,
-                origin_failure=original_failure,
-                same_article_recovery=same_recovery.audit,
-                syndicated_recovery=recovery.audit,
-                alternate_reporting_recovery=alternate_recovery.audit,
-            )
-            candidate.summary_basis = (
-                "youtube_caption" if material.method == "youtube_caption" else "fetched_article"
-            )
-            LOGGER.info(
-                "component=article_fetch item_id=%s status=success "
-                "material_origin=%s method=%s extractor=%s "
-                "fallback_reason=%s attempts=%d",
-                candidate.story.hn_item_id,
-                material_origin,
-                material.method,
-                material.extractor or "none",
-                material.fallback_reason or "none",
-                material.attempts,
-            )
-            return True
+    Returns False only when an external source could not be retrieved.
+    """
+    source_url = candidate.story.source_url
+    if not source_url or source_url == candidate.story.hn_discussion_url:
+        _record_no_external_source(candidate)
+        return True
+    if retrieval_mode not in {RETRIEVAL_MODE_CLASSIFICATION, RETRIEVAL_MODE_SUMMARY}:
+        raise ValueError(f"unknown retrieval mode: {retrieval_mode}")
 
-        candidate.story = replace(candidate.story, fetched_text=material.text)
-        candidate.article_retrieval = ArticleRetrieval(
-            status="success",
-            method=material.method,
-            extractor=material.extractor,
-            attempts=material.attempts,
-            fallback_attempted=bool(material.fallback_reason),
-            fallback_reason=material.fallback_reason,
-            retrieved_url=material.retrieved_url,
-            material_origin=material.material_origin,
+    article_client = _article_client(article_fetcher_fn, retrieval_mode, candidate, window)
+    try:
+        material = coerce_fetched_material(article_client(source_url), source_url)
+    except Exception as exc:
+        failure = _retrieval_failure(exc)
+        recovery = _SearchRecovery()
+        if retrieval_mode == RETRIEVAL_MODE_SUMMARY:
+            recovery = _attempt_search_recovery(
+                candidate,
+                failure,
+                article_client,
+                same_article_finder=same_article_finder,
+                syndicated_finder=syndicated_finder,
+                alternate_reporting_finder=alternate_reporting_finder,
+            )
+        if recovery.material is None:
+            _record_retrieval_failure(candidate, failure, recovery)
+            return False
+        _record_retrieval_success(
+            candidate,
+            recovery.material,
+            material_origin=recovery.material_origin,
+            origin_failure=failure,
+            recovery=recovery,
         )
-        candidate.summary_basis = (
-            "youtube_caption"
-            if material.method == "youtube_caption"
-            else "fetched_article"
+        return True
+
+    _record_retrieval_success(
+        candidate, material, material_origin=material.material_origin
+    )
+    return True
+
+
+@dataclass(frozen=True)
+class _SearchRecovery:
+    """Recovered material, the route that found it, and every route's audit."""
+
+    material: FetchedMaterial | None = None
+    material_origin: str = ""
+    same_article: SameArticleRecovery = field(default_factory=SameArticleRecovery)
+    syndicated: SyndicatedRecovery = field(default_factory=SyndicatedRecovery)
+    alternate_reporting: AlternateReportingRecovery = field(
+        default_factory=AlternateReportingRecovery
+    )
+
+
+def _article_client(article_fetcher_fn, retrieval_mode: str, candidate: Candidate, window):
+    active_fetcher = article_fetcher_fn if article_fetcher_fn is not None else fetch_article
+    if retrieval_mode == RETRIEVAL_MODE_CLASSIFICATION:
+        return partial(
+            active_fetcher,
+            timeout_seconds=CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
+            pdf_parse_timeout_seconds=CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS,
+            policy=CLASSIFICATION_FETCH_POLICY,
         )
+    return partial(
+        active_fetcher,
+        policy=SUMMARY_FETCH_POLICY,
+        wayback_not_before=_wayback_not_before(candidate.story.created_at, window.start),
+        wayback_not_after=window.end,
+    )
+
+
+def _attempt_search_recovery(
+    candidate: Candidate,
+    failure: RetrievalFailure,
+    article_client,
+    *,
+    same_article_finder: SameArticleFinder | None,
+    syndicated_finder: SyndicatedCopyFinder | None,
+    alternate_reporting_finder: AlternateReportingFinder | None,
+) -> _SearchRecovery:
+    """Try same-article, then one Reuters route, stopping at the first success."""
+    same_article = SameArticleRecovery()
+    if failure.fallback_attempted and is_origin_block_reason(failure.fallback_reason):
+        outcome = attempt_same_article_recovery(candidate, article_client, same_article_finder)
+        same_article = outcome.audit
+        if outcome.material is not None:
+            return _SearchRecovery(outcome.material, "same_article", same_article=same_article)
+    if _should_attempt_reuters_recovery(candidate, failure):
+        outcome = attempt_syndicated_recovery(candidate, article_client, syndicated_finder)
+        return _SearchRecovery(
+            outcome.material, "syndicated_copy", same_article=same_article, syndicated=outcome.audit
+        )
+    if _should_attempt_alternate_reporting(candidate, failure):
+        outcome = attempt_alternate_reporting_recovery(
+            candidate, article_client, alternate_reporting_finder
+        )
+        return _SearchRecovery(
+            outcome.material,
+            "alternate_reporting",
+            same_article=same_article,
+            alternate_reporting=outcome.audit,
+        )
+    return _SearchRecovery(same_article=same_article)
+
+
+def _record_retrieval_success(
+    candidate: Candidate,
+    material: FetchedMaterial,
+    *,
+    material_origin: str,
+    origin_failure: RetrievalFailure | None = None,
+    recovery: _SearchRecovery | None = None,
+) -> None:
+    recovery = recovery or _SearchRecovery()
+    candidate.story = replace(candidate.story, fetched_text=material.text)
+    candidate.article_retrieval = ArticleRetrieval(
+        status="success",
+        method=material.method,
+        extractor=material.extractor,
+        attempts=material.attempts,
+        fallback_attempted=bool(material.fallback_reason),
+        fallback_reason=material.fallback_reason,
+        retrieved_url=material.retrieved_url,
+        material_origin=material_origin,
+        origin_failure=origin_failure,
+        same_article_recovery=recovery.same_article,
+        syndicated_recovery=recovery.syndicated,
+        alternate_reporting_recovery=recovery.alternate_reporting,
+    )
+    candidate.summary_basis = (
+        "youtube_caption" if material.method == "youtube_caption" else "fetched_article"
+    )
+    if origin_failure is None:
         LOGGER.info(
             "component=article_fetch item_id=%s status=success method=%s "
             "extractor=%s fallback_reason=%s attempts=%d",
@@ -224,8 +199,55 @@ def prepare_candidate_material(
             material.fallback_reason or "none",
             material.attempts,
         )
-        return True
+        return
+    LOGGER.info(
+        "component=article_fetch item_id=%s status=success "
+        "material_origin=%s method=%s extractor=%s "
+        "fallback_reason=%s attempts=%d",
+        candidate.story.hn_item_id,
+        material_origin,
+        material.method,
+        material.extractor or "none",
+        material.fallback_reason or "none",
+        material.attempts,
+    )
 
+
+def _record_retrieval_failure(
+    candidate: Candidate, failure: RetrievalFailure, recovery: _SearchRecovery
+) -> None:
+    candidate.article_retrieval = ArticleRetrieval(
+        status="failed",
+        method=failure.method,
+        extractor=failure.extractor,
+        attempts=failure.attempts,
+        fallback_attempted=failure.fallback_attempted,
+        fallback_reason=failure.fallback_reason,
+        error_type=failure.error_type,
+        error_code=failure.error_code,
+        error_message=failure.error_message,
+        same_article_recovery=recovery.same_article,
+        syndicated_recovery=recovery.syndicated,
+        alternate_reporting_recovery=recovery.alternate_reporting,
+    )
+    candidate.summary = article_fetch_failure_summary(candidate)
+    candidate.summary_basis = "none"
+    candidate.summary_status = "skipped"
+    candidate.summary_generation = SummaryGeneration(status="skipped")
+    LOGGER.error(
+        "component=article_fetch item_id=%s status=failed method=%s "
+        "extractor=%s error=%s code=%s attempts=%d message=%s",
+        candidate.story.hn_item_id,
+        failure.method,
+        failure.extractor or "none",
+        failure.error_type,
+        failure.error_code,
+        failure.attempts,
+        failure.error_message,
+    )
+
+
+def _record_no_external_source(candidate: Candidate) -> None:
     if candidate.story.story_text.strip():
         candidate.article_retrieval = ArticleRetrieval(
             status="not_needed",
@@ -239,7 +261,6 @@ def prepare_candidate_material(
             method="title",
         )
         candidate.summary_basis = "title_only"
-    return True
 
 
 def prepare_hn_discussion_material(
