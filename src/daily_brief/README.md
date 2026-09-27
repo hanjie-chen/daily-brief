@@ -105,6 +105,15 @@ listed only in that package's guide.
 - Public JSON and private audit data have different trust and compatibility
   boundaries. Public output uses the strict schema in `output/public_schema.py` and never
   exposes raw provider diagnostics, recovery URLs, or private evaluation material.
+- Schema v2 items may include `provenance`, an exact five-field enum-only object:
+  `summary_basis`, `retrieval_method`, `retrieval_status`, `material_origin`, and
+  `fallback_reason`. Allowed codes live in `PROVENANCE_VALUES` in
+  `output/public_schema.py` and must match the website validator. Old items omit
+  the object and remain valid; unknown internal values become `unknown`, never
+  raw diagnostics. Basis describes a successful summary's evidence (or `none`
+  on failure), independently of the last recorded retrieval attempt. Roundup
+  questions are context only; other source-plus-comment summaries include both.
+  Deploy the accepting website before enabling generator output with this field.
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never
   scans or catches up old dates implicitly.

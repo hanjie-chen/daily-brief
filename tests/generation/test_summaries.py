@@ -462,6 +462,11 @@ def test_insufficient_source_material_uses_bounded_discussion_fallback(tmp_path,
     assert audit["source_material"]["status"] == "insufficient"
     assert audit["source_material"]["reason"] == "Only an opening instruction is available."
     assert audit["source_material"]["summary_generation"]["input_tokens"] == 123
+    assert public["provenance"]["fallback_reason"] == "source_material_insufficient"
+    assert public["provenance"]["retrieval_status"] == "success"
+    assert public["provenance"]["summary_basis"] == (
+        "source_and_comments" if fallback == "success" else "none"
+    )
     assert discussion_calls == ["1"]
     expected_calls = ["fetched_article"]
     if fallback not in {"too_short", "fetch_error"}:

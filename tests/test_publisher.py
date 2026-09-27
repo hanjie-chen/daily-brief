@@ -43,6 +43,68 @@ def _write_brief(directory, date_label="2026-07-25"):
     return path
 
 
+def _provenance():
+    return {
+        "summary_basis": "article",
+        "retrieval_method": "jina",
+        "retrieval_status": "success",
+        "material_origin": "original",
+        "fallback_reason": "empty_content",
+    }
+
+
+@pytest.mark.parametrize("field", list(_provenance()))
+@pytest.mark.parametrize("value", [None, [], {}, 1, True, "private diagnostic"])
+def test_public_provenance_rejects_invalid_values(field, value):
+    from daily_brief.output.public_schema import (
+        PublicBriefValidationError, validate_public_brief,
+    )
+
+    payload = _payload()
+    provenance = _provenance()
+    provenance[field] = value
+    payload["sections"]["ai"]["items"][0]["provenance"] = provenance
+    with pytest.raises(PublicBriefValidationError, match="provenance"):
+        validate_public_brief(payload)
+
+
+@pytest.mark.parametrize("change", ["missing", "extra"])
+def test_public_provenance_rejects_missing_or_private_fields(change):
+    from daily_brief.output.public_schema import (
+        PublicBriefValidationError, validate_public_brief,
+    )
+
+    payload = _payload()
+    provenance = _provenance()
+    if change == "missing":
+        del provenance["retrieval_method"]
+    else:
+        provenance["error_message"] = "private diagnostic"
+    payload["sections"]["ai"]["items"][0]["provenance"] = provenance
+    with pytest.raises(PublicBriefValidationError, match="provenance"):
+        validate_public_brief(payload)
+
+
+def test_publish_preserves_optional_provenance(tmp_path):
+    brief_dir = tmp_path / "briefs"
+    path = _write_brief(brief_dir)
+    payload = _payload()
+    payload["sections"]["ai"]["items"][0]["provenance"] = _provenance()
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    calls = []
+
+    def opener(request, timeout):
+        calls.append(json.loads(request.data))
+        return FakeResponse()
+
+    result = publish_brief(
+        brief_dir, tmp_path / "data", date_label="2026-07-25",
+        endpoint="https://example.com/internal/briefs", token="secret", opener=opener,
+    )
+    assert result.published == 1
+    assert calls == [payload]
+
+
 class FakeResponse:
     def __init__(self, status=201):
         self.status = status
@@ -304,6 +366,8 @@ def test_publish_rejects_schema_v1_before_network(tmp_path):
     [
         (lambda item: item.pop("content_status"), "exact schema v2 fields"),
         (lambda item: item.update({"unexpected": True}), "exact schema v2 fields"),
+        (lambda item: item.update({"provenance": None}), "provenance"),
+        (lambda item: item.update({"provenance": {}}), "provenance"),
         (
             lambda item: item.update({"content_status": "unknown"}),
             "unsupported content_status",

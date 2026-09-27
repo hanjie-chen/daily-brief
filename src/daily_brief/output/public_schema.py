@@ -19,6 +19,29 @@ ITEM_KEYS = {
     "comments",
 }
 CONTENT_STATUSES = {"ok", "fetch_failed", "summary_failed", "title_only"}
+# Optional additive v2 field. Only these public codes cross the audit boundary.
+PROVENANCE_VALUES = {
+    "summary_basis": {
+        "article", "source_and_comments", "hn_comments", "hn_post",
+        "video_captions", "none", "unknown",
+    },
+    "retrieval_method": {
+        "direct", "jina", "wayback", "github_readme", "github_raw",
+        "youtube_caption", "story_text", "none", "unknown",
+    },
+    "retrieval_status": {
+        "success", "failed", "not_attempted", "not_needed", "unknown",
+    },
+    "material_origin": {
+        "original", "archived_copy", "same_article", "syndicated_copy",
+        "alternate_reporting", "unknown",
+    },
+    "fallback_reason": {
+        "none", "challenge_page", "cloudflare_challenge", "datadome_challenge",
+        "vercel_challenge", "empty_content", "network_timeout",
+        "tls_issuer_unavailable", "source_material_insufficient", "unknown",
+    },
+}
 
 
 class PublicBriefValidationError(ValueError):
@@ -64,8 +87,13 @@ def validate_public_brief(payload) -> None:
 
 
 def _validate_item(item) -> None:
-    if not isinstance(item, dict) or set(item) != ITEM_KEYS:
+    if not isinstance(item, dict) or set(item) not in (
+        ITEM_KEYS, ITEM_KEYS | {"provenance"}
+    ):
         raise PublicBriefValidationError("item must contain the exact schema v2 fields")
+
+    if "provenance" in item:
+        _validate_provenance(item["provenance"])
 
     hn_item_id = _validate_text(item["hn_item_id"], "hn_item_id", 32)
     if not hn_item_id.isdigit():
@@ -89,6 +117,14 @@ def _validate_item(item) -> None:
         or discussion_ids != [hn_item_id]
     ):
         raise PublicBriefValidationError("discussion_url must match hn_item_id")
+
+
+def _validate_provenance(value) -> None:
+    if not isinstance(value, dict) or set(value) != set(PROVENANCE_VALUES):
+        raise PublicBriefValidationError("provenance must contain the exact public fields")
+    for field, allowed in PROVENANCE_VALUES.items():
+        if not isinstance(value[field], str) or value[field] not in allowed:
+            raise PublicBriefValidationError(f"unsupported provenance.{field}")
 
 
 def _validate_date(value) -> None:
