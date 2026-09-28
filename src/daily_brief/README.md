@@ -140,6 +140,5 @@ listed only in that package's guide.
   -> `generation/pipeline.py` or `cli.py`.
 
 Keep external calls injectable, update tests at the boundary whose behavior
-changes, and update the root README or product document when a change affects
-their documented responsibilities. Follow the repository [contributor
-instructions](../../AGENTS.md) for verification requirements.
+changes. Follow the repository [contributor
+instructions](../../AGENTS.md) for documentation and verification requirements.
