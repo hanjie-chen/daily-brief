@@ -10,9 +10,8 @@
 
 ## Documentation
 
-- Keep the root `README.md` focused on usage and user-visible behavior. Use `docs/product.md` for product intent and direction, `docs/architecture.md` for the system overview, retrieval/recovery flows and diagnostic entry points, and `src/daily_brief/README.md` for module responsibilities and implementation invariants.
-- Write the root `README.md`, `docs/product.md`, and `docs/architecture.md` in Chinese, using English technical terms when clearer. Write `AGENTS.md` and `src/daily_brief/README.md` in English.
-- Update the corresponding document in the same change when product intent, user-visible behavior, or package architecture changes.
+- `README.md`, `docs/product.md`, and `docs/api-quotas.md` are owner-maintained. Do not edit them unless asked; when a change affects or conflicts with them, say so and suggest wording.
+- Keep `docs/architecture.md` (Chinese) and `src/daily_brief/**/README.md` (English) in sync with the code in the same change. Describe how the system works; do not add product intent.
 
 ## Verification
 
