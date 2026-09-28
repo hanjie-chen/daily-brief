@@ -139,6 +139,6 @@ listed only in that package's guide.
   -> `output/publisher.py`
   -> `generation/pipeline.py` or `cli.py`.
 
-Keep external calls injectable, update tests at the boundary whose behavior
+Keep external calls injectable and update tests at the boundary whose behavior
 changes. Follow the repository [contributor
 instructions](../../AGENTS.md) for documentation and verification requirements.
