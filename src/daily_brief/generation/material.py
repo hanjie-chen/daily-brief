@@ -267,6 +267,18 @@ def prepare_hn_discussion_material(
     candidate: Candidate,
     discussion_fetcher,
 ) -> bool:
+    """Attach one bounded HN comment sample without replacing source material.
+
+    Ordinary items accept any nonempty sample for the summary model to assess.
+    Community roundups remain comment-led and require the stricter minimums used
+    to qualify them during selection.
+    """
+    if candidate.discussion_retrieval.status != "not_attempted":
+        return (
+            candidate.discussion_retrieval.status == "success"
+            and bool(candidate.discussion_text.strip())
+        )
+
     active_fetcher = discussion_fetcher or fetch_hn_discussion
     try:
         result = active_fetcher(candidate.story.hn_item_id)
@@ -293,10 +305,16 @@ def prepare_hn_discussion_material(
         )
         return False
 
+    is_community_roundup = candidate.content_kind == "community_roundup"
+    has_usable_comments = bool(result.text.strip())
+    meets_roundup_minimum = (
+        result.comments >= MIN_DISCUSSION_COMMENTS
+        and result.chars >= MIN_DISCUSSION_CHARS
+    )
     status = (
         "success"
-        if result.comments >= MIN_DISCUSSION_COMMENTS
-        and result.chars >= MIN_DISCUSSION_CHARS
+        if has_usable_comments
+        and (not is_community_roundup or meets_roundup_minimum)
         else "insufficient"
     )
     candidate.discussion_retrieval = DiscussionRetrieval(
@@ -320,9 +338,14 @@ def prepare_hn_discussion_material(
         return False
 
     candidate.discussion_text = result.text
-    candidate.summary_basis = "hn_comments"
-    candidate.summary_status = "not_generated"
-    candidate.summary_generation = SummaryGeneration()
+    if (
+        is_community_roundup
+        or candidate.article_retrieval.status == "failed"
+        or candidate.source_material_status == "insufficient"
+    ):
+        candidate.summary_basis = "hn_comments"
+        candidate.summary_status = "not_generated"
+        candidate.summary_generation = SummaryGeneration()
     LOGGER.info(
         "component=hn_discussion_fetch item_id=%s status=success "
         "comments=%d chars=%d requested_items=%d failed_items=%d",

@@ -5,8 +5,10 @@ import pytest
 
 from daily_brief import article_fetcher as article_fetcher_module
 from daily_brief.article_fetcher import ArticleFetchError, ArticleFetchResult
+from daily_brief.candidates import HNDiscussionResult
 from daily_brief.generation import material, run_generate
 from daily_brief.llm.summarizer import SUMMARY_MODE_RESEARCH_REPORT
+from daily_brief.models import Candidate
 from fakes import CapturingSummarizer, FakeClassifier, FakeSummarizer, story
 
 
@@ -16,6 +18,71 @@ def test_bounded_error_message_is_single_line_and_limited():
     assert message.startswith("first ")
     assert "\n" not in message
     assert len(message) == 500
+
+
+def test_ordinary_discussion_accepts_any_nonempty_sample_and_preserves_source_state():
+    candidate = Candidate(story("1", "Claude release"))
+    candidate.summary_basis = "fetched_article"
+    candidate.summary_status = "success"
+    calls = []
+
+    def fetch_discussion(item_id):
+        calls.append(item_id)
+        return HNDiscussionResult(
+            text="Useful correction.",
+            comments=1,
+            chars=18,
+            requested_items=2,
+            failed_items=0,
+        )
+
+    assert material.prepare_hn_discussion_material(candidate, fetch_discussion) is True
+    assert candidate.discussion_retrieval.status == "success"
+    assert candidate.discussion_text == "Useful correction."
+    assert candidate.summary_basis == "fetched_article"
+    assert candidate.summary_status == "success"
+
+    assert material.prepare_hn_discussion_material(candidate, fetch_discussion) is True
+    assert calls == ["1"]
+
+
+def test_discussion_failure_is_not_retried_or_allowed_to_replace_source_state():
+    candidate = Candidate(story("1", "Claude release"))
+    candidate.summary_basis = "fetched_article"
+    candidate.summary_status = "success"
+    calls = []
+
+    def fail_discussion(item_id):
+        calls.append(item_id)
+        raise RuntimeError("HN unavailable")
+
+    assert material.prepare_hn_discussion_material(candidate, fail_discussion) is False
+    assert candidate.discussion_retrieval.status == "failed"
+    assert candidate.summary_basis == "fetched_article"
+    assert candidate.summary_status == "success"
+
+    assert material.prepare_hn_discussion_material(candidate, fail_discussion) is False
+    assert calls == ["1"]
+
+
+def test_community_roundup_keeps_strict_discussion_minimums():
+    candidate = Candidate(story("1", "Ask HN: tools"), content_kind="community_roundup")
+    candidate.summary_basis = "fetched_article"
+
+    assert material.prepare_hn_discussion_material(
+        candidate,
+        lambda item_id: HNDiscussionResult(
+            text="Useful correction.",
+            comments=1,
+            chars=18,
+            requested_items=2,
+            failed_items=0,
+        ),
+    ) is False
+
+    assert candidate.discussion_retrieval.status == "insufficient"
+    assert candidate.discussion_text == ""
+    assert candidate.summary_basis == "fetched_article"
 
 
 def test_selected_exploration_article_reuses_classification_fetch(tmp_path):
@@ -256,12 +323,10 @@ def test_external_url_is_fetched_even_when_story_text_contains_only_a_link(tmp_p
     assert retrieval["status"] == "success"
     assert retrieval["method"] == "github_readme"
     assert candidate_payload[0]["summary_basis"] == "fetched_article"
-    assert candidate_payload[0]["summary_context"] == {
-        "strategy": "full_text",
-        "source_chars": len(body),
-        "selected_chars": len(body),
-        "sections": [],
-    }
+    context = candidate_payload[0]["summary_context"]
+    assert context["strategy"] == "materials"
+    assert context["source_chars"] > len(body)  # HN submission is retained too.
+    assert context["sections"] == ["web_body", "hn_post"]
 
 
 def test_empty_content_jina_success_is_summarized_and_persisted(tmp_path):

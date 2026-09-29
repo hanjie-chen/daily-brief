@@ -14,7 +14,7 @@ from ..llm import (
     normalize_summary_text,
     route_summary_mode,
 )
-from ..models import Candidate, SummaryGeneration
+from ..models import Candidate, SummaryGeneration, material_summary_basis
 from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow
 from .material import (
@@ -63,43 +63,54 @@ def summarize_selected_candidates(
                 retrieval_mode=RETRIEVAL_MODE_SUMMARY,
                 same_article_finder=same_article_finder,
             )
-        if candidate.article_retrieval.status == "failed":
-            if not prepare_hn_discussion_material(
-                candidate,
-                hn_discussion_fetcher,
-            ):
-                candidate.summary_generation = SummaryGeneration(status="skipped")
-                continue
-        # At most one source call and one discussion call; never recurse on comments.
-        for _ in range(2):
-            prepare_summary_context(candidate)
-            summarization_inputs.append(deepcopy(candidate))
-            insufficient = generate_candidate_summary(candidate, summary_client)
-            if not insufficient or candidate.summary_basis == "hn_comments":
-                break
-            if not prepare_hn_discussion_material(candidate, hn_discussion_fetcher):
-                break
+        candidate.summary_input_mode = "materials"
+        prepare_hn_discussion_material(candidate, hn_discussion_fetcher)
+        if not any((
+            candidate.story.fetched_text.strip(),
+            candidate.story.story_text.strip(),
+            candidate.discussion_text.strip(),
+        )):
+            candidate.summary_basis = "none"
+            candidate.summary_status = "skipped"
+            candidate.source_material_status = "insufficient"
+            candidate.source_material_reason = "No source material or HN comments available."
+            candidate.summary = (
+                article_fetch_failure_summary(candidate)
+                if candidate.article_retrieval.status == "failed"
+                else _unavailable_material_summary(candidate)
+            )
+            candidate.summary_generation = SummaryGeneration(status="skipped")
+            continue
+        # All available evidence is present before the single semantic assessment.
+        prepare_summary_context(candidate)
+        summarization_inputs.append(deepcopy(candidate))
+        generate_candidate_summary(candidate, summary_client)
 
     return summarization_inputs
 
 
 def _unavailable_material_summary(candidate: Candidate) -> str:
     if candidate.source_material_status == "insufficient":
-        return "页面材料不足，未生成可靠摘要；请查看原文或讨论。"
+        return "现有材料不足，未生成可靠摘要；请查看原文或讨论。"
     return article_fetch_failure_summary(candidate)
 
 
 def generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
     """Return whether the model explicitly found the supplied material insufficient."""
     provider = _summary_provider(summary_client)
+    material_summary = candidate.summary_input_mode == "materials"
+    candidate.summary_sources_used = []
     try:
         candidate.summary = normalize_summary_text(
             summary_client.summarize(candidate)
         )
         if not candidate.summary:
             raise ValueError("summarizer returned an empty summary")
-        if candidate.summary_basis == "hn_comments":
+        if material_summary:
+            candidate.summary_basis = material_summary_basis(candidate)
+        elif candidate.summary_basis == "hn_comments":
             if candidate.content_kind == "community_roundup":
+                candidate.summary_sources_used = ["hn_comments"]
                 candidate.summary = "根据 Hacker News 部分评论：" + candidate.summary
             elif not has_discussion_source(candidate):
                 candidate.summary = HN_DISCUSSION_SUMMARY_PREFIX + candidate.summary
@@ -107,7 +118,7 @@ def generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
             candidate.summary = (
                 ALTERNATE_REPORTING_SUMMARY_PREFIX + candidate.summary
             )
-        if candidate.summary_basis != "hn_comments":
+        if material_summary or candidate.summary_basis != "hn_comments":
             candidate.source_material_status = "sufficient"
         candidate.summary_status = "success"
         model = _summary_model(summary_client)
@@ -140,7 +151,8 @@ def generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
             provider_status=_summary_provider_status(summary_client),
             **_summary_usage(summary_client),
         )
-        if candidate.summary_basis != "hn_comments":
+        candidate.summary_sources_used = []
+        if material_summary or candidate.summary_basis != "hn_comments":
             candidate.source_material_status = "insufficient"
             candidate.source_material_reason = exc.reason
             candidate.source_summary_generation = deepcopy(candidate.summary_generation)
@@ -152,6 +164,7 @@ def generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
         )
         return True
     except Exception as exc:
+        candidate.summary_sources_used = []
         model = _summary_model(summary_client)
         error_message = bounded_error_message(exc)
         summary_usage = _summary_usage(summary_client)
@@ -182,7 +195,7 @@ def generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
         )
         candidate.summary = (
             _unavailable_material_summary(candidate)
-            if candidate.summary_basis == "hn_comments"
+            if candidate.summary_basis == "hn_comments" or candidate.article_retrieval.status == "failed"
             else fallback_summary(candidate)
         )
         candidate.summary_status = "failed"

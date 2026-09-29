@@ -54,7 +54,11 @@ this package that owns it.
    Confirmed core candidates join one ranked pool. Confirmed outside candidates
    must also satisfy the exploration eligibility rules and are ranked separately.
 6. `material.py` (with `recovery/`): Selected external stories are
-   retrieved under the fuller summary policy.
+   retrieved under the fuller summary policy. For every ordinary selected item,
+   it also obtains one bounded HN discussion sample before summary generation;
+   this is independent of external retrieval success or apparent webpage
+   sufficiency. A failed or empty discussion sample is recorded and does not
+   prevent the remaining material from being summarized.
    Material fetched during classification is reused. Every fetched public PDF is
    Adobe PDF-to-Markdown first when credentials are configured, with the same
    bounded hard timeout in classification and summary retrieval, conversion
@@ -70,13 +74,15 @@ this package that owns it.
    required. YouTube candidates use the existing captions path and must declare
    narration of that source. Search snippets and bare/canonical backlinks are
    insufficient. Rejections continue to the existing Reuters recovery routes.
-7. `summaries.py` and `material.py`: If every external-source retrieval and
-   recovery path fails for a selected story, or its summary call explicitly finds
-   the retrieved material insufficient, `material.py` asks `candidates/hn_client.py` for a
-   bounded HN discussion sample as the final fallback.
-   `llm/summarizer.py` selects the generic, memorial, research, or HN-discussion route
-   from available evidence. An external-source retrieval failure never becomes a
-   title- or model-knowledge-based article summary.
+7. `summaries.py`: Ordinary items make one summary call after material preparation.
+   `llm/summarizer.py` presents webpage metadata, extracted webpage material, HN
+   self-post text, and the discussion sample as separately labeled inputs. It
+   assesses sufficiency across the material supplied to that one call; a semantic
+   insufficiency result does not cause a second discussion-fallback call. The
+   model can omit noisy comments, while code records per-source labels and usage.
+   `community_roundup` remains the exception: its comment-led overview was
+   assessed before selection and is reused. An external-source retrieval failure
+   never becomes a title- or model-knowledge-based article summary.
 8. `pipeline.py`: `output/render.py` writes the readable Markdown, validated public JSON,
    and private candidate audit. `candidates/history.py` then records selected item IDs. An
    empty brief writes a `.no-content` marker instead of public JSON.
@@ -88,8 +94,8 @@ this package that owns it.
 | `__init__.py` | Stable package facade: `run_generate`, `GenerateResult`, `SourceCollectionError` |
 | `pipeline.py` | Stage order, candidate collection, history exclusion, and artifact writes |
 | `classification.py` | Keyword routing, bounded topic classification, roundup assessment, and section selection |
-| `summaries.py` | Selected-item summary loop, discussion fallback, and summary diagnostics |
-| `material.py` | Classification/summary retrieval modes, recovery dispatch, and HN discussion material |
+| `summaries.py` | Selected-item single-call summary loop and summary diagnostics |
+| `material.py` | Classification/summary retrieval modes, recovery dispatch, and bounded HN discussion material |
 
 ## Dependency Direction
 

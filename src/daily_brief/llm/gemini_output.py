@@ -7,6 +7,11 @@ from ..models import Candidate
 from .gemini_api import GeminiResponseError
 from .summarizer import (
     HN_DISCUSSION_SUMMARY_PREFIX,
+    ALTERNATE_REPORTING_SUMMARY_PREFIX,
+    MATERIAL_SOURCE_BODY,
+    MATERIAL_SOURCE_COMMENTS,
+    MATERIAL_SOURCE_METADATA,
+    MATERIAL_SOURCE_POST,
     MAX_COMMUNITY_ROUNDUP_ENTRY_DESCRIPTION_CHARS,
     MAX_COMMUNITY_ROUNDUP_ENTRY_NAME_CHARS,
     MAX_COMMUNITY_ROUNDUP_INTRODUCTION_CHARS,
@@ -99,7 +104,24 @@ def validate_classification(
     return {item["id"]: item["label"] for item in decisions}
 
 
-def summary_schema(*, community_roundup: bool, combined: bool) -> dict:
+def summary_schema(*, community_roundup: bool, combined: bool, materials: bool = False) -> dict:
+    if materials:
+        return {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["sufficient", "insufficient"]},
+                "metadata_summary": {"type": "string"},
+                "article_summary": {"type": "string"},
+                "post_summary": {"type": "string"},
+                "comments_summary": {"type": "string"},
+                "reason": {"type": "string", "maxLength": MAX_INSUFFICIENT_REASON_CHARS},
+            },
+            "required": [
+                "status", "metadata_summary", "article_summary", "post_summary",
+                "comments_summary", "reason",
+            ],
+            "additionalProperties": False,
+        }
     return (
         {
             "type": "object",
@@ -179,6 +201,66 @@ def validate_summary(output: dict, candidate: Candidate, *, combined: bool) -> s
         summary = " ".join(parts)
     if len(summary) > MAX_SUMMARY_CHARS:
         raise GeminiResponseError("Gemini summarizer returned an oversized summary")
+    return summary
+
+
+def validate_material_summary(output: dict, candidate: Candidate) -> str:
+    """Validate source-separated output and add source attribution in code."""
+    fields = {
+        MATERIAL_SOURCE_METADATA: "metadata_summary",
+        MATERIAL_SOURCE_BODY: "article_summary",
+        MATERIAL_SOURCE_POST: "post_summary",
+        MATERIAL_SOURCE_COMMENTS: "comments_summary",
+    }
+    expected = {"status", "reason", *fields.values()}
+    if (
+        set(output) != expected
+        or not all(isinstance(value, str) for value in output.values())
+        or output["status"] not in {"sufficient", "insufficient"}
+    ):
+        raise GeminiResponseError("Gemini material summarizer returned an invalid object")
+    reason = output["reason"].strip()
+    values = {source: output[field].strip() for source, field in fields.items()}
+    if len(output["reason"]) > MAX_INSUFFICIENT_REASON_CHARS:
+        raise GeminiResponseError("Gemini material summarizer returned an oversized reason")
+    if output["status"] == "insufficient":
+        if any(values.values()) or not reason:
+            raise GeminiResponseError("Gemini material summarizer returned an inconsistent decision")
+        raise InsufficientSummaryMaterial(reason)
+    if reason or not any(values.values()):
+        raise GeminiResponseError("Gemini material summarizer returned an inconsistent decision")
+
+    from .summarizer import build_summary_material_context
+    context = build_summary_material_context(candidate)
+    available = set(context.sections) & set(fields)
+    used: list[str] = []
+    parts: list[str] = []
+    prefixes = {
+        MATERIAL_SOURCE_METADATA: "网站介绍称：",
+        MATERIAL_SOURCE_BODY: (
+            ALTERNATE_REPORTING_SUMMARY_PREFIX
+            if candidate.article_retrieval.material_origin == "alternate_reporting"
+            else "根据视频字幕："
+            if candidate.article_retrieval.method == "youtube_caption"
+            else "根据网页内容："
+        ),
+        MATERIAL_SOURCE_POST: "根据 HN 发帖者介绍：",
+        MATERIAL_SOURCE_COMMENTS: "根据 Hacker News 部分评论：",
+    }
+    for source in fields:
+        value = values[source]
+        if not value:
+            continue
+        if source not in available:
+            raise GeminiResponseError(
+                f"Gemini material summarizer used unavailable source {source}"
+            )
+        parts.append(prefixes[source] + value)
+        used.append(source)
+    summary = " ".join(parts)
+    if len(summary) > MAX_SUMMARY_CHARS:
+        raise GeminiResponseError("Gemini material summarizer returned an oversized summary")
+    candidate.summary_sources_used = used
     return summary
 
 

@@ -93,6 +93,7 @@ def test_regeneration_uses_same_article_before_alternative_and_preserves_public_
         algolia_stories=[item.story], hot_stories=[], classifier=object(),
         summarizer=SimpleNamespace(summarize=summarize), article_fetcher=fetch,
         same_article_finder=same, alternate_reporting_finder=alternative,
+        hn_discussion_fetcher=lambda item_id: HNDiscussionResult("", 0, 0, 1, 0),
     )
     audit = json.loads(result.data_path.read_text())[0]["article_retrieval"]
     assert seen == [ORIGINAL, COPY]
@@ -155,8 +156,12 @@ def test_same_article_failure_continues_to_hn_discussion_after_alternative():
         discussion_calls.append(item_id)
         return HNDiscussionResult(text="Readers discuss the result. " * 30,
                                       comments=3, chars=810, requested_items=3, failed_items=0)
+    def summarize_comments(candidate):
+        candidate.summary_sources_used = ["hn_comments"]
+        return "根据 Hacker News 部分评论：评论者讨论了评估方法。"
+
     summaries.summarize_selected_candidates(
-        [item], [], SimpleNamespace(summarize=lambda c: "评论者讨论了评估方法。"),
+        [item], [], SimpleNamespace(summarize=summarize_comments),
         fetch, discussion, None, alternative, WINDOW, same_article_finder=same,
     )
     assert same.calls == alternative.calls == 1

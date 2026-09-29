@@ -92,10 +92,13 @@ listed only in that package's guide.
   conditions, cannot recurse, and must validate both source identity and usable
   material before model input is created. Missing or ambiguous evidence fails
   closed.
-- Summaries are grounded in retrieved article text, Hacker News self-post text, or
-  an explicitly labeled bounded discussion sample. Failed external retrieval never
-  produces a title-only article paraphrase. Product-level summary requirements are
-  defined in [the product document](../../docs/product.md).
+- Ordinary selected-item summaries receive separately labeled available webpage
+  metadata, extracted webpage text, HN self-post text, and one bounded HN
+  discussion sample in a single model call. The model may omit noisy discussion;
+  it must not turn a bounded sample into community consensus or present it as
+  source text. Empty or failed material sources do not suppress the others.
+  Failed external retrieval never produces a title-only article paraphrase.
+  Product-level summary requirements are defined in [the product document](../../docs/product.md).
 - Candidate collection is run-scoped: either required source failing aborts the
   run. After collection succeeds, classifier, article-retrieval, and summarizer
   failures are item-scoped and retain distinct reader-facing and audit states.
@@ -111,8 +114,10 @@ listed only in that package's guide.
   `output/public_schema.py` and must match the website validator. Old items omit
   the object and remain valid; unknown internal values become `unknown`, never
   raw diagnostics. Basis describes a successful summary's evidence (or `none`
-  on failure), independently of the last recorded retrieval attempt. Roundup
-  questions are context only; other source-plus-comment summaries include both.
+  on failure), independently of the last recorded retrieval attempt. It does not
+  imply that every available material source, especially HN comments, was used;
+  combinations the public enum cannot express become `unknown`. Exact per-source
+  usage remains private audit data. Roundup questions are context only.
   Deploy the accepting website before enabling generator output with this field.
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never

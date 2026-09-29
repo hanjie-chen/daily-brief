@@ -120,6 +120,8 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                     "error_message": candidate.discussion_retrieval.error_message,
                 },
                 "summary_basis": candidate.summary_basis,
+                "summary_input_mode": candidate.summary_input_mode,
+                "summary_sources_used": candidate.summary_sources_used,
                 "summary_status": candidate.summary_status,
                 "source_material": {
                     "status": candidate.source_material_status,
@@ -196,7 +198,9 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
             ]
         )
         if item.article_retrieval.status == "failed":
-            if (
+            if item.summary_input_mode == "materials" and item.summary_status == "success":
+                lines.append("- Content: 原文抓取失败；摘要依据其余可用材料，来源已标注。")
+            elif (
                 item.summary_basis == "hn_comments"
                 and item.summary_status == "success"
             ):
@@ -219,7 +223,8 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
                     "保留已有材料并补充 HN 讨论，评论观点另行标注。"
                 )
             else:
-                lines.append("- Content: 页面材料不足，未生成可靠摘要。")
+                label = "现有材料" if item.summary_input_mode == "materials" else "页面材料"
+                lines.append(f"- Content: {label}不足，未生成可靠摘要。")
         elif item.summary_status == "failed":
             error_code = item.summary_generation.error_code or "summary_failed"
             lines.append(
@@ -302,14 +307,28 @@ def _public_provenance(candidate: Candidate) -> dict[str, str]:
     }:
         basis = "none"
     elif candidate.summary_status == "success":
-        basis = {
-            "fetched_article": "article",
-            "youtube_caption": "video_captions",
-            "story_text": "hn_post",
-            "hn_comments": "hn_comments",
-        }.get(candidate.summary_basis, "unknown")
+        if candidate.summary_input_mode == "materials":
+            sources = set(candidate.summary_sources_used)
+            if "hn_comments" in sources:
+                basis = "hn_comments" if len(sources) == 1 else "source_and_comments"
+            elif sources == {"hn_post"}:
+                basis = "hn_post"
+            elif sources == {"web_body"}:
+                basis = (
+                    "video_captions" if retrieval.method == "youtube_caption" else "article"
+                )
+            # Metadata-only and web/post combinations have no exact public v2
+            # code. Keep unknown; the prose and private audit retain exact use.
+        else:
+            basis = {
+                "fetched_article": "article",
+                "youtube_caption": "video_captions",
+                "story_text": "hn_post",
+                "hn_comments": "hn_comments",
+            }.get(candidate.summary_basis, "unknown")
         if (
-            basis == "hn_comments"
+            candidate.summary_input_mode != "materials"
+            and basis == "hn_comments"
             and candidate.content_kind != "community_roundup"
             and (candidate.story.fetched_text.strip() or candidate.story.story_text.strip())
         ):

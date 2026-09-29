@@ -11,8 +11,8 @@ from daily_brief.candidates import fetch_algolia_stories, score_candidate
 
 Model-based topic decisions stay in `llm/topic_classifier.py`, and the order in
 which rules and model calls are applied stays in `generation/classification.py`.
-`hn_client.py` also samples HN discussions for summary fallback; the rules for
-when that sample is sufficient stay in `generation/material.py`.
+`hn_client.py` also samples HN discussions for selected-item summary material;
+the rules for when a sample is accepted stay in `generation/material.py`.
 
 ## Candidate Flow
 
@@ -102,7 +102,16 @@ top-level answers come first. It stops at the comment, request, depth, or
 character limits in `MAX_DISCUSSION_*`, or after `MAX_DISCUSSION_FAILED_ITEMS`
 failed requests. Discussion requests use `DISCUSSION_REQUEST_TIMEOUT_SECONDS`
 and are not retried. Dead and deleted comments are skipped, and each comment is
-labeled with its position, depth, and author.
+labeled with its position, HN comment ID, depth, and author. A reply is included
+only after its complete parent comment was included; its header names that
+parent's HN comment ID. Replies to deleted, empty, or truncated parents are
+skipped, so the sample does not contain orphaned context.
+
+Selected ordinary items collect this bounded sample by default. Any nonempty
+sample is available to the summary model alongside other materials; it is not
+rejected by a minimum comment or character count. `community_roundup` items use
+the same sampler but retain the stricter `MIN_DISCUSSION_COMMENTS` and
+`MIN_DISCUSSION_CHARS` qualification thresholds in `generation/material.py`.
 
 ## Keyword Evaluation
 

@@ -372,6 +372,8 @@ def test_load_accepts_version_three_and_keeps_its_unique_id_constraint(tmp_path)
     payload["schema_version"] = 3
     for item in payload["summary_candidates"]:
         del item["content_kind"]
+        for key in ("summary_input_mode", "material_origin", "retrieval_method"):
+            del item[key]
     input_path.write_text(json.dumps(payload))
     assert (
         load_model_evaluation_input(input_path).summary_candidates[0].story.title
@@ -412,7 +414,7 @@ def test_schema_five_preserves_community_roundup_inputs_and_prompts(tmp_path):
     payload = json.loads(input_path.read_text())
     replayed = load_model_evaluation_input(input_path)
 
-    assert payload["schema_version"] == 5
+    assert payload["schema_version"] == 6
     assert payload["summary_candidates"][0]["content_kind"] == "community_roundup"
     assert (
         replayed.exploration_classification_batches[0][0].content_kind
@@ -436,6 +438,8 @@ def test_old_schemas_default_content_kind_to_article(tmp_path, schema_version):
     payload["schema_version"] = schema_version
     for item in payload["summary_candidates"]:
         del item["content_kind"]
+        for key in ("summary_input_mode", "material_origin", "retrieval_method"):
+            del item[key]
     input_path.write_text(json.dumps(payload), encoding="utf-8")
 
     assert (
@@ -474,6 +478,8 @@ def test_legacy_schema_bounds_and_retries_are_preserved(tmp_path):
     payload["schema_version"] = 4
     for item in payload["summary_candidates"]:
         del item["content_kind"]
+        for key in ("summary_input_mode", "material_origin", "retrieval_method"):
+            del item[key]
     input_path.write_text(json.dumps(payload), encoding="utf-8")
     assert (
         len(load_model_evaluation_input(input_path).summary_candidates)
@@ -616,3 +622,81 @@ def test_long_source_replay_preserves_original_and_selected_prompt(tmp_path):
     assert build_summary_prompt(restored) == build_summary_prompt(item)
     assert 'except on replicas' in build_summary_prompt(restored)
     assert len(build_summary_prompt(restored)) < 40000
+
+
+def test_schema_six_preserves_four_material_prompt_and_recovery_attribution(tmp_path):
+    item = candidate("1", "Show HN: AI tool", fetched_text=(
+        "Page metadata (publisher-provided context, not article body):\n"
+        "description: Preview videos.\n\nExtracted body:\nDetailed report."
+    ))
+    item.summary_input_mode = "materials"
+    item.summary_basis = "fetched_article"
+    item.discussion_text = "A short but specific usability report."
+    item.article_retrieval.material_origin = "alternate_reporting"
+    item.article_retrieval.method = "direct"
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-09-29", [], [item])
+
+    replay = load_model_evaluation_input(input_path).summary_candidates[0]
+    assert replay.summary_input_mode == "materials"
+    assert replay.article_retrieval.material_origin == "alternate_reporting"
+    assert replay.article_retrieval.method == "direct"
+    assert replay.story.story_text == item.story.story_text
+    assert replay.discussion_text == item.discussion_text
+    assert build_summary_prompt(replay) == build_summary_prompt(item)
+
+
+def test_schema_five_still_loads_legacy_roundup_and_article(tmp_path):
+    input_path = tmp_path / "input.json"
+    article = candidate("1", "Old article")
+    roundup = community_roundup("2")
+    capture_model_evaluation_input(input_path, "2026-09-29", [], [article, roundup])
+    payload = json.loads(input_path.read_text())
+    payload["schema_version"] = 5
+    for item in payload["summary_candidates"]:
+        for key in ("summary_input_mode", "material_origin", "retrieval_method"):
+            del item[key]
+    input_path.write_text(json.dumps(payload))
+
+    replay = load_model_evaluation_input(input_path).summary_candidates
+    assert [item.summary_input_mode for item in replay] == ["legacy", "legacy"]
+    assert [build_summary_prompt(item) for item in replay] == [
+        build_summary_prompt(article), build_summary_prompt(roundup),
+    ]
+
+
+def test_material_capture_rejects_duplicate_semantic_calls(tmp_path):
+    from copy import deepcopy
+
+    item = candidate("1", "AI tool", fetched_text="Page detail.")
+    item.summary_input_mode = "materials"
+    item.summary_basis = "fetched_article"
+    duplicate = deepcopy(item)
+    duplicate.summary_basis = "hn_comments"
+    duplicate.discussion_text = "A comment."
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-09-29", [], [item, duplicate])
+    with pytest.raises(ModelEvaluationInputError, match="duplicate item IDs"):
+        load_model_evaluation_input(input_path)
+
+
+def test_material_evaluation_reports_actual_sources_separately_from_input_basis(tmp_path):
+    item = candidate("1", "AI tool", fetched_text="Page detail.")
+    item.summary_input_mode = "materials"
+    item.summary_basis = "fetched_article"
+    item.discussion_text = "A concrete comment."
+    input_path = tmp_path / "input.json"
+    capture_model_evaluation_input(input_path, "2026-09-29", [], [item])
+
+    class CommentsBackend:
+        name = "comments"
+
+        def summarize(self, candidate):
+            candidate.summary_sources_used = ["hn_comments"]
+            return "根据 Hacker News 部分评论：一位评论者指出一个限制。"
+
+    result = run_model_evaluation(input_path, tmp_path / "results", CommentsBackend())
+    summary = json.loads(result.output_path.read_text())["summaries"][0]
+    assert summary["summary_basis"] == "hn_comments"
+    assert summary["input_summary_basis"] == "fetched_article"
+    assert summary["summary_sources_used"] == ["hn_comments"]

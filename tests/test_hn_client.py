@@ -301,10 +301,72 @@ def test_fetch_hn_discussion_collects_bounded_breadth_first_plain_text():
     assert result.comments == 3
     assert result.requested_items == 4
     assert result.failed_items == 0
-    assert "[评论 1；层级 0；作者 alice]" in result.text
+    assert "[评论 1；HN 评论 ID 2；层级 0；作者 alice]" in result.text
     assert "First view.\nSecond line & detail." in result.text
     assert result.text.index("作者 bob") < result.text.index("作者 carol")
     assert "<i>" not in result.text
+
+
+def test_fetch_hn_discussion_labels_replies_with_the_included_parent():
+    responses = {
+        "1": {"id": 1, "type": "story", "kids": [2]},
+        "2": {
+            "id": 2,
+            "type": "comment",
+            "by": "alice",
+            "text": "The parent explains the trade-off.",
+            "kids": [3],
+        },
+        "3": {
+            "id": 3,
+            "type": "comment",
+            "by": "bob",
+            "text": "The reply adds an implementation detail.",
+        },
+    }
+
+    def fetch(url):
+        return responses[url.rsplit("/", 1)[-1].split(".", 1)[0]]
+
+    result = fetch_hn_discussion("1", item_fetcher=fetch)
+
+    assert "The parent explains the trade-off." in result.text
+    assert (
+        "[评论 2；HN 评论 ID 3；层级 1；回复 HN 评论 ID 2；作者 bob]"
+        in result.text
+    )
+    assert "The reply adds an implementation detail." in result.text
+
+
+@pytest.mark.parametrize(
+    ("parent", "max_comment_chars"),
+    [
+        ({"deleted": True, "kids": [3]}, 2_000),
+        ({"text": "Parent is longer than the per-comment budget.", "kids": [3]}, 10),
+    ],
+)
+def test_fetch_hn_discussion_skips_replies_without_complete_parent_context(
+    parent,
+    max_comment_chars,
+):
+    responses = {
+        "1": {"id": 1, "type": "story", "kids": [2]},
+        "2": {"id": 2, "type": "comment", **parent},
+        "3": {"id": 3, "type": "comment", "text": "Orphan reply."},
+    }
+    requested = []
+
+    def fetch(url):
+        item_id = url.rsplit("/", 1)[-1].split(".", 1)[0]
+        requested.append(item_id)
+        return responses[item_id]
+
+    result = fetch_hn_discussion(
+        "1", max_comment_chars=max_comment_chars, item_fetcher=fetch
+    )
+
+    assert requested == ["1", "2"]
+    assert "Orphan reply." not in result.text
 
 
 def test_fetch_hn_discussion_covers_later_top_level_answers_before_long_replies():
@@ -336,7 +398,7 @@ def test_fetch_hn_discussion_covers_later_top_level_answers_before_long_replies(
     assert "Reply one." not in result.text
 
 
-def test_fetch_hn_discussion_prioritizes_top_level_after_deleted_comment():
+def test_fetch_hn_discussion_skips_reply_to_deleted_comment():
     responses = {
         "1": {"id": 1, "type": "story", "kids": [2, 3]},
         "2": {"id": 2, "type": "comment", "deleted": True, "kids": [4]},
@@ -354,13 +416,10 @@ def test_fetch_hn_discussion_prioritizes_top_level_after_deleted_comment():
         "1", max_item_requests=4, item_fetcher=fetch
     )
 
-    assert requested == ["1", "2", "3", "4"]
-    assert result.comments == 2
+    assert requested == ["1", "2", "3"]
+    assert result.comments == 1
     assert "Visible top-level answer." in result.text
-    assert "Reply to deleted answer." in result.text
-    assert result.text.index("Visible top-level answer.") < result.text.index(
-        "Reply to deleted answer."
-    )
+    assert "Reply to deleted answer." not in result.text
 
 
 def test_fetch_hn_discussion_skips_bad_items_and_obeys_request_bound():

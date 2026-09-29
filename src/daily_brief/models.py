@@ -162,6 +162,8 @@ class Candidate:
     why: str = ""
     topic_route: str = "not_evaluated"
     summary_mode: str = "not_routed"
+    summary_input_mode: str = "legacy"
+    summary_sources_used: list[str] = field(default_factory=list)
     summary_context_strategy: str = "not_prepared"
     summary_context_source_chars: int = 0
     summary_context_selected_chars: int = 0
@@ -177,3 +179,24 @@ class Candidate:
     source_material_reason: str = ""
     source_summary_generation: SummaryGeneration | None = None
     summary_generation: SummaryGeneration = field(default_factory=SummaryGeneration)
+
+
+def material_summary_basis(candidate: Candidate) -> str:
+    """Describe actual structured-summary evidence without guessing from inputs."""
+    sources = set(candidate.summary_sources_used)
+    if not sources:
+        # Custom string-only backends cannot report evidence use. Do not guess.
+        return "unknown"
+    elif sources == {"hn_post"}:
+        return "story_text"
+    elif sources == {"hn_comments"}:
+        return "hn_comments"
+    elif sources == {"web_metadata"}:
+        return "web_metadata"
+    elif sources == {"web_body"}:
+        return (
+            "youtube_caption" if candidate.article_retrieval.method == "youtube_caption"
+            else "fetched_article"
+        )
+    else:
+        return "mixed_sources"

@@ -17,11 +17,11 @@ from ..config import (
     NON_AI_MAX_ITEMS,
     TIMEZONE,
 )
-from ..models import Candidate, Story
+from ..models import Candidate, Story, material_summary_basis
 from .model_backend import ModelBackend, ensure_topic_decisions
 from .summarizer import InsufficientSummaryMaterial, normalize_summary_text
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 MAX_SUMMARY_ITEMS = AI_MAX_ITEMS + NON_AI_MAX_ITEMS
 LEGACY_MAX_SUMMARY_CANDIDATES = 2 * MAX_SUMMARY_ITEMS
 MAX_SUMMARY_CANDIDATES = (
@@ -98,7 +98,7 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
         "summary_candidates",
     }
     schema_version = payload.get("schema_version")
-    if set(payload) != expected_keys or schema_version not in (3, 4, SCHEMA_VERSION):
+    if set(payload) != expected_keys or schema_version not in (3, 4, 5, SCHEMA_VERSION):
         raise ModelEvaluationInputError("unsupported evaluation input schema")
 
     date_label = payload["date"]
@@ -203,10 +203,16 @@ def run_model_evaluation(
             summary_results.append(
                 {
                     "hn_item_id": candidate.story.hn_item_id,
-                    "summary_basis": candidate.summary_basis,
+                    "summary_basis": (
+                        material_summary_basis(candidate)
+                        if candidate.summary_input_mode == "materials"
+                        else candidate.summary_basis
+                    ),
+                    "input_summary_basis": candidate.summary_basis,
                     "status": "success",
                     "duration_seconds": round(clock() - summary_started, 3),
                     "summary": summary,
+                    "summary_sources_used": candidate.summary_sources_used,
                     "error": "",
                 }
             )
@@ -243,6 +249,9 @@ def _serialize_candidate(candidate: Candidate) -> dict:
         "summary_basis": candidate.summary_basis,
         "discussion_text": candidate.discussion_text,
         "content_kind": getattr(candidate, "content_kind", "article"),
+        "summary_input_mode": candidate.summary_input_mode,
+        "material_origin": candidate.article_retrieval.material_origin,
+        "retrieval_method": candidate.article_retrieval.method,
     }
 
 
@@ -313,6 +322,8 @@ def _validate_article_summary_retries(
         )
     bases_by_id: dict[str, list[str]] = {}
     for candidate in candidates:
+        if candidate.summary_input_mode == "materials" and item_ids.count(candidate.story.hn_item_id) > 1:
+            raise ModelEvaluationInputError(f"{field_name} duplicate item IDs for materials summary")
         bases = bases_by_id.setdefault(candidate.story.hn_item_id, [])
         bases.append(candidate.summary_basis)
         if len(bases) > 1 and not (
@@ -331,12 +342,12 @@ def _parse_classification_batches(
     field_name = "exploration_classification_batches"
     if not isinstance(value, list) or len(value) > (
         2 * EXPLORATION_CLASSIFIER_MAX_CANDIDATES
-        if schema_version == 5
+        if schema_version >= 5
         else EXPLORATION_CLASSIFIER_MAX_CANDIDATES
     ):
         raise ModelEvaluationInputError(
             f"{field_name} must contain at most "
-            f"{2 * EXPLORATION_CLASSIFIER_MAX_CANDIDATES if schema_version == 5 else EXPLORATION_CLASSIFIER_MAX_CANDIDATES} "
+            f"{2 * EXPLORATION_CLASSIFIER_MAX_CANDIDATES if schema_version >= 5 else EXPLORATION_CLASSIFIER_MAX_CANDIDATES} "
             "batches"
         )
     batches = [
@@ -349,7 +360,7 @@ def _parse_classification_batches(
         )
     candidates = [batch[0] for batch in batches]
     item_ids = [candidate.story.hn_item_id for candidate in candidates]
-    if schema_version != 5:
+    if schema_version < 5:
         if len(set(item_ids)) != len(item_ids):
             raise ModelEvaluationInputError(f"{field_name} contains duplicate item IDs")
         return batches
@@ -390,8 +401,10 @@ def _parse_candidate(value, field_name: str, *, schema_version: int) -> Candidat
         "summary_basis",
         "discussion_text",
     }
-    if schema_version == 5:
+    if schema_version >= 5:
         expected_keys.add("content_kind")
+    if schema_version >= 6:
+        expected_keys.update({"summary_input_mode", "material_origin", "retrieval_method"})
     if not isinstance(value, dict) or set(value) != expected_keys:
         raise ModelEvaluationInputError(f"invalid item in {field_name}")
 
@@ -407,6 +420,8 @@ def _parse_candidate(value, field_name: str, *, schema_version: int) -> Candidat
         "summary_basis": 64,
         "discussion_text": MAX_TEXT_LENGTH,
     }
+    if schema_version >= 6:
+        text_limits.update(summary_input_mode=32, material_origin=64, retrieval_method=64)
     for key, maximum in text_limits.items():
         if not isinstance(value[key], str) or len(value[key]) > maximum:
             raise ModelEvaluationInputError(f"invalid {key} in {field_name}")
@@ -425,12 +440,23 @@ def _parse_candidate(value, field_name: str, *, schema_version: int) -> Candidat
             raise ModelEvaluationInputError(f"invalid {key} in {field_name}")
     if value["summary_basis"] not in SUMMARY_BASES:
         raise ModelEvaluationInputError(f"invalid summary_basis in {field_name}")
-    if bool(value["discussion_text"]) != (value["summary_basis"] == "hn_comments"):
+    if value.get("summary_input_mode", "legacy") == "legacy" and (
+        bool(value["discussion_text"]) != (value["summary_basis"] == "hn_comments")
+    ):
         raise ModelEvaluationInputError(
             f"discussion_text must match summary_basis in {field_name}"
         )
 
+    input_mode = value.get("summary_input_mode", "legacy")
+    if input_mode not in {"legacy", "materials"}:
+        raise ModelEvaluationInputError(f"invalid summary_input_mode in {field_name}")
+    if value.get("material_origin", "") not in {
+        "", "original", "archived_copy", "same_article", "syndicated_copy", "alternate_reporting"
+    }:
+        raise ModelEvaluationInputError(f"invalid material_origin in {field_name}")
     content_kind = value.get("content_kind", "article")
+    if content_kind == "community_roundup" and input_mode != "legacy":
+        raise ModelEvaluationInputError(f"community_roundup cannot use materials mode in {field_name}")
     if content_kind not in CONTENT_KINDS:
         raise ModelEvaluationInputError(f"invalid content_kind in {field_name}")
     if content_kind == "community_roundup" and (
@@ -465,6 +491,9 @@ def _parse_candidate(value, field_name: str, *, schema_version: int) -> Candidat
     # Candidate gained this field in schema 5. Keeping the assignment here also
     # makes schema 3/4 replay explicitly default to ordinary article prompts.
     candidate.content_kind = content_kind
+    candidate.summary_input_mode = input_mode
+    candidate.article_retrieval.material_origin = value.get("material_origin", "")
+    candidate.article_retrieval.method = value.get("retrieval_method", "")
     return candidate
 
 

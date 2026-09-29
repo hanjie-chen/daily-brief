@@ -35,6 +35,7 @@ from .gemini_output import (
     classification_schema,
     classifier_labels,
     summary_schema,
+    validate_material_summary,
     validate_and_format_community_roundup,
     validate_classification,
     validate_summary,
@@ -45,6 +46,7 @@ from .summarizer import (
     SUMMARY_SYSTEM_INSTRUCTION,
     build_summary_prompt,
     has_discussion_source,
+    uses_material_summary,
     route_summary_mode,
 )
 from .topic_classifier import (
@@ -249,6 +251,8 @@ class GeminiBackend:
         return validate_classification(output, candidates, allowed_ids, allowed_labels)
 
     def summarize(self, candidate: Candidate) -> str:
+        if uses_material_summary(candidate):
+            candidate.summary_sources_used = []
         self._summary_attempt_models = []
         self.last_summary_model = ""
         for model in self._summary_models:
@@ -285,9 +289,12 @@ class GeminiBackend:
         )
 
     def _summarize_with_model(self, candidate: Candidate, model: str) -> str:
+        materials = uses_material_summary(candidate)
         combined = has_discussion_source(candidate)
         community_roundup = route_summary_mode(candidate) == SUMMARY_MODE_COMMUNITY_ROUNDUP
-        schema = summary_schema(community_roundup=community_roundup, combined=combined)
+        schema = summary_schema(
+            community_roundup=community_roundup, combined=combined, materials=materials
+        )
         output = self._interact(
             task="summarize",
             model=model,
@@ -304,6 +311,8 @@ class GeminiBackend:
         )
         if community_roundup:
             return validate_and_format_community_roundup(output)
+        if materials:
+            return validate_material_summary(output, candidate)
         return validate_summary(output, candidate, combined=combined)
 
     def _interact(

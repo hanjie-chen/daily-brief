@@ -95,6 +95,8 @@ def test_render_candidates_json_uses_snake_case_fields():
         "content_kind",
         "content_reason",
         "summary_mode",
+        "summary_input_mode",
+        "summary_sources_used",
         "summary_context",
         "score",
         "selected",
@@ -584,3 +586,33 @@ def test_unknown_internal_values_never_become_public_diagnostics():
         material_origin="private origin", fallback_reason="private failure",
     )
     assert set(public_item(item)["provenance"].values()) == {"unknown"}
+
+
+@pytest.mark.parametrize("sources,expected", [
+    (["web_body"], "article"),
+    (["hn_post"], "hn_post"),
+    (["hn_comments"], "hn_comments"),
+    (["web_body", "hn_comments"], "source_and_comments"),
+    (["web_metadata", "hn_post", "hn_comments"], "source_and_comments"),
+    (["web_metadata"], "unknown"),
+    (["web_body", "hn_post"], "unknown"),
+    ([], "unknown"),
+])
+def test_material_provenance_uses_output_sources_not_available_inputs(sources, expected):
+    from daily_brief.output.render import _public_provenance
+    from daily_brief.output.public_schema import PROVENANCE_VALUES
+
+    item = candidate()
+    item.summary_input_mode = "materials"
+    item.summary_status = "success"
+    item.summary_basis = "mixed_sources"
+    item.summary_sources_used = sources
+    item.story = replace(item.story, fetched_text="Available body", story_text="Available post")
+    item.discussion_text = "Available but possibly ignored comments"
+    item.article_retrieval = ArticleRetrieval(status="success", method="direct", material_origin="original")
+
+    provenance = _public_provenance(item)
+    assert provenance["summary_basis"] == expected
+    assert all(value in PROVENANCE_VALUES[key] for key, value in provenance.items())
+    audit = json.loads(render_candidates_json([item]))[0]
+    assert audit["summary_sources_used"] == sources

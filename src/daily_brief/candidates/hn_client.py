@@ -119,7 +119,10 @@ def fetch_hn_discussion(
             error_code="invalid_story",
         )
 
-    queue = deque((kid, 0) for kid in _valid_kids(root.get("kids")))
+    # A reply is useful only with the parent comment that gives it context.
+    # Children are enqueued after their parent is included intact, which also
+    # keeps a long or deleted parent from spending request budget on orphans.
+    queue = deque((kid, 0, None) for kid in _valid_kids(root.get("kids")))
     samples: list[str] = []
     selected_chars = 0
     failed_items = 0
@@ -129,7 +132,7 @@ def fetch_hn_discussion(
         and requested_items < max_item_requests
         and selected_chars < max_chars
     ):
-        comment_id, depth = queue.popleft()
+        comment_id, depth, parent_id = queue.popleft()
         requested_items += 1
         try:
             comment = fetch_item(HN_ITEM_URL.format(item_id=comment_id))
@@ -141,17 +144,20 @@ def fetch_hn_discussion(
         if not isinstance(comment, dict) or comment.get("type") != "comment":
             failed_items += 1
             continue
-        if depth < max_depth:
-            queue.extend(
-                (kid, depth + 1) for kid in _valid_kids(comment.get("kids"))
-            )
         if comment.get("dead") or comment.get("deleted"):
             continue
-        text = _hn_html_to_text(comment.get("text"))[:max_comment_chars].strip()
+        raw_text = _hn_html_to_text(comment.get("text"))
+        text = raw_text[:max_comment_chars].strip()
         if not text:
             continue
         author = " ".join(str(comment.get("by") or "unknown").split())[:80]
-        header = f"[评论 {len(samples) + 1}；层级 {depth}；作者 {author}]\n"
+        reply_context = (
+            f"；回复 HN 评论 ID {parent_id}" if parent_id is not None else ""
+        )
+        header = (
+            f"[评论 {len(samples) + 1}；HN 评论 ID {comment_id}；层级 {depth}"
+            f"{reply_context}；作者 {author}]\n"
+        )
         separator_chars = 2 if samples else 0
         remaining = max_chars - selected_chars - separator_chars
         sample = (header + text)[:remaining].rstrip()
@@ -159,6 +165,14 @@ def fetch_hn_discussion(
             break
         samples.append(sample)
         selected_chars += len(sample) + separator_chars
+        parent_is_complete = len(raw_text) <= max_comment_chars and len(sample) == len(
+            header + text
+        )
+        if depth < max_depth and parent_is_complete:
+            queue.extend(
+                (kid, depth + 1, comment_id)
+                for kid in _valid_kids(comment.get("kids"))
+            )
 
     discussion_text = "\n\n".join(samples)
     return HNDiscussionResult(

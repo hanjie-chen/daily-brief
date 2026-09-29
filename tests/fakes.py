@@ -6,6 +6,22 @@ from daily_brief.models import Story
 from daily_brief.recovery import SyndicatedFinderError
 
 
+def record_fake_summary_sources(candidate):
+    """String fake simulates a summary using the first available evidence source."""
+    if candidate.summary_input_mode != "materials":
+        return ""
+    if candidate.story.fetched_text.strip():
+        candidate.summary_sources_used = ["web_body"]
+        if candidate.article_retrieval.material_origin == "alternate_reporting":
+            return "据 Reuters 对同一事件的报道："
+    elif candidate.story.story_text.strip():
+        candidate.summary_sources_used = ["hn_post"]
+    elif candidate.discussion_text.strip():
+        candidate.summary_sources_used = ["hn_comments"]
+        return "根据 Hacker News 部分评论："
+    return ""
+
+
 class FakeSummarizer:
     last_summary_provider_status = "completed"
     last_summary_usage = {
@@ -20,7 +36,8 @@ class FakeSummarizer:
 
     def summarize(self, candidate):
         self.titles.append(candidate.story.title)
-        return f"Summary for {candidate.story.title}"
+        prefix = record_fake_summary_sources(candidate)
+        return prefix + f"Summary for {candidate.story.title}"
 
 
 class RaisingSummarizer:
@@ -47,6 +64,7 @@ class CapturingSummarizer:
         self.summary_modes = []
 
     def summarize(self, candidate):
+        record_fake_summary_sources(candidate)
         self.fetched_texts.append(candidate.story.fetched_text)
         self.summary_modes.append(candidate.summary_mode)
         return "Captured summary"
