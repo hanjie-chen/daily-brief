@@ -30,6 +30,17 @@ def test_parser_defaults_to_generate_command():
     assert args.force is False
     assert args.dry_run is False
     assert args.capture_model_inputs is False
+    assert args.item_ids is None
+
+
+def test_parser_accepts_retry_items():
+    args = build_parser().parse_args(
+        ["retry", "--date", "2026-09-29", "--item", "123", "--item", "456"]
+    )
+
+    assert args.command == "retry"
+    assert args.date == "2026-09-29"
+    assert args.item_ids == ["123", "456"]
 
 
 def test_main_dry_run_does_not_create_output_directories_or_files(
@@ -57,6 +68,108 @@ def test_main_dry_run_does_not_create_output_directories_or_files(
     assert exit_code == 0
     assert not output_dir.exists()
     assert not data_dir.exists()
+
+
+def test_main_retry_replays_requested_items_with_production_backend(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "run_retry",
+        lambda **kwargs: calls.append(kwargs)
+        or SimpleNamespace(attempted=2, updated=2, failed=0),
+    )
+
+    assert (
+        main(
+            [
+                "retry",
+                "--date",
+                "2026-09-29",
+                "--item",
+                "49879401",
+                "--item",
+                "49879402",
+            ]
+        )
+        == 0
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["output_dir"] == "briefs"
+    assert calls[0]["data_dir"] == "data"
+    assert calls[0]["date_label"] == "2026-09-29"
+    assert calls[0]["item_ids"] == ["49879401", "49879402"]
+    assert calls[0]["model_backend"].name == "fake"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["retry"],
+        ["retry", "--date", "2026-9-29"],
+        ["retry", "--date", "2026-09-29T00:00:00"],
+        ["retry", "--date", "2026-09-29", "--item", "0"],
+        ["retry", "--date", "2026-09-29", "--item", "abc"],
+        ["generate", "--item", "123"],
+        ["publish", "--item", "123"],
+        ["evaluate-model", "--item", "123"],
+        ["retry", "--date", "2026-09-29", "--capture-model-inputs"],
+    ],
+)
+def test_main_validates_retry_flags_before_dry_run_or_backend(argv, monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "_model_backend",
+        lambda: (_ for _ in ()).throw(AssertionError("backend must not be built")),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main([*argv, "--dry-run"])
+
+    assert exc_info.value.code == 2
+
+
+def test_main_retry_dry_run_does_not_call_backend_or_pipeline(monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "_model_backend",
+        lambda: (_ for _ in ()).throw(AssertionError("dry-run must not build backend")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_retry",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("dry-run must not retry")),
+    )
+
+    assert main(["retry", "--date", "2026-09-29", "--dry-run"]) == 0
+
+
+def test_main_retry_logs_counts_and_returns_failure_for_failed_items(monkeypatch, caplog):
+    monkeypatch.setattr(
+        cli,
+        "run_retry",
+        lambda **kwargs: SimpleNamespace(attempted=3, updated=2, failed=1),
+    )
+
+    with caplog.at_level(logging.INFO, logger="daily_brief"):
+        exit_code = main(["retry", "--date", "2026-09-29"])
+
+    assert exit_code == 1
+    assert "component=retry status=completed attempted=3 updated=2 failed=1" in caplog.text
+
+
+def test_main_retry_reports_retry_error(monkeypatch, caplog):
+    monkeypatch.setattr(
+        cli,
+        "run_retry",
+        lambda **kwargs: (_ for _ in ()).throw(cli.RetryError("brief is missing")),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="daily_brief"):
+        exit_code = main(["retry", "--date", "2026-09-29"])
+
+    assert exit_code == 1
+    assert "component=retry status=failed message=brief is missing" in caplog.text
 
 
 def test_main_publish_targets_current_daily_brief_date(monkeypatch):

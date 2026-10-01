@@ -87,12 +87,46 @@ this package that owns it.
    and private candidate audit. `candidates/history.py` then records selected item IDs. An
    empty brief writes a `.no-content` marker instead of public JSON.
 
+## Retry Existing Items
+
+`daily-brief retry --date YYYY-MM-DD` refreshes selected items whose saved summary,
+webpage retrieval, or comment retrieval failed (including insufficient/skipped
+summaries). `--item HN_ID` can be repeated to explicitly refresh selected items,
+including a successful but unhelpful summary. A previous retry's failed HN post
+request also remains eligible. The command requires the matching public JSON and
+candidate audit; missing, invalid, or inconsistent inputs fail before retrieval.
+
+`retry.py` loads those two artifacts to preserve selected IDs, section order,
+titles, links, original points/comment counts, and recommendation reasons. It
+fetches fresh HN submission text, follows the existing selected-item webpage
+recovery policy, and retrieves a new bounded comment sample. Ordinary items use
+the same four-material summary stage as generation. Selected community roundups
+repeat their existing comment qualification and structured overview without
+running topic classification or selection again. Historical retry dates determine
+the Wayback time window; fetched live pages and discussions reflect the retry time.
+
+A successful summary replaces only that item's public summary/provenance/status
+and generation diagnostics, then regenerates Markdown from the saved selection.
+A failed attempt leaves its prior public result and base audit intact; its latest
+attempt diagnostics are stored under `last_retry` in the candidate audit. This
+single record is replaced on the next retry, not appended indefinitely. No raw
+page, post, comment text, or model-input capture is written. Explicit model
+comparison captures remain a separate opt-in workflow.
+
+Writes use atomic file replacement and check for changes to the inputs made while
+retrieval was running. Ordinary write errors roll back artifacts already replaced;
+this is not a cross-file crash transaction. Retry does not change recommendation
+history or publishing state and never publishes. Use `publish --date YYYY-MM-DD`
+separately after checking the local result. No eligible items is a no-op; any
+unsuccessful target gives the CLI a nonzero exit status, even if other items update.
+
 ## Module Map
 
 | File | Responsibility |
 | --- | --- |
-| `__init__.py` | Stable package facade: `run_generate`, `GenerateResult`, `SourceCollectionError` |
+| `__init__.py` | Stable package facade: generation and retry entry points, results, and errors |
 | `pipeline.py` | Stage order, candidate collection, history exclusion, and artifact writes |
+| `retry.py` | Refresh selected saved items, preserve successful results, and replace local artifacts |
 | `classification.py` | Keyword routing, bounded topic classification, roundup assessment, and section selection |
 | `summaries.py` | Selected-item single-call summary loop and summary diagnostics |
 | `material.py` | Classification/summary retrieval modes, recovery dispatch, and bounded HN discussion material |
@@ -102,8 +136,9 @@ this package that owns it.
 Keep dependencies directed from the pipeline toward later, lower-level stages:
 
 ```text
-__init__       -> pipeline
+__init__       -> pipeline, retry
 pipeline       -> classification, summaries
+retry          -> summaries, material
 classification -> summaries, material
 summaries      -> material
 ```
@@ -127,7 +162,7 @@ dependency graph free of cycles.
 End-to-end tests run `run_generate(...)` with injected fakes and live in
 `tests/generation/`, one file per stage module: `test_pipeline.py`,
 `test_classification.py`, `test_material.py`, `test_recovery.py`, and
-`test_summaries.py`. `tests/generation/conftest.py` replaces the default model
+`test_summaries.py`, and `test_retry.py`. `tests/generation/conftest.py` replaces the default model
 backend, article fetcher, and discussion fetcher for every test there; shared
 fakes and story builders live in `tests/fakes.py`.
 

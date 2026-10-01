@@ -43,6 +43,14 @@ class HNDiscussionFetchError(RuntimeError):
         self.error_code = error_code
 
 
+class HNStoryFetchError(RuntimeError):
+    """The requested HN story could not be refreshed safely."""
+
+    def __init__(self, message: str, *, error_code: str):
+        super().__init__(message)
+        self.error_code = error_code
+
+
 @dataclass(frozen=True)
 class HNDiscussionResult:
     text: str
@@ -73,6 +81,81 @@ class _HNTextExtractor(HTMLParser):
     def text(self) -> str:
         lines = [" ".join(line.split()) for line in "".join(self.parts).splitlines()]
         return "\n".join(line for line in lines if line).strip()
+
+
+def fetch_hn_story(
+    item_id: str,
+    *,
+    item_fetcher: Callable[[str], object] | None = None,
+) -> Story:
+    """Fetch one current HN story without collection retries or comments.
+
+    This is intentionally narrower than the collection clients: it refreshes a
+    saved submission's self-post text while callers retain the brief's original
+    title, score, and other metadata.
+    """
+    if (
+        not isinstance(item_id, str)
+        or not item_id.isascii()
+        or not item_id.isdigit()
+        or int(item_id) <= 0
+    ):
+        raise HNStoryFetchError(
+            "invalid Hacker News item ID",
+            error_code="invalid_item_id",
+        )
+
+    fetch_item = item_fetcher or _get_discussion_item
+    try:
+        item = fetch_item(HN_ITEM_URL.format(item_id=item_id))
+    except Exception as exc:
+        raise HNStoryFetchError(
+            f"Hacker News story request failed: {exc}",
+            error_code="story_request_failed",
+        ) from exc
+
+    if (
+        not isinstance(item, dict)
+        or item.get("type") != "story"
+        or str(item.get("id") or "") != item_id
+    ):
+        raise HNStoryFetchError(
+            "Hacker News item is not the requested story",
+            error_code="invalid_story",
+        )
+    if item.get("dead") or item.get("deleted"):
+        raise HNStoryFetchError(
+            "Hacker News story is unavailable",
+            error_code="unavailable_story",
+        )
+    if not _has_sane_story_text_fields(item):
+        raise HNStoryFetchError(
+            "Hacker News story has invalid text fields",
+            error_code="invalid_story_fields",
+        )
+
+    try:
+        return parse_hn_item(item)
+    except (TypeError, ValueError) as exc:
+        raise HNStoryFetchError(
+            f"Hacker News story could not be parsed: {exc}",
+            error_code="invalid_story",
+        ) from exc
+
+
+def _has_sane_story_text_fields(item: dict) -> bool:
+    title = item.get("title")
+    text = item.get("text", "")
+    url = item.get("url", "")
+    return (
+        isinstance(title, str)
+        and bool(title.strip())
+        and text is not None
+        and isinstance(text, str)
+        and url is not None
+        and isinstance(url, str)
+        and (not url or bool(url.strip()))
+    )
 
 
 def fetch_hn_discussion(

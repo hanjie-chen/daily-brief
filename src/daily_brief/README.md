@@ -13,7 +13,7 @@ points, see [the architecture guide](../../docs/architecture.md).
 - `__main__.py` runs the primary CLI through `python -m daily_brief`.
 - `cli.py` parses the `daily-brief` commands for generation, publishing, and
   model evaluation and dispatches them. It contains no pipeline logic.
-- `generation/` implements the generation pipeline. Start at its
+- `generation/` implements generation and targeted retry of saved selected items. Start at its
   [guide](generation/README.md) for changes to stage order, selection, material
   retrieval, recovery, or summary fallback.
 - `candidates/keyword_evaluation.py` provides the corpus collection and replay
@@ -27,6 +27,11 @@ points, see [the architecture guide](../../docs/architecture.md).
 collection. The [generation guide](generation/README.md) describes each pipeline
 stage: candidate collection, classification and selection, material retrieval and
 recovery, summaries, and artifact writes.
+
+`generation.run_retry(...)` refreshes the materials and summaries of selected
+items from an existing public brief and its audit, without rerunning selection or
+saving raw evidence. It preserves prior results on failure and records only the
+latest retry diagnostics. See the [generation guide](generation/README.md#retry-existing-items).
 
 Publishing is a separate, explicitly targeted operation. `output/publisher.py`
 validates the public payload, sends it to the website, and records successful
@@ -53,6 +58,7 @@ Each package with its own guide lists its files there.
 | `output/render.py` | Markdown, public JSON, and private candidate-audit serialization |
 | `output/public_schema.py` | Public payload contract shared by generation and publishing |
 | `output/publisher.py` | Website delivery, retry, and local success state |
+| `output/artifacts.py` | Atomic local text artifact replacement |
 | `pdf_workers/__init__.py` | Import-free package for PDF workers run as `python -m` subprocesses |
 | `pdf_workers/adobe_pdf_extractor.py` | Resource-bounded Adobe PDF-to-Markdown worker |
 | `pdf_workers/pdf_extractor.py` | Resource-bounded local PDF text worker |

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -32,6 +30,7 @@ from ..output import (
 )
 from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow, daily_window
+from ..output.artifacts import atomic_write_text as _atomic_write_text
 from .classification import SelectionResult, classify_and_select_candidates
 from .summaries import summarize_selected_candidates
 
@@ -297,27 +296,6 @@ def _persist_generation(
         no_content_marker_path=written_marker_path,
         model_input_path=model_input_path,
     )
-
-
-def _atomic_write_text(path: Path, content: str) -> None:
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary_file:
-            temporary_file.write(content)
-            temporary_file.flush()
-            os.fsync(temporary_file.fileno())
-            temporary_path = Path(temporary_file.name)
-        os.replace(temporary_path, path)
-    finally:
-        if temporary_path is not None and temporary_path.exists():
-            temporary_path.unlink()
 
 
 def _candidate(story: Story) -> Candidate:

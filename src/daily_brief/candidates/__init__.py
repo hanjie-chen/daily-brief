@@ -4,8 +4,10 @@ from .history import load_history, recent_ids, save_history
 from .hn_client import (
     HNDiscussionFetchError,
     HNDiscussionResult,
+    HNStoryFetchError,
     fetch_algolia_stories,
     fetch_hn_discussion,
+    fetch_hn_story,
     fetch_hot_stories,
 )
 from .keywords import has_non_weak_keyword_match, match_keywords
@@ -22,10 +24,12 @@ from .selection import (
 __all__ = [
     "HNDiscussionFetchError",
     "HNDiscussionResult",
+    "HNStoryFetchError",
     "apply_article_evidence_bonus",
     "dedupe_candidates",
     "fetch_algolia_stories",
     "fetch_hn_discussion",
+    "fetch_hn_story",
     "fetch_hot_stories",
     "has_non_weak_keyword_match",
     "load_history",

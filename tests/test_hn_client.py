@@ -4,15 +4,19 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from daily_brief.candidates import HNStoryFetchError as FacadeHNStoryFetchError
+from daily_brief.candidates import fetch_hn_story as facade_fetch_hn_story
 from daily_brief.candidates.hn_client import (
     HN_BESTSTORIES_URL,
     HNDiscussionFetchError,
+    HNStoryFetchError,
     HN_ITEM_URL,
     HN_TOPSTORIES_URL,
     RequestFailedError,
     _get_json,
     fetch_algolia_stories,
     fetch_hn_discussion,
+    fetch_hn_story,
     fetch_hot_stories,
     parse_algolia_hit,
     parse_hn_item,
@@ -157,6 +161,73 @@ def test_parse_hn_item_uses_discussion_url_and_defaults_when_fields_missing():
     assert story.points == 0
     assert story.comments == 0
     assert story.story_text == "Launch notes"
+
+
+def test_fetch_hn_story_fetches_one_valid_story_without_collection():
+    requested = []
+
+    def fetch(url):
+        requested.append(url)
+        return {
+            "id": 456,
+            "type": "story",
+            "title": "Show HN: A small project",
+            "text": "The current <i>submission</i> text.",
+            "url": "https://example.com/project",
+            "time": 0,
+        }
+
+    story = fetch_hn_story("456", item_fetcher=fetch)
+
+    assert requested == [HN_ITEM_URL.format(item_id="456")]
+    assert story.hn_item_id == "456"
+    assert story.title == "Show HN: A small project"
+    assert story.story_text == "The current <i>submission</i> text."
+
+
+def test_fetch_hn_story_is_available_from_candidates_facade():
+    assert facade_fetch_hn_story is fetch_hn_story
+    assert FacadeHNStoryFetchError is HNStoryFetchError
+
+
+@pytest.mark.parametrize("item_id", ["", "0", "-1", "123x", "１２３"])
+def test_fetch_hn_story_rejects_invalid_item_id_without_request(item_id):
+    with pytest.raises(HNStoryFetchError) as raised:
+        fetch_hn_story(item_id, item_fetcher=lambda url: pytest.fail("unexpected request"))
+
+    assert raised.value.error_code == "invalid_item_id"
+
+
+def test_fetch_hn_story_wraps_single_request_failure():
+    with pytest.raises(HNStoryFetchError) as raised:
+        fetch_hn_story(
+            "456",
+            item_fetcher=lambda url: (_ for _ in ()).throw(TimeoutError("offline")),
+        )
+
+    assert raised.value.error_code == "story_request_failed"
+    assert isinstance(raised.value.__cause__, TimeoutError)
+
+
+@pytest.mark.parametrize(
+    ("item", "error_code"),
+    [
+        ({"id": 456, "type": "comment"}, "invalid_story"),
+        ({"id": 457, "type": "story"}, "invalid_story"),
+        ({"id": 456, "type": "story", "dead": True}, "unavailable_story"),
+        ({"id": 456, "type": "story", "deleted": True}, "unavailable_story"),
+        ({"id": 456, "type": "story", "title": 4}, "invalid_story_fields"),
+        ({"id": 456, "type": "story", "title": " ", "text": ""}, "invalid_story_fields"),
+        ({"id": 456, "type": "story", "title": "Valid", "text": 4}, "invalid_story_fields"),
+        ({"id": 456, "type": "story", "title": "Valid", "url": 4}, "invalid_story_fields"),
+        ({"id": 456, "type": "story", "title": "Valid", "url": "   "}, "invalid_story_fields"),
+    ],
+)
+def test_fetch_hn_story_rejects_invalid_or_unavailable_payloads(item, error_code):
+    with pytest.raises(HNStoryFetchError) as raised:
+        fetch_hn_story("456", item_fetcher=lambda url: item)
+
+    assert raised.value.error_code == error_code
 
 
 def test_fetch_algolia_stories_pages_through_time_window(monkeypatch):

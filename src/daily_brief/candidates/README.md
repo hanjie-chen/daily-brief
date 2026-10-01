@@ -13,6 +13,9 @@ Model-based topic decisions stay in `llm/topic_classifier.py`, and the order in
 which rules and model calls are applied stays in `generation/classification.py`.
 `hn_client.py` also samples HN discussions for selected-item summary material;
 the rules for when a sample is accepted stay in `generation/material.py`.
+Its `fetch_hn_story(...)` helper refreshes one saved HN submission without
+collecting candidates or comments, for retry flows that need its current
+self-post text.
 
 ## Candidate Flow
 
@@ -132,7 +135,7 @@ per-keyword counts and every matching story.
 | File | Responsibility |
 | --- | --- |
 | `__init__.py` | Stable package facade and supported imports |
-| `hn_client.py` | Algolia and official-API collection, and bounded discussion sampling |
+| `hn_client.py` | Algolia and official-API collection, one-story refreshes, and bounded discussion sampling |
 | `keywords.py` | Weighted keyword and URL-token matching, and the non-weak match check used for routing and deduplication |
 | `scoring.py` | Heat, keyword and topic bonuses, article evidence bonus, and `why` text |
 | `selection.py` | Deduplication, exploration ranking and minimum, and section selection |
