@@ -22,6 +22,9 @@ from .summarizer import (
 from .topic_classifier import TOPIC_LABELS
 
 MAX_SUMMARY_CHARS = 1000
+# Sources the integrated summary may draw on; comments are reported separately.
+_SUMMARY_SOURCES = (MATERIAL_SOURCE_METADATA, MATERIAL_SOURCE_BODY, MATERIAL_SOURCE_POST)
+COMMENT_NOTE_PREFIX = "HN 评论："
 
 
 def classifier_labels(candidates: list[Candidate]) -> set[str]:
@@ -110,16 +113,16 @@ def summary_schema(*, community_roundup: bool, combined: bool, materials: bool =
             "type": "object",
             "properties": {
                 "status": {"type": "string", "enum": ["sufficient", "insufficient"]},
-                "metadata_summary": {"type": "string"},
-                "article_summary": {"type": "string"},
-                "post_summary": {"type": "string"},
-                "comments_summary": {"type": "string"},
+                "summary": {"type": "string"},
+                "summary_sources": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(_SUMMARY_SOURCES)},
+                    "maxItems": len(_SUMMARY_SOURCES),
+                },
+                "comment_note": {"type": "string"},
                 "reason": {"type": "string", "maxLength": MAX_INSUFFICIENT_REASON_CHARS},
             },
-            "required": [
-                "status", "metadata_summary", "article_summary", "post_summary",
-                "comments_summary", "reason",
-            ],
+            "required": ["status", "summary", "summary_sources", "comment_note", "reason"],
             "additionalProperties": False,
         }
     return (
@@ -205,63 +208,73 @@ def validate_summary(output: dict, candidate: Candidate, *, combined: bool) -> s
 
 
 def validate_material_summary(output: dict, candidate: Candidate) -> str:
-    """Validate source-separated output and add source attribution in code."""
-    fields = {
-        MATERIAL_SOURCE_METADATA: "metadata_summary",
-        MATERIAL_SOURCE_BODY: "article_summary",
-        MATERIAL_SOURCE_POST: "post_summary",
-        MATERIAL_SOURCE_COMMENTS: "comments_summary",
-    }
-    expected = {"status", "reason", *fields.values()}
+    """Validate one integrated summary plus an optional comment note, and add
+    source attribution in code."""
+    expected = {"status", "summary", "summary_sources", "comment_note", "reason"}
     if (
         set(output) != expected
-        or not all(isinstance(value, str) for value in output.values())
+        or not all(
+            isinstance(output[key], str) for key in ("status", "summary", "comment_note", "reason")
+        )
+        or not isinstance(output["summary_sources"], list)
+        or not all(isinstance(source, str) for source in output["summary_sources"])
         or output["status"] not in {"sufficient", "insufficient"}
     ):
         raise GeminiResponseError("Gemini material summarizer returned an invalid object")
     reason = output["reason"].strip()
-    values = {source: output[field].strip() for source, field in fields.items()}
+    summary = output["summary"].strip()
+    comment_note = output["comment_note"].strip()
+    claimed = set(output["summary_sources"])
     if len(output["reason"]) > MAX_INSUFFICIENT_REASON_CHARS:
         raise GeminiResponseError("Gemini material summarizer returned an oversized reason")
     if output["status"] == "insufficient":
-        if any(values.values()) or not reason:
+        if summary or comment_note or claimed or not reason:
             raise GeminiResponseError("Gemini material summarizer returned an inconsistent decision")
         raise InsufficientSummaryMaterial(reason)
-    if reason or not any(values.values()):
+    if reason or not (summary or comment_note) or bool(summary) != bool(claimed):
         raise GeminiResponseError("Gemini material summarizer returned an inconsistent decision")
 
     from .summarizer import build_summary_material_context
-    context = build_summary_material_context(candidate)
-    available = set(context.sections) & set(fields)
-    used: list[str] = []
+    available = set(build_summary_material_context(candidate).sections)
+    unknown = claimed - set(_SUMMARY_SOURCES)
+    if unknown:
+        raise GeminiResponseError("Gemini material summarizer returned an unknown source")
+    missing = claimed - available
+    if comment_note and MATERIAL_SOURCE_COMMENTS not in available:
+        missing.add(MATERIAL_SOURCE_COMMENTS)
+    if missing:
+        raise GeminiResponseError(
+            f"Gemini material summarizer used unavailable source {sorted(missing)[0]}"
+        )
+
+    used = [source for source in _SUMMARY_SOURCES if source in claimed]
     parts: list[str] = []
-    prefixes = {
-        MATERIAL_SOURCE_METADATA: "网站介绍称：",
-        MATERIAL_SOURCE_BODY: (
-            ALTERNATE_REPORTING_SUMMARY_PREFIX
-            if candidate.article_retrieval.material_origin == "alternate_reporting"
-            else "根据视频字幕："
-            if candidate.article_retrieval.method == "youtube_caption"
-            else "根据网页内容："
-        ),
-        MATERIAL_SOURCE_POST: "根据 HN 发帖者介绍：",
-        MATERIAL_SOURCE_COMMENTS: "根据 Hacker News 部分评论：",
-    }
-    for source in fields:
-        value = values[source]
-        if not value:
-            continue
-        if source not in available:
-            raise GeminiResponseError(
-                f"Gemini material summarizer used unavailable source {source}"
-            )
-        parts.append(prefixes[source] + value)
-        used.append(source)
-    summary = " ".join(parts)
-    if len(summary) > MAX_SUMMARY_CHARS:
+    if summary:
+        parts.append(_summary_prefix(candidate, claimed) + summary)
+    if comment_note:
+        parts.append(
+            (COMMENT_NOTE_PREFIX if summary else "根据 Hacker News 部分评论：") + comment_note
+        )
+        used.append(MATERIAL_SOURCE_COMMENTS)
+    text = " ".join(parts)
+    if len(text) > MAX_SUMMARY_CHARS:
         raise GeminiResponseError("Gemini material summarizer returned an oversized summary")
     candidate.summary_sources_used = used
-    return summary
+    return text
+
+
+def _summary_prefix(candidate: Candidate, sources: set[str]) -> str:
+    """Attribute only material whose voice differs from the linked source itself."""
+    if (
+        MATERIAL_SOURCE_BODY in sources
+        and candidate.article_retrieval.material_origin == "alternate_reporting"
+    ):
+        return ALTERNATE_REPORTING_SUMMARY_PREFIX
+    if sources == {MATERIAL_SOURCE_METADATA}:
+        return "网站介绍称："
+    if sources == {MATERIAL_SOURCE_POST}:
+        return "根据 HN 发帖者介绍："
+    return ""
 
 
 def validate_and_format_community_roundup(output: object) -> str:
