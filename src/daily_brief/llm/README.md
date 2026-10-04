@@ -47,6 +47,12 @@ The prompt organizes the text around the subject, key facts or mechanisms, and
 conditions or limitations. Length is flexible: usually two to four sentences,
 shorter for simple material and longer when explanation requires it. The existing
 1,000-character validation ceiling remains a defensive bound, not a length target.
+The material prompt puts the core explanation and its limits ahead of examples.
+It requires availability status (available, preview, planned), the distinction
+between an author's expectation and an observed result, and metric definitions
+and measurement scope beside the claims they qualify. Unknown details must stay
+unknown or be omitted rather than inferred. These are generation instructions,
+not semantic checks performed by the response validator.
 No code-owned source prefix is added to ordinary material summaries. Claims and
 personal experiences that need qualification are attributed naturally within the
 relevant sentence; comment claims cannot become article facts or community
@@ -57,6 +63,10 @@ the same event, so its claims are not attributed to the linked source; the reade
 facing summary still carries no prefix, and provenance records the origin.
 Recommendation questions in ordinary self-posts are context; the summary focuses
 on concrete answers and their explanations rather than restating the question.
+It starts with the recommendations themselves, retains the substance and direction
+of evaluations, and avoids repeating who recommended or mentioned each item.
+Useful comment details belong next to the subject they explain, without a closing
+comment appendix; attribution remains when needed to qualify a claim or experience.
 
 Roundups retain their separate sufficiency rule, preselection, and structured
 introduction plus two or three substantive entries. The adapter formats the
