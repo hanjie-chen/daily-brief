@@ -230,6 +230,16 @@ YOUTUBE_CAPTION_MODULE = """[Source type: youtube_caption]
 和专有名词。
 """
 
+ALTERNATE_REPORTING_MODULE = """[Source type: alternate_reporting]
+
+\u539F\u94FE\u63A5\u65E0\u6CD5\u8BFB\u53D6\uFF0C\u7F51\u9875\u6B63\u6587\u662F Reuters \u5BF9\u540C\u4E00\u4E8B\u4EF6\u7684\u53E6\u4E00\u7BC7\u62A5\u9053\uFF0C\u4E0D\u662F\u539F\u94FE\u63A5\u6587\u7AE0\u3002\u56F4\u7ED5\u4E8B\u4EF6\u672C\u8EAB\u5199\u6458\u8981\uFF1B
+\u4E0D\u8981\u628A\u8FD9\u7BC7\u62A5\u9053\u7684\u8BF4\u6CD5\u3001\u8BC4\u4EF7\u6216\u5F15\u8FF0\u5199\u6210\u539F\u94FE\u63A5\u6587\u7AE0\u6216\u5176\u4F5C\u8005\u7684\u89C2\u70B9\uFF0C\u4E5F\u4E0D\u8981\u636E\u6B64\u63A8\u65AD\u539F\u6587\u7684\u5185\u5BB9\u548C\u7ACB\u573A\u3002
+"""
+
+ALTERNATE_REPORTING_BODY_LABEL = (
+    "Reuters report on the same event (a different article, not the linked source)"
+)
+
 _HAN_CHARACTERS = r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF"
 _HAN_TO_ASCII_BOUNDARY = re.compile(
     rf"(?<=[{_HAN_CHARACTERS}])(?=[A-Za-z0-9])"
@@ -316,6 +326,10 @@ def has_discussion_source(candidate: Candidate) -> bool:
     )
 
 
+def _uses_alternate_reporting(candidate: Candidate) -> bool:
+    return candidate.article_retrieval.material_origin == "alternate_reporting"
+
+
 def uses_material_summary(candidate: Candidate) -> bool:
     """Whether this candidate uses the integrated material summary contract."""
     return getattr(candidate, "summary_input_mode", "legacy") == "materials"
@@ -377,7 +391,15 @@ def build_summary_material_context(candidate: Candidate) -> SummaryContext:
     comment_sections = ()
     blocks = (
         (MATERIAL_SOURCE_METADATA, "Page metadata (publisher-provided context, not article body)", metadata),
-        (MATERIAL_SOURCE_BODY, "Extracted webpage body", web_body),
+        (
+            MATERIAL_SOURCE_BODY,
+            (
+                ALTERNATE_REPORTING_BODY_LABEL
+                if _uses_alternate_reporting(candidate)
+                else "Extracted webpage body"
+            ),
+            web_body,
+        ),
         (MATERIAL_SOURCE_POST, "HN post text (provided by the submitter)", post),
         (MATERIAL_SOURCE_COMMENTS, "HN comments (bounded sample)", comments),
     )
@@ -650,6 +672,9 @@ def _build_summary_route_prompt(candidate: Candidate) -> str:
             )
             else ""
         )
+        alternate_module = (
+            f"\n{ALTERNATE_REPORTING_MODULE}\n" if _uses_alternate_reporting(candidate) else ""
+        )
         return f"""请根据下面的材料，为每日简报写一条连贯的中文摘要，让读者理解这个条目在讲什么，
 再判断是否感兴趣、是否继续阅读。按内容组织，不按材料来源分别汇报。
 
@@ -679,6 +704,7 @@ def _build_summary_route_prompt(candidate: Candidate) -> str:
 {summary_sufficiency_instruction(require_metadata_attribution=False)}
 {mode_module}
 {caption_module}
+{alternate_module}
 Return exactly JSON fields status, summary, summary_sources, reason.
 summary_sources lists only sources actually used in summary, without duplicates:
 web_metadata, web_body, hn_post, hn_comments. Available but unused sources must be omitted.

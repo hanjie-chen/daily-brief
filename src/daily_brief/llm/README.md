@@ -51,6 +51,10 @@ No code-owned source prefix is added to ordinary material summaries. Claims and
 personal experiences that need qualification are attributed naturally within the
 relevant sentence; comment claims cannot become article facts or community
 consensus. Metadata is publisher context, not independent verification.
+When the webpage body is alternate Reuters reporting, the body label and an
+`alternate_reporting` prompt module tell the model it is a different article about
+the same event, so its claims are not attributed to the linked source; the reader-
+facing summary still carries no prefix, and provenance records the origin.
 Recommendation questions in ordinary self-posts are context; the summary focuses
 on concrete answers and their explanations rather than restating the question.
 

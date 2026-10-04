@@ -199,7 +199,7 @@ def _render_section(title: str, items: list[Candidate], note: str = "") -> list[
         )
         if item.article_retrieval.status == "failed":
             if item.summary_input_mode == "materials" and item.summary_status == "success":
-                lines.append("- Content: 原文抓取失败；摘要依据其余可用材料，来源已标注。")
+                lines.append("- Content: 原文抓取失败；摘要依据其余可用材料。")
             elif (
                 item.summary_basis == "hn_comments"
                 and item.summary_status == "success"

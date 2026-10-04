@@ -158,6 +158,20 @@ def test_special_material_keeps_retrieval_provenance_without_text_prefix(origin,
     assert item.summary_sources_used == ["web_body"]
 
 
+def test_alternate_reporting_is_disclosed_to_the_model_but_not_the_reader():
+    item = candidate(fetched_text="Event report body.")
+    plain_prompt = build_summary_prompt(item)
+    item.article_retrieval.material_origin = "alternate_reporting"
+    prompt = build_summary_prompt(item)
+
+    assert "Untrusted Reuters report on the same event" in prompt
+    assert "[Source type: alternate_reporting]" in prompt
+    assert "Untrusted Extracted webpage body" in plain_prompt
+    assert "alternate_reporting" not in plain_prompt
+    text = "某公司宣布新的数据中心计划。"
+    assert validate_material_summary(sufficient(summary=text), item) == text
+
+
 def test_material_validator_rejects_unavailable_sources_without_audit_update():
     item = candidate(fetched_text="Page body only.")
     item.summary_sources_used = ["stale"]
