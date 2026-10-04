@@ -49,8 +49,9 @@ this package that owns it.
    concrete projects, tools, or practical examples.
    Insufficient comments, uncertain topics, retrieval errors, or model failures
    exclude the item so other eligible candidates can fill the slots. Successful
-   overviews are reused after selection, with a code-owned partial-comment
-   attribution. This preselection work is bounded by the classification pool.
+   overviews are reused after selection, with comment usage recorded in the audit
+   and public provenance, without adding a fixed source prefix. This preselection
+   work is bounded by the classification pool.
    Confirmed core candidates join one ranked pool. Confirmed outside candidates
    must also satisfy the exploration eligibility rules and are ranked separately.
 6. `material.py` (with `recovery/`): Selected external stories are
@@ -79,7 +80,9 @@ this package that owns it.
    self-post text, and the discussion sample as separately labeled inputs. It
    assesses sufficiency across the material supplied to that one call; a semantic
    insufficiency result does not cause a second discussion-fallback call. The
-   model can omit noisy comments, while code records per-source labels and usage.
+   model returns one integrated summary and its declared sources. Code validates
+   source availability and records usage without adding source prefixes or a
+   separate comment note.
    `community_roundup` remains the exception: its comment-led overview was
    assessed before selection and is reused. An external-source retrieval failure
    never becomes a title- or model-knowledge-based article summary.

@@ -180,7 +180,7 @@ def test_roundup_uses_fresh_comment_summary_without_reclassification(tmp_path):
     public, _ = read_outputs(briefs, data)
     assert result.updated == 1
     assert [c[0] for c in calls] == ['post', 'comments']
-    assert public['sections']['ai']['items'][0]['summary'].startswith('根据 Hacker News 部分评论：')
+    assert public['sections']['ai']['items'][0]['summary'].startswith('社区分享两个工具。')
     assert '\n  - Alpha' in (briefs / f'{DAY}.md').read_text()
 
 

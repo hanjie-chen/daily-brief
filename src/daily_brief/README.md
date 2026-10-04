@@ -100,7 +100,9 @@ listed only in that package's guide.
   closed.
 - Ordinary selected-item summaries receive separately labeled available webpage
   metadata, extracted webpage text, HN self-post text, and one bounded HN
-  discussion sample in a single model call. The model may omit noisy discussion;
+  discussion sample in a single model call. The output is one integrated summary
+  with model-declared source usage for audit and public provenance; no fixed source
+  prefixes or comment appendix are added. The model may omit noisy discussion;
   it must not turn a bounded sample into community consensus or present it as
   source text. Empty or failed material sources do not suppress the others.
   Failed external retrieval never produces a title-only article paraphrase.

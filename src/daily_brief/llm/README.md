@@ -35,36 +35,44 @@ Prompts and sufficiency rules live in `summarizer.py`; `gemini_output.py`
 validates each route's structured response.
 
 Each ordinary summary call returns a validated sufficient/insufficient decision
-over all of its supplied material. It receives separately labeled webpage
-metadata, extracted webpage text, HN submission text, and a bounded HN comment
-sample when those sources are available. The rendered labels are code-owned; the prompt requires claims to stay within
-their corresponding source fields. An omitted or noisy comment need not appear
-in the summary.
-Roundups use a separate sufficiency rule requiring two substantive examples and
-never count a restatement of the question as a useful overview. Their dedicated
-prompt returns a short introduction and two or three structured entries (name and plain-language description), with comments as substantive
-evidence and the self-post question only as context. The adapter validates this
-route-specific response and formats a plain-text introduction and bullet list;
-`output/render.py` preserves those line breaks in Markdown and the existing public
-`summary` string. Ordinary summaries use four optional-content text fields in the model response
-and retain the existing public summary string and whitespace normalization. `content_kind` and rejection
-details are private audit fields; public schema remains unchanged.
-The backend returns summary text or raises `InsufficientSummaryMaterial`; this is
+across separately labeled webpage metadata, extracted webpage text, HN submission
+text, and a bounded HN comment sample. It returns one integrated `summary`, a
+`summary_sources` array, and `reason` alongside `status`. Comments can contribute
+to the summary when useful; there is no separate comment note. Available but
+unused sources are omitted from the array. Validation rejects unknown, duplicate,
+or unavailable sources and inconsistent sufficiency decisions before updating the
+audit. Source usage is model-declared, not claim-level verification.
+
+The prompt organizes the text around the subject, key facts or mechanisms, and
+conditions or limitations. Length is flexible: usually two to four sentences,
+shorter for simple material and longer when explanation requires it. The existing
+1,000-character validation ceiling remains a defensive bound, not a length target.
+No code-owned source prefix is added to ordinary material summaries. Claims and
+personal experiences that need qualification are attributed naturally within the
+relevant sentence; comment claims cannot become article facts or community
+consensus. Metadata is publisher context, not independent verification.
+Recommendation questions in ordinary self-posts are context; the summary focuses
+on concrete answers and their explanations rather than restating the question.
+
+Roundups retain their separate sufficiency rule, preselection, and structured
+introduction plus two or three substantive entries. The adapter formats the
+introduction and bullet list without a fixed source prefix; comments remain the
+sole substantive evidence and the question only provides context. The pipeline
+records `hn_comments` usage. `output/render.py` preserves those line breaks in
+Markdown and the existing public `summary` string.
+
+The backend returns text or raises `InsufficientSummaryMaterial`; the latter is
 a completed semantic decision, not a provider error. No character minimum is used
 for material sufficiency. There is no semantic second call that adds comments:
-ordinary selected items fetch their one sample before this call, and insufficiency
-assesses the complete supplied set. Retrieval status remains independent. A page
-introduction explaining a work's type and theme can suffice without its full
-interaction or implementation details, while metadata-derived statements always
-require explicit website self-description attribution.
+ordinary selected items fetch their one sample before the call. Empty or failed
+sources do not suppress useful remaining material, including comments alone.
 
-Structured ordinary-summary output includes per-source fields. Normalization adds
-the visible source labels in code and records the exact sources used in private
-audit data. The public schema remains unchanged: its existing basis values are used
-only where they express the result exactly; unsupported combinations are `unknown`.
-The presence of fetched comments is never evidence that a summary used them.
-`community_roundup` retains its dedicated comment-led schema and preselection
-behavior.
+Public schema is unchanged. Source details are carried by existing public
+provenance enums where expressible and by the private `summary_sources_used`
+array; unsupported public combinations remain `unknown`. Fetched comments do not
+imply used comments. Historical legacy replay routes keep their older response
+contracts and source prefixes; current generation and retry use the integrated
+material contract for ordinary items.
 
 ## Bounded Evidence Selection
 
@@ -148,7 +156,7 @@ replay that immutable input without fetching sources, rendering a brief, or
 modifying recommendation and publishing state. Capture schema 6 records
 `summary_input_mode`: new ordinary candidates use `materials`, while historical
 captures retain their legacy mode. It preserves each material origin and retrieval
-method as well as the per-source structured summary result. Schemas 3, 4, and 5
+method as well as the summary result and declared source usage. Schemas 3, 4, and 5
 remain readable. Replay records insufficient material separately from provider
 failures and does not retrieve fallback material.
 

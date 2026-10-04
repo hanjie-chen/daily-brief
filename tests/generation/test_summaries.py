@@ -323,9 +323,7 @@ def test_article_failure_uses_hn_comments_as_final_summary_fallback(tmp_path):
     assert candidate_payload["summary_basis"] == "hn_comments"
     assert candidate_payload["summary_mode"] == "hn_discussion"
     assert candidate_payload["summary_context"]["strategy"] == "materials"
-    assert public_item["summary"].startswith(
-        "根据 Hacker News 部分评论："
-    )
+    assert public_item["summary"] == f"Summary for {public_item['title']}"
     assert public_item["content_status"] == "fetch_failed"
     assert "原文抓取失败；摘要依据其余可用材料" in result.brief_path.read_text(
         encoding="utf-8"

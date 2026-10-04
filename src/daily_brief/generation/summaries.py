@@ -111,7 +111,6 @@ def generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
         elif candidate.summary_basis == "hn_comments":
             if candidate.content_kind == "community_roundup":
                 candidate.summary_sources_used = ["hn_comments"]
-                candidate.summary = "根据 Hacker News 部分评论：" + candidate.summary
             elif not has_discussion_source(candidate):
                 candidate.summary = HN_DISCUSSION_SUMMARY_PREFIX + candidate.summary
         elif candidate.article_retrieval.material_origin == "alternate_reporting":

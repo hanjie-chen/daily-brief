@@ -12,13 +12,10 @@ def record_fake_summary_sources(candidate):
         return ""
     if candidate.story.fetched_text.strip():
         candidate.summary_sources_used = ["web_body"]
-        if candidate.article_retrieval.material_origin == "alternate_reporting":
-            return "据 Reuters 对同一事件的报道："
     elif candidate.story.story_text.strip():
         candidate.summary_sources_used = ["hn_post"]
     elif candidate.discussion_text.strip():
         candidate.summary_sources_used = ["hn_comments"]
-        return "根据 Hacker News 部分评论："
     return ""
 
 

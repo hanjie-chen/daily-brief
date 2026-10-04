@@ -536,7 +536,7 @@ def test_missing_tavily_key_fails_closed_without_live_search(tmp_path, monkeypat
     assert retrieval["syndicated_recovery"]["error_code"] == "not_configured"
 
 
-def test_origin_block_recovers_verified_alternate_reporting_with_prefix(tmp_path):
+def test_origin_block_recovers_verified_alternate_reporting_with_provenance(tmp_path):
     original_url = nytimes_anthropic_url()
     alternate_url = yahoo_anthropic_url()
     finder = FakeAlternateReportingFinder(
@@ -591,7 +591,7 @@ def test_origin_block_recovers_verified_alternate_reporting_with_prefix(tmp_path
     public_item = public_payload["sections"]["ai"]["items"][0]
     assert public_payload["schema_version"] == 2
     assert public_item["summary"].startswith(
-        "据 Reuters 对同一事件的报道：Summary for"
+        "Summary for"
     )
     assert public_item["source_url"] == original_url
     assert public_item["content_status"] == "ok"

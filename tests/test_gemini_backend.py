@@ -753,7 +753,7 @@ def test_combined_insufficient_cannot_include_source_claims():
         backend.summarize(item)
 
 
-def test_production_roundup_summary_has_exactly_one_partial_comment_attribution():
+def test_production_roundup_summary_preserves_text_without_source_prefix():
     from daily_brief.generation.summaries import generate_candidate_summary
 
     summary = (
@@ -781,7 +781,7 @@ def test_production_roundup_summary_has_exactly_one_partial_comment_attribution(
     generate_candidate_summary(item, backend)
 
     assert item.summary_status == "success"
-    assert item.summary == "根据 Hacker News 部分评论：" + summary
+    assert item.summary == summary
 
 
 @pytest.mark.parametrize("output", [

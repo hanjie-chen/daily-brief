@@ -41,10 +41,8 @@ def candidate(*, fetched_text="", story_text="", comments=""):
 def sufficient(**fields):
     return {
         "status": "sufficient",
-        "metadata_summary": "",
-        "article_summary": "",
-        "post_summary": "",
-        "comments_summary": "",
+        "summary": "一条完整的摘要。",
+        "summary_sources": ["web_body"],
         "reason": "",
         **fields,
     }
@@ -104,75 +102,95 @@ def test_material_context_separates_metadata_body_post_and_comments():
     assert "The site generates a video" in context.text
     assert "costs about four cents" in context.text
     assert "generated clips are useful" in context.text
-    assert "metadata_summary" in prompt
-    assert "comments_summary" in prompt
+    assert "summary_sources" in prompt
+    assert "comment_note" not in prompt
+    assert "metadata_summary" not in prompt
     assert route_summary_mode(item) == SUMMARY_MODE_GENERIC
 
 
-def test_material_validator_adds_code_owned_attribution_and_records_actual_sources():
+def test_material_backend_integrates_sources_without_adding_visible_labels():
+    text = "这个网站按需生成故事视频，提交者称每条成本约四美分。一位使用者报告生成过程较慢。"
+    opener = RecordingOpener(sufficient(
+        summary=text, summary_sources=["hn_comments", "hn_post", "web_metadata"],
+    ))
+    backend = GeminiBackend(api_key="secret", opener=opener)
     item = candidate(
         fetched_text="Page metadata (publisher-provided context, not article body):\nA video site.\n\nExtracted body:\nBody detail.",
-        story_text="Post detail.",
-        comments="Comment detail.",
+        story_text="Videos cost four cents each.", comments="Generation is slow.",
     )
 
-    summary = validate_material_summary(
-        sufficient(
-            metadata_summary="它为每个故事提供短视频解释。",
-            post_summary="发帖者称视频按需生成。",
-            comments_summary="有人认为它适合快速预览。",
-        ),
-        item,
-    )
-
-    assert summary == (
-        "网站介绍称：它为每个故事提供短视频解释。 "
-        "根据 HN 发帖者介绍：发帖者称视频按需生成。 "
-        "根据 Hacker News 部分评论：有人认为它适合快速预览。"
-    )
+    assert backend.summarize(item) == text
+    schema = request_schema(opener)
+    assert schema["required"] == ["status", "summary", "summary_sources", "reason"]
+    assert schema["properties"]["summary_sources"]["items"]["enum"] == [
+        "web_metadata", "web_body", "hn_post", "hn_comments",
+    ]
     assert item.summary_sources_used == ["web_metadata", "hn_post", "hn_comments"]
 
 
-def test_material_validator_rejects_a_nonempty_unavailable_source_without_audit_update():
+@pytest.mark.parametrize("source,kwargs", [
+    ("web_metadata", {"fetched_text": "Page metadata (publisher-provided context, not article body):\nA video site.\n\nExtracted body:\n"}),
+    ("web_body", {"fetched_text": "Page body."}),
+    ("hn_post", {"story_text": "Post detail."}),
+    ("hn_comments", {"comments": "A user describes a concrete limitation."}),
+])
+def test_material_backend_accepts_each_source_alone_without_a_prefix(source, kwargs):
+    text = "一位使用者指出工具只支持本地文件。"
+    item = candidate(**kwargs)
+    backend = GeminiBackend(api_key="secret", opener=RecordingOpener(sufficient(
+        summary=text, summary_sources=[source],
+    )))
+    assert backend.summarize(item) == text
+    assert item.summary_sources_used == [source]
+
+
+@pytest.mark.parametrize("origin,method", [
+    ("alternate_reporting", "direct"), ("original", "youtube_caption"),
+])
+def test_special_material_keeps_retrieval_provenance_without_text_prefix(origin, method):
+    item = candidate(fetched_text="Source detail.")
+    item.article_retrieval.material_origin = origin
+    item.article_retrieval.method = method
+    text = "团队演示了本地视频生成工具。"
+    assert validate_material_summary(sufficient(summary=text), item) == text
+    assert item.article_retrieval.material_origin == origin
+    assert item.article_retrieval.method == method
+    assert item.summary_sources_used == ["web_body"]
+
+
+def test_material_validator_rejects_unavailable_sources_without_audit_update():
     item = candidate(fetched_text="Page body only.")
     item.summary_sources_used = ["stale"]
-
     with pytest.raises(GeminiResponseError, match="unavailable source hn_comments"):
-        validate_material_summary(
-            sufficient(comments_summary="有人提出限制。"), item
-        )
-
+        validate_material_summary(sufficient(summary_sources=["hn_comments"]), item)
     assert item.summary_sources_used == ["stale"]
 
 
-def test_material_backend_uses_four_field_schema_and_records_sources_after_success():
-    opener = RecordingOpener(sufficient(
-        article_summary="页面说明视频会在首次打开故事时生成。",
-        post_summary="发帖者称每条视频成本约四美分。",
-    ))
-    backend = GeminiBackend(api_key="secret", opener=opener)
-    item = candidate(fetched_text="Page body.", story_text="Post detail.")
-
-    assert backend.summarize(item) == (
-        "根据网页内容：页面说明视频会在首次打开故事时生成。 "
-        "根据 HN 发帖者介绍：发帖者称每条视频成本约四美分。"
-    )
-    assert request_schema(opener)["required"] == [
-        "status", "metadata_summary", "article_summary", "post_summary",
-        "comments_summary", "reason",
-    ]
-    assert item.summary_sources_used == ["web_body", "hn_post"]
+def test_material_validator_does_not_record_available_but_unused_comments():
+    item = candidate(fetched_text="Page body.", comments="Thanks!")
+    validate_material_summary(sufficient(), item)
+    assert item.summary_sources_used == ["web_body"]
 
 
 @pytest.mark.parametrize("output", [
-    {"status": "bad", "metadata_summary": "", "article_summary": "", "post_summary": "", "comments_summary": "", "reason": ""},
-    sufficient(article_summary="x" * 1_001),
-    sufficient(article_summary=3),
+    sufficient(status="bad"),
+    sufficient(summary="x" * 1_001),
+    sufficient(summary=3),
+    sufficient(summary=" "),
+    sufficient(summary_sources=[]),
+    sufficient(summary_sources="web_body"),
+    sufficient(summary_sources=[3]),
+    sufficient(summary_sources=["web_body", "web_body"]),
+    sufficient(summary_sources=["unknown"]),
+    sufficient(reason="Not empty"),
+    sufficient(reason="x" * 301),
+    sufficient(comment_note="Obsolete field"),
+    sufficient(status="insufficient", reason="No useful facts."),
+    sufficient(status="insufficient", summary="", summary_sources=[], reason=""),
 ])
-def test_material_backend_rejects_invalid_status_type_or_oversized_output(output):
+def test_material_backend_rejects_invalid_or_inconsistent_output(output):
     backend = GeminiBackend(api_key="secret", opener=RecordingOpener(output))
     item = candidate(fetched_text="Page body.")
-
     with pytest.raises(GeminiResponseError):
         backend.summarize(item)
     assert item.summary_sources_used == []
@@ -180,11 +198,10 @@ def test_material_backend_rejects_invalid_status_type_or_oversized_output(output
 
 def test_material_backend_reports_insufficient_and_omits_absent_comments():
     backend = GeminiBackend(api_key="secret", opener=RecordingOpener({
-        "status": "insufficient", "metadata_summary": "", "article_summary": "",
-        "post_summary": "", "comments_summary": "", "reason": "No useful facts.",
+        "status": "insufficient", "summary": "", "summary_sources": [],
+        "reason": "No useful facts.",
     }))
-    item = candidate(fetched_text="", story_text="", comments="")
-
+    item = candidate()
     with pytest.raises(InsufficientSummaryMaterial):
         backend.summarize(item)
     assert item.summary_sources_used == []

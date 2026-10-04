@@ -463,7 +463,7 @@ def test_roundup_is_assessed_before_selection_and_replaced_when_unusable(
     if outcome == "success":
         assert roundup["selected"] is True
         assert next(item for item in items if item["title"].startswith("Ask HN:"))["summary"] == (
-            "根据 Hacker News 部分评论：" + overview
+            overview
         )
         assert calls.count(("summarize", "49686380", False)) == 1
         assert roundup["summary_context"]["strategy"] == "community_roundup"
