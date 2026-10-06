@@ -320,7 +320,9 @@ def test_evaluate_model_explicitly_disables_summary_fallbacks(monkeypatch, tmp_p
             captured.update(kwargs)
             return type("Backend", (), {"name": "fake"})()
 
-    monkeypatch.setattr(cli, "GeminiBackend", Factory)
+    from daily_brief.llm import factory as backend_factory
+    monkeypatch.delenv("DAILY_BRIEF_MODEL_BACKEND", raising=False)
+    monkeypatch.setattr(backend_factory, "GeminiBackend", Factory)
     monkeypatch.setattr(
         cli, "run_model_evaluation",
         lambda *_args: type("Result", (), {"failures": 0, "output_path": tmp_path / "out.json"})(),

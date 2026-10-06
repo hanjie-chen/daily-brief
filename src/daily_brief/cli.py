@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .generation import RetryError, SourceCollectionError, run_generate, run_retry
 from .llm import (
-    GeminiBackend,
+    create_model_backend,
     ModelBackend,
     ModelEvaluationInputError,
     run_model_evaluation,
@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("evaluate-model requires --date YYYY-MM-DD")
         input_path = Path(args.data_dir) / "model-eval-inputs" / f"{args.date}.json"
         try:
-            backend = GeminiBackend.from_environment(summarizer_fallback_models=())
+            backend = create_model_backend(evaluation=True)
             result = run_model_evaluation(
                 input_path,
                 Path(args.data_dir) / "model-evaluations",
@@ -144,4 +144,4 @@ def _validate_command_arguments(parser: argparse.ArgumentParser, args) -> None:
 
 
 def _model_backend() -> ModelBackend:
-    return GeminiBackend.from_environment()
+    return create_model_backend()

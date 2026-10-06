@@ -1,6 +1,8 @@
 """Model-facing logic: prompts, evidence selection, provider adapters, and evaluation."""
 
 from .gemini_backend import GeminiBackend
+from .openrouter_backend import OpenRouterBackend
+from .factory import create_model_backend
 from .model_backend import ModelBackend, ensure_topic_decisions
 from .model_evaluation import (
     ModelEvaluationInputError,
@@ -24,6 +26,8 @@ __all__ = [
     "ALTERNATE_REPORTING_SUMMARY_PREFIX",
     "HN_DISCUSSION_SUMMARY_PREFIX",
     "GeminiBackend",
+    "OpenRouterBackend",
+    "create_model_backend",
     "InsufficientSummaryMaterial",
     "ModelBackend",
     "ModelEvaluationInputError",

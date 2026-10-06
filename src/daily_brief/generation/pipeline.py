@@ -19,7 +19,7 @@ from ..candidates import (
     score_candidate,
 )
 from ..config import TIMEZONE
-from ..llm import GeminiBackend, ModelBackend, capture_model_evaluation_input
+from ..llm import create_model_backend, ModelBackend, capture_model_evaluation_input
 from ..models import Candidate, Story
 from ..output import (
     EmptyPublicBriefError,
@@ -88,7 +88,7 @@ def run_generate(
 
     backend = model_backend
     if classifier is None or summarizer is None:
-        backend = backend or GeminiBackend.from_environment()
+        backend = backend or create_model_backend()
 
     selection = classify_and_select_candidates(
         candidate_pool.eligible_candidates,

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from daily_brief import cli
+from daily_brief.llm import factory as backend_factory
 from daily_brief.cli import build_parser, main
 from daily_brief.generation import SourceCollectionError
 from daily_brief.llm.gemini_backend import GeminiBackend as RealGeminiBackend
@@ -15,7 +16,8 @@ from fakes import FakeGeminiBackendFactory, story
 
 @pytest.fixture(autouse=True)
 def prevent_live_model_backend(monkeypatch):
-    monkeypatch.setattr(cli, "GeminiBackend", FakeGeminiBackendFactory)
+    monkeypatch.delenv("DAILY_BRIEF_MODEL_BACKEND", raising=False)
+    monkeypatch.setattr(backend_factory, "GeminiBackend", FakeGeminiBackendFactory)
 
 
 def test_parser_defaults_to_generate_command():
@@ -246,7 +248,7 @@ def test_main_reports_inconclusive_no_content_as_generate_failure(
 
 
 def test_main_reports_missing_gemini_key_for_production_generate(monkeypatch, caplog):
-    monkeypatch.setattr(cli, "GeminiBackend", RealGeminiBackend)
+    monkeypatch.setattr(backend_factory, "GeminiBackend", RealGeminiBackend)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     with caplog.at_level(logging.ERROR, logger="daily_brief"):
@@ -257,7 +259,7 @@ def test_main_reports_missing_gemini_key_for_production_generate(monkeypatch, ca
 
 
 def test_main_reports_missing_gemini_key_for_evaluation(tmp_path, monkeypatch, caplog):
-    monkeypatch.setattr(cli, "GeminiBackend", RealGeminiBackend)
+    monkeypatch.setattr(backend_factory, "GeminiBackend", RealGeminiBackend)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     with caplog.at_level(logging.ERROR, logger="daily_brief"):
@@ -301,3 +303,40 @@ def test_main_evaluate_model_replays_captured_input(tmp_path):
     assert payload["backend"] == "fake"
     assert payload["exploration_classifications"][0]["status"] == "success"
     assert payload["summaries"][0]["summary"] == "Summary for AI tool"
+
+
+def test_openrouter_selected_for_generate_without_gemini_key(monkeypatch):
+    monkeypatch.setenv('DAILY_BRIEF_MODEL_BACKEND', 'openrouter')
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
+    monkeypatch.delenv('GEMINI_API_KEY', raising=False)
+    calls = []
+    monkeypatch.setattr(cli, 'run_generate', lambda **kwargs: calls.append(kwargs))
+    assert main(['generate']) == 0
+    backend = calls[0]['model_backend']
+    assert backend.name == 'openrouter'
+    assert backend.classifier_model == 'qwen/qwen3.8-flash'
+    assert backend.summarizer_model == 'openai/gpt-6-luna'
+
+
+def test_openrouter_evaluation_uses_selected_provider(monkeypatch, tmp_path):
+    monkeypatch.setenv('DAILY_BRIEF_MODEL_BACKEND', 'openrouter')
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
+    calls = []
+    monkeypatch.setattr(cli, 'run_model_evaluation', lambda source, out, backend:
+        calls.append(backend) or SimpleNamespace(failures=0, output_path=tmp_path/'result.json'))
+    assert main(['evaluate-model', '--date', '2026-10-06']) == 0
+    assert calls[0].name == 'openrouter'
+
+
+def test_bad_provider_fails_before_collection(monkeypatch):
+    monkeypatch.setenv('DAILY_BRIEF_MODEL_BACKEND', 'unknown')
+    monkeypatch.setattr(cli, 'run_generate', lambda **kwargs: pytest.fail('must not collect'))
+    assert main(['generate']) == 1
+
+
+def test_missing_openrouter_key_fails_before_collection(monkeypatch, caplog):
+    monkeypatch.setenv('DAILY_BRIEF_MODEL_BACKEND', 'openrouter')
+    monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
+    monkeypatch.setattr(cli, 'run_generate', lambda **kwargs: pytest.fail('must not collect'))
+    assert main(['generate']) == 1
+    assert 'OPENROUTER_API_KEY' in caplog.text

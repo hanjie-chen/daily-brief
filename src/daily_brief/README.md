@@ -22,7 +22,7 @@ points, see [the architecture guide](../../docs/architecture.md).
 
 ## Generation Flow
 
-`cli.main()` constructs the production model backend before calling
+`cli.main()` uses `llm.create_model_backend()` to construct the configured production model backend before calling
 `generation.run_generate(...)`, so configuration errors fail before external
 collection. The [generation guide](generation/README.md) describes each pipeline
 stage: candidate collection, classification and selection, material retrieval and
@@ -51,7 +51,7 @@ Each package with its own guide lists its files there.
 | `time_window.py` | Daily collection window |
 | [`generation/`](generation/README.md) | Generation pipeline behind `daily-brief generate`: stage order, routing, material, and summaries |
 | [`candidates/`](candidates/README.md) | Rule-based collection, keyword matching, scoring, history, and section selection |
-| [`llm/`](llm/README.md) | Prompts, evidence excerpts, summary sufficiency, the Gemini adapter, and model evaluation |
+| [`llm/`](llm/README.md) | Prompts, evidence excerpts, summary sufficiency, the Gemini/OpenRouter adapters, and model evaluation |
 | [`article_fetcher/`](article_fetcher/README.md) | Bounded public article retrieval, extraction, and Jina/Wayback fallbacks |
 | [`recovery/`](recovery/README.md) | Search-based recovery after the original source is blocked |
 | `output/__init__.py` | Stable facade for rendering, public payload validation, and publishing |

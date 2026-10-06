@@ -20,6 +20,8 @@ and publishing stay in `output/`.
 
 ## Generation Flow
 
+`run_generate(...)` and `run_retry(...)` use `llm.create_model_backend()` when no backend is injected, matching CLI provider selection through `DAILY_BRIEF_MODEL_BACKEND`.
+
 `run_generate(...)` runs these stages in order. Each step names the module in
 this package that owns it.
 
@@ -171,6 +173,7 @@ fakes and story builders live in `tests/fakes.py`.
 
 - `tests/test_same_article_pipeline.py`: same-article recovery and its hand-off
   to the other recovery routes and to discussion fallback.
+- `tests/generation/test_openrouter_pipeline.py`: the real OpenRouter adapter with fake HTTP responses through roundup classification, comment assessment, summary reuse, and rendering.
 - `tests/test_gemini_fallback.py` and `tests/test_gemini_backend.py`: summary
   diagnostics recorded by `summaries.generate_candidate_summary(...)` with the
   real Gemini adapter and a fake transport.

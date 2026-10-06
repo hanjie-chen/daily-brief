@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ..candidates import fetch_hn_story
 from ..config import RUN_HOUR, TIMEZONE
-from ..llm import GeminiBackend
+from ..llm import create_model_backend
 from ..models import ArticleRetrieval, Candidate, Story, SummaryGeneration
 from ..output import (
     render_candidates_json,
@@ -103,7 +103,7 @@ def run_retry(
     if not targets:
         return RetryResult(0, 0, 0)
 
-    backend = model_backend or GeminiBackend.from_environment()
+    backend = model_backend or create_model_backend()
     fetch_story = hn_story_fetcher or fetch_hn_story
     window = daily_window(datetime.combine(target_date, time(RUN_HOUR), tzinfo=TIMEZONE))
     updated = 0

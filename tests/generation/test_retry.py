@@ -129,7 +129,7 @@ def test_no_failures_is_noop_without_model_or_network(tmp_path, monkeypatch):
     briefs, data = seed(tmp_path)
     def forbidden(*args, **kwargs):
         pytest.fail('No work must not construct a model or fetch sources')
-    monkeypatch.setattr(retry.GeminiBackend, 'from_environment', forbidden)
+    monkeypatch.setattr(retry, 'create_model_backend', forbidden)
     before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
     result = run_retry(briefs, data, date_label=DAY, hn_story_fetcher=forbidden)
     assert result.attempted == 0

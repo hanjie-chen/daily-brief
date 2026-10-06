@@ -2,7 +2,7 @@
 
 This package holds everything that talks to, or prepares input for, a language
 model: topic-classification and summary prompts, bounded evidence excerpts, the
-provider-neutral backend contract, the Gemini adapter, and model-input capture
+provider-neutral backend contract, the Gemini and OpenRouter adapters, and model-input capture
 and replay. The package-level facade is the import used by the rest of the
 application:
 
@@ -21,6 +21,8 @@ writing summaries into the brief stays in `output/`.
 | --- | --- |
 | `__init__.py` | Stable package facade and supported imports |
 | `model_backend.py` | Provider-neutral classification and summarization contract |
+| `factory.py` | Shared environment-based backend selection for CLI, generation, retry and evaluation |
+| `openrouter_backend.py` | Chat-completions adapter, provider price caps, per-run cost reservations, retries and usage records |
 | `gemini_backend.py` | Gemini adapter: configuration, pacing, requests and retries, and summary model fallback |
 | `gemini_output.py` | Structured-output schemas for classification and summaries, and response validation |
 | `gemini_api.py` | Gemini errors, HTTP error and daily-quota interpretation, retry delays, response text and usage extraction, and interaction logs |
@@ -42,6 +44,8 @@ to the summary when useful; there is no separate comment note. Available but
 unused sources are omitted from the array. Validation rejects unknown, duplicate,
 or unavailable sources and inconsistent sufficiency decisions before updating the
 audit. Source usage is model-declared, not claim-level verification.
+
+Reader-preference guidance retains useful concrete mechanisms and metric scope even when that takes more space; it does not optimize for the shortest possible text.
 
 The prompt organizes the text around the subject, key facts or mechanisms, and
 conditions or limitations. Length is flexible: usually two to four sentences,
@@ -128,6 +132,45 @@ other updates that only share a product or keywords. Source evidence overrides
 unsupported title claims. This is a generation instruction, not a post-generation
 quality gate; evidence selection and provider-call counts are unchanged.
 
+## Provider Selection and OpenRouter
+
+`create_model_backend()` reads `DAILY_BRIEF_MODEL_BACKEND` (`gemini` by default for
+existing installations; `openrouter` opts in). Generate, retry, evaluate-model and
+library defaults use the same factory. Unknown providers and missing credentials
+fail before CLI collection. Evaluation disables Gemini cross-model fallback;
+OpenRouter never uses cross-model fallback.
+
+OpenRouter defaults to `qwen/qwen3.8-flash` with reasoning disabled for classification
+(512 output tokens), and `openai/gpt-6-luna` with requested low reasoning for summaries
+(8192 output tokens). Actual reasoning usage can be zero. All summary routes reuse
+the existing schemas and validators, including the comments-only roundup list.
+Requests use strict JSON schema and require provider parameter support; same-model
+provider fallback is allowed. The fixed HTTPS endpoint rejects redirects.
+
+Each HTTP attempt is bounded by a 90-second timeout and 256 KiB response limit.
+429, 5xx and transport failures get at most two retries with bounded backoff and
+per-model request spacing. 400/401/402/403, invalid JSON or task output, refusal,
+non-stop completion and insufficient material do not trigger retries or model
+switching. Embedded errors in successful HTTP responses follow the same policy.
+Untrusted provider error bodies and credentials are not logged.
+
+A backend instance reserves a conservative input/output cost before every attempt,
+using UTF-8 input bytes plus framing allowance and configured per-million price
+caps. Luna reserves at least its cache-write input rate. Valid response cost
+replaces that attempt's reservation; unknown-cost failures retain reservations.
+The default $0.25 instance budget is shared across classification, summaries and
+retries; it resets in a new process and is not a monthly account limit. Price caps
+are sent to the provider router. Custom model IDs require explicit input/output
+caps; operators must also account for that model's caching charges.
+
+Safe per-attempt records are available in `request_records`, and logs include
+reported cost and accounted total for both tasks. Summary token diagnostics use
+the existing candidate audit fields; `last_summary_usage` additionally exposes
+cost/cache details and `last_summary_provider` the upstream provider. No costs or
+provider error bodies enter the public brief schema.
+
+Configuration and rollout notes are in [docs/openrouter.md](../../../docs/openrouter.md).
+
 ## Summary Model Fallback and Quotas
 
 These rules live in `gemini_backend.py`, with daily-quota detection in
@@ -177,7 +220,9 @@ failures and does not retrieve fallback material.
 ## Dependency Direction
 
 ```text
-__init__           -> gemini_backend, model_backend, model_evaluation, summarizer
+__init__           -> factory, openrouter_backend, gemini_backend, model_backend, model_evaluation, summarizer
+factory            -> openrouter_backend, gemini_backend
+openrouter_backend -> gemini_output, gemini_api (shared error/size definitions), summarizer, topic_classifier
 gemini_backend     -> gemini_output, gemini_api, summarizer, topic_classifier
 gemini_output      -> gemini_api, summarizer, topic_classifier
 model_evaluation   -> model_backend, summarizer
@@ -188,7 +233,7 @@ all but evidence_selection and gemini_api -> models; model_evaluation also -> co
 ```
 
 This package never imports `generation/`, `candidates/`, `recovery/`, or
-`output/`. Provider-specific behavior stays in the `gemini_*.py` modules; production
+`output/`. Provider wire behavior stays in its adapter; `gemini_output.py` retains its historical name while providing shared task schemas and validators; production
 and evaluation share `model_backend.py` and the normalization in `summarizer.py`.
 Production model identifiers remain explicit rather than moving aliases.
 
@@ -202,4 +247,4 @@ Production model identifiers remain explicit rather than moving aliases.
 - `tests/test_model_backend.py`: the provider-neutral topic-decision contract.
 - `tests/test_model_evaluation.py`: capture schemas and replay.
 
-Tests use a fake HTTP opener and never call the Gemini API.
+OpenRouter tests cover task routes, validation, redirects/errors, bounded retries, usage and cost reservations. Tests use fake HTTP openers and never call live model APIs.
