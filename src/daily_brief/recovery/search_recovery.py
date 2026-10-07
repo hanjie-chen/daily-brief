@@ -20,7 +20,6 @@ from .alternate_reporting import (
     AlternateReportingFinderError,
     AlternateReportingValidation,
     TavilyAlternateReportingFinder,
-    is_yahoo_url,
     normalize_allowed_candidate_url as normalize_alternate_reporting_url,
     validate_alternate_reporting,
     validations_conflict,
@@ -56,6 +55,7 @@ RecoveryAudit = SameArticleRecovery | SyndicatedRecovery | AlternateReportingRec
 class RecoveryOutcome:
     material: FetchedMaterial | None
     audit: RecoveryAudit
+    fetched_candidates: tuple[FetchedMaterial, ...] = ()
 
 
 def attempt_same_article_recovery(
@@ -86,6 +86,7 @@ def attempt_same_article_recovery(
     bounded = discovered[:MAX_SAME_ARTICLE_CANDIDATES]
     audit.discovered_candidates = len(bounded)
     seen: list[str] = []
+    fetched_candidates: list[FetchedMaterial] = []
     for alternative in bounded:
         entry = SameArticleAttempt()
         audit.candidates.append(entry)
@@ -125,6 +126,7 @@ def attempt_same_article_recovery(
             if urlsplit(material.retrieved_url).hostname == "news.ycombinator.com":
                 entry.reason = "hn_discussion"
                 continue
+            fetched_candidates.append(material)
             validation = validate_same_article(candidate, alternative, fetched)
             entry.reason = validation.reason
             entry.evidence = [str(value)[:500] for value in validation.evidence[:5]]
@@ -147,119 +149,119 @@ def attempt_same_article_recovery(
         "component=same_article_recovery item_id=%s status=exhausted attempted=%d",
         candidate.story.hn_item_id, audit.attempted_candidates,
     )
-    return RecoveryOutcome(None, audit)
+    return RecoveryOutcome(None, audit, tuple(fetched_candidates))
 
 
 def attempt_alternate_reporting_recovery(
     candidate: Candidate,
     article_client,
     finder: AlternateReportingFinder | None,
+    *,
+    fetched_candidates: tuple[FetchedMaterial, ...] = (),
 ) -> RecoveryOutcome:
+    """Reuse fetched pages first, then search once for same-event reporting."""
     component = "alternate_reporting_recovery"
-    active_finder = finder
-    if active_finder is None:
-        active_finder = TavilyAlternateReportingFinder.from_environment()
-    provider, discovered, failure = _discover(
-        candidate,
-        active_finder,
-        error_type=AlternateReportingFinderError,
-        component=component,
-        audit_type=AlternateReportingRecovery,
-    )
-    if failure is not None:
-        return RecoveryOutcome(None, failure)
-
     rejection_reasons: list[str] = []
     seen_urls: set[str] = set()
-    yahoo_candidates: list[tuple[AlternateReportingCandidate, str]] = []
-    reuters_candidates: list[tuple[AlternateReportingCandidate, str]] = []
-    for alternate in discovered[:MAX_ALTERNATE_REPORTING_CANDIDATES]:
-        normalized_url = _allowed_candidate_url(
-            alternate,
-            AlternateReportingCandidate,
-            normalize_alternate_reporting_url,
-            seen_urls,
-            rejection_reasons,
-        )
-        if normalized_url is None:
-            continue
-        target = (
-            yahoo_candidates
-            if is_yahoo_url(normalized_url)
-            else reuters_candidates
-        )
-        target.append((alternate, normalized_url))
-
+    accepted: list[tuple[FetchedMaterial, AlternateReportingValidation]] = []
     attempted = 0
+    discovered_count = 0
+    provider = "same_article"
 
-    def validate_group(
-        group: list[tuple[AlternateReportingCandidate, str]],
-    ) -> list[tuple[FetchedMaterial, AlternateReportingValidation]]:
-        nonlocal attempted
-        accepted = []
-        for alternate, normalized_url in group:
-            attempted += 1
-            verified = _fetch_and_validate(
-                candidate,
-                alternate,
-                normalized_url,
-                article_client,
-                normalize_url=normalize_alternate_reporting_url,
-                validate=validate_alternate_reporting,
-                component=component,
-                provider=provider,
-                rejection_reasons=rejection_reasons,
+    def validate_material(material: FetchedMaterial) -> None:
+        alternate = AlternateReportingCandidate("", material.retrieved_url)
+        validation = validate_alternate_reporting(
+            candidate, alternate, material.text, source_evidence=material.source_evidence,
+        )
+        if validation.accepted:
+            accepted.append((material, validation))
+        else:
+            rejection_reasons.append(validation.reason)
+
+    def allowed_url(url: str, *, redirected: bool = False) -> str | None:
+        normalized = normalize_alternate_reporting_url(url)
+        if normalized is None:
+            rejection_reasons.append(
+                "redirected_to_unsupported_url" if redirected else "unsupported_url"
             )
-            if verified is not None:
-                accepted.append(verified)
-        return accepted
+            return None
+        if same_source_url(normalized, candidate.story.source_url):
+            rejection_reasons.append("redirected_to_original" if redirected else "original_url")
+            return None
+        return normalized
 
-    accepted = validate_group(yahoo_candidates)
+    for material in fetched_candidates[:MAX_ALTERNATE_REPORTING_CANDIDATES]:
+        discovered_count += 1
+        url = allowed_url(material.retrieved_url)
+        if url is None:
+            continue
+        if url in seen_urls:
+            rejection_reasons.append("duplicate_url")
+            continue
+        seen_urls.add(url)
+        attempted += 1
+        validate_material(replace(material, retrieved_url=url))
+
     if not accepted:
-        accepted = validate_group(reuters_candidates)
-
-    if accepted and validations_conflict(
-        [validation for _material, validation in accepted]
-    ):
-        rejection_reasons.append("event_identity_conflict")
-        return RecoveryOutcome(
-            material=None,
-            audit=AlternateReportingRecovery(
-                status="conflict",
-                provider=provider,
-                discovered_candidates=len(discovered),
-                attempted_candidates=attempted,
-                rejection_reasons=rejection_reasons,
-                error_code="event_identity_conflict",
-            ),
+        active_finder = finder or TavilyAlternateReportingFinder.from_environment()
+        provider, discovered, failure = _discover(
+            candidate, active_finder,
+            error_type=AlternateReportingFinderError,
+            component=component, audit_type=AlternateReportingRecovery,
         )
+        if failure is not None:
+            failure.discovered_candidates = discovered_count
+            failure.attempted_candidates = attempted
+            failure.rejection_reasons = rejection_reasons
+            return RecoveryOutcome(None, failure)
+        bounded = discovered[:MAX_ALTERNATE_REPORTING_CANDIDATES]
+        discovered_count += len(bounded)
+        for alternate in bounded:
+            url = _allowed_candidate_url(
+                alternate, AlternateReportingCandidate, normalize_alternate_reporting_url,
+                seen_urls, rejection_reasons,
+            )
+            if url is None or allowed_url(url) is None:
+                continue
+            if attempted >= MAX_ALTERNATE_REPORTING_CANDIDATES:
+                rejection_reasons.append("fetch_budget_exhausted")
+                continue
+            attempted += 1
+            try:
+                material = coerce_fetched_material(article_client(url), url)
+            except Exception as exc:
+                rejection_reasons.append("fetch_failed")
+                LOGGER.warning(
+                    "component=%s item_id=%s provider=%s status=candidate_fetch_failed code=%s",
+                    component, candidate.story.hn_item_id, provider,
+                    getattr(exc, "error_code", "fetch_failed"),
+                )
+                continue
+            effective_url = allowed_url(material.retrieved_url, redirected=True)
+            if effective_url is None:
+                continue
+            if effective_url != url and effective_url in seen_urls:
+                rejection_reasons.append("duplicate_url")
+                continue
+            seen_urls.add(effective_url)
+            validate_material(replace(material, retrieved_url=effective_url))
 
-    if accepted:
-        selected, _validation = min(
-            accepted,
-            key=lambda item: (-len(item[0].text), item[0].retrieved_url),
-        )
-        audit = AlternateReportingRecovery(
-            status="success",
-            provider=provider,
-            discovered_candidates=len(discovered),
-            attempted_candidates=attempted,
-            rejection_reasons=rejection_reasons,
-        )
-        _log_success(component, candidate, provider, len(discovered), attempted)
-        return RecoveryOutcome(material=selected, audit=audit)
-
-    status = "not_found" if not discovered else "exhausted"
-    return RecoveryOutcome(
-        material=None,
-        audit=AlternateReportingRecovery(
-            status=status,
-            provider=provider,
-            discovered_candidates=len(discovered),
-            attempted_candidates=attempted,
-            rejection_reasons=rejection_reasons,
-        ),
+    audit = AlternateReportingRecovery(
+        status="exhausted" if discovered_count else "not_found",
+        provider=provider, discovered_candidates=discovered_count,
+        attempted_candidates=attempted, rejection_reasons=rejection_reasons,
     )
+    if accepted and validations_conflict([validation for _, validation in accepted]):
+        audit.status = "conflict"
+        audit.error_code = "event_identity_conflict"
+        rejection_reasons.append(audit.error_code)
+        return RecoveryOutcome(None, audit)
+    if accepted:
+        selected, _ = min(accepted, key=lambda item: (-len(item[0].text), item[0].retrieved_url))
+        audit.status = "success"
+        _log_success(component, candidate, provider, discovered_count, attempted)
+        return RecoveryOutcome(selected, audit)
+    return RecoveryOutcome(None, audit)
 
 
 def attempt_syndicated_recovery(
@@ -350,7 +352,7 @@ def _discover(
     component: str,
     audit_type: type[SyndicatedRecovery] | type[AlternateReportingRecovery],
 ):
-    """Run an allowlisted route's finder.
+    """Run a recovery route's finder.
 
     Returns (provider, results, None), or (provider, None, failure_audit).
     """
@@ -383,7 +385,7 @@ def _allowed_candidate_url(
     seen_urls: set[str],
     rejection_reasons: list[str],
 ) -> str | None:
-    """Return a new allowlisted URL for a search result, or record why not."""
+    """Return a new eligible URL for a search result, or record why not."""
     if not isinstance(item, candidate_type):
         rejection_reasons.append("malformed_candidate")
         return None

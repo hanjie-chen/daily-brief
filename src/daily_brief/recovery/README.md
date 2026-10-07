@@ -43,14 +43,15 @@ their titles and snippets are never evidence.
 | --- | --- | --- | --- |
 | Same article | HN title, any domain except HN | `MAX_SAME_ARTICLE_CANDIDATES` results, at most `MAX_SAME_ARTICLE_FETCHES` fetched | The first page that passes validation |
 | Syndicated copy | Terms from the Reuters URL slug and title, exact match, `SYNDICATED_HOST_ALLOWLIST` only | `MAX_SYNDICATED_CANDIDATES` | The first page that passes validation |
-| Alternate reporting | Distinctive slug or title terms plus "Reuters", `ALTERNATE_REPORTING_HOST_ALLOWLIST` only | `MAX_ALTERNATE_REPORTING_CANDIDATES` | The longest verified body, if the verified pages agree |
+| Alternate reporting | Reused fetched pages, then HN title (slug fallback), without a publisher allowlist | At most `MAX_ALTERNATE_REPORTING_CANDIDATES` validations including reused pages; one additional search if needed | The longest verified body, if the verified pages agree |
 
 ### Same Article
 
 `same_article.validate_same_article(...)` looks only at the fetched page:
 
-- Its own title, read from the page's `source_evidence`, must match the HN title
-  word for word, optionally after removing a trailing site name.
+- Its own title, read from the page's `source_evidence`, must be nonempty.
+  Rewritten titles are allowed; the explicit original-URL relationship below
+  establishes same-work identity, not equality with an HN submission title.
 - It must declare an explicit `crosspost` or `republication` relation to the
   original URL (a YouTube video must declare `narration` instead). A canonical
   link or a bare link is not enough. URLs are compared after normalization by
@@ -76,19 +77,36 @@ to two capitalized names shared by the title and slug.
 
 ### Alternate Reporting
 
-`alternate_reporting.validate_alternate_reporting(...)` requires a body of at
-least `MIN_ALTERNATE_REPORTING_BODY_CHARS` without teaser phrases, a Reuters
-marker near the top, a Reuters "Reporting by" footer near the end, a reporting
-date near the source date (from the source URL, or the HN submission time), most
-of the distinctive words from the title and slug, and every amount (million,
-billion, trillion) or percentage from the title and slug.
+`alternate_reporting.validate_alternate_reporting(...)` accepts reporting from
+other publishers, without Reuters branding or footer requirements. It requires:
 
-Yahoo Finance results are validated first; Reuters results are tried only when
-no Yahoo result passes. If two verified pages disagree on the date or share too
-few event words (`validations_conflict(...)`), the route fails with status
-`conflict` rather than choosing one. Summaries built on this material receive
-`ALTERNATE_REPORTING_SUMMARY_PREFIX` in `generation/summaries.py`, because the
-page reports the same event rather than the same article.
+- At least `MIN_ALTERNATE_REPORTING_BODY_CHARS` of body text and two substantive
+  sentences/paragraphs, without teaser phrases. Publisher metadata is excluded.
+- A reporting date within two days of the source URL date or HN submission date.
+  Explicit `source_evidence.published_at` takes precedence over body dates;
+  a nearby date mentioned in an old article cannot override its publication date.
+- Several distinctive source-title/slug words in the first 4,000 body characters,
+  available name signals, and amounts/percentages present in the source metadata.
+  Numeric article IDs are not event anchors. Search titles/snippets do not count.
+
+These deterministic rules check event identity signals, not factual truth or
+semantic equivalence. Ambiguous or missing signals still fail closed. Known
+social/discussion/video/code hosts are excluded before fetching and after
+redirects; other public publishers are eligible. The original URL and duplicates
+are skipped. Public-address checks remain in the article client.
+
+Pages fetched but rejected by same-article validation are retained only for this
+recovery attempt and checked first, without another HTTP request. If any pass,
+no additional search runs. Otherwise the route searches once with the HN title
+(slug terms only if the title is empty). Reused and newly fetched pages together
+have a five-page validation budget. There is no publisher preference. If verified
+pages have conflicting dates or event anchors (`validations_conflict(...)`), the
+route returns `conflict`; otherwise it uses the longest verified body.
+
+Accepted material is recorded as `alternate_reporting`. Integrated summaries
+receive the actual retrieved source and a generic other-reporting prompt that
+preserves attribution for allegations and disputed claims. Legacy summaries use
+the generic `ALTERNATE_REPORTING_SUMMARY_PREFIX`, not a Reuters attribution.
 
 ## Audit Records
 
@@ -111,7 +129,11 @@ failure.
 The same-article record keeps the search `query` and lists every result in
 `candidates` with its own
 `status` (`accepted`, `rejected`, or `fetch_failed`), `reason`, and evidence.
-The other two routes list rejection reasons in `rejection_reasons`.
+The other two routes list rejection reasons in `rejection_reasons`. For alternate
+reporting, `attempted_candidates` includes reused pages that were validated, not
+only new HTTP fetches. `provider=same_article` means reuse succeeded before a new
+finder was called; otherwise it names the active finder. Reused bodies are not
+persisted in diagnostics.
 
 ## Invariants
 
@@ -125,9 +147,9 @@ The other two routes list rejection reasons in `rejection_reasons`.
   package, so fetching a candidate cannot start another search.
 - Everything is bounded: search results, fetches, response sizes
   (`TAVILY_MAX_RESPONSE_BYTES`), and request time (`TAVILY_TIMEOUT_SECONDS`).
-- Candidate URLs are normalized and, for the syndicated-copy and
-  alternate-reporting routes, restricted to an allowlist before fetching and
-  again after redirects. `article_fetcher` still enforces public-address checks
+- Candidate URLs are normalized. Syndicated copies retain their publisher
+  allowlist; alternate reporting excludes known discussion/social endpoints
+  before fetching and again after redirects. `article_fetcher` still enforces public-address checks
   on every request.
 - The API key is sent only in the Tavily `Authorization` header. Audit records
   and logs carry error codes, never exception text.
@@ -142,7 +164,7 @@ The other two routes list rejection reasons in `rejection_reasons`.
 | `search_recovery.py` | Attempt functions: search, filter, fetch, validate, and audit for each route |
 | `same_article.py` | Same-article finder, URL normalization and comparison, and validation |
 | `syndicated_copy.py` | Reuters syndicated-copy finder, allowlist, and validation |
-| `alternate_reporting.py` | Alternate-reporting finder, allowlist, validation, and conflict check |
+| `alternate_reporting.py` | Alternate-reporting finder, URL filter, event validation, and conflict check |
 | `fetched_material.py` | Normalized fetched material shared with `generation/material.py` |
 | `tavily.py` | Shared Tavily Search request, bounds, error codes, and result parsing for all three finders |
 
@@ -152,18 +174,20 @@ The other two routes list rejection reasons in `rejection_reasons`.
 __init__        -> search_recovery, same_article, syndicated_copy, alternate_reporting, fetched_material
 search_recovery -> same_article, syndicated_copy, alternate_reporting, fetched_material
 same_article, syndicated_copy, alternate_reporting -> tavily
-all modules     -> models; search_recovery, same_article, fetched_material also
+alternate_reporting -> same_article (URL normalization)
+all modules     -> models; search_recovery, same_article, alternate_reporting, fetched_material also
                    -> article_fetcher (result and error types only)
 ```
 
-This package never imports `generation/`. The finder and validator modules do
-not import each other; what they share lives in `tavily.py`.
+This package never imports `generation/`. Alternate reporting reuses same-article URL normalization; search transport
+shared by finders lives in `tavily.py`.
 
 ## Tests
 
 - `tests/test_same_article.py`, `tests/test_syndicated_copy.py`, and
   `tests/test_alternate_reporting.py`: each finder's request and parsing, and
   each validator.
+- `tests/test_news_recovery.py`: generic news, reused material, date and identity guards.
 - `tests/test_same_article_pipeline.py`: same-article attempts, budgets, and the
   hand-off to the other routes and to discussion fallback.
 - `tests/generation/test_recovery.py`: end-to-end Reuters and alternate-reporting recovery

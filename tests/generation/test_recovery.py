@@ -664,7 +664,7 @@ def test_alternate_reporting_finder_is_not_called_for_other_failures(
     assert finder.calls == []
 
 
-def test_alternate_reporting_prefers_yahoo_and_selects_longest_verified_body(
+def test_alternate_reporting_selects_longest_verified_body_across_publishers(
     tmp_path,
 ):
     original_url = nytimes_anthropic_url()
@@ -709,7 +709,7 @@ def test_alternate_reporting_prefers_yahoo_and_selects_longest_verified_body(
         summarizer=summarizer,
     )
 
-    assert fetched_urls == [original_url, shorter_url, tied_long_url, longer_url]
+    assert fetched_urls == [original_url, reuters_url, shorter_url, tied_long_url, longer_url]
     assert summarizer.fetched_texts == [
         alternate_reporting_body(extra_filler=250)
     ]
@@ -737,18 +737,8 @@ def test_alternate_reporting_conflict_fails_closed(tmp_path):
             ),
         ]
     )
-    first_body = (
-        "Aug 28 (Reuters) - A judge ruled on the Pentagon blacklisting of "
-        "Anthropic. "
-        + ("Grounded report detail. " * 18)
-        + "(Reporting by First Reporter)"
-    )
-    second_body = (
-        "Aug 28 (Reuters) - The Trump administration received a ruling that "
-        "the government action was illegal. "
-        + ("Grounded report detail. " * 18)
-        + "(Reporting by Second Reporter)"
-    )
+    first_body = alternate_reporting_body().replace("Aug 28", "Aug 25")
+    second_body = alternate_reporting_body().replace("Aug 28", "Aug 29")
     summarizer = FakeSummarizer()
 
     def fetch(url, **kwargs):
@@ -836,7 +826,7 @@ def test_alternate_reporting_is_disabled_for_classification_and_reuters_origins(
     assert reuters_finder.calls == []
 
 
-def test_alternate_reporting_rejects_cross_host_redirect_and_keeps_origin_failure(
+def test_alternate_reporting_rejects_unsafe_redirect_and_keeps_origin_failure(
     tmp_path,
 ):
     original_url = nytimes_anthropic_url()
@@ -849,7 +839,7 @@ def test_alternate_reporting_rejects_cross_host_redirect_and_keeps_origin_failur
             alternate_reporting_body(),
             method="direct",
             extractor="trafilatura",
-            retrieved_url="https://evil.example/redirected",
+            retrieved_url="http://127.0.0.1/redirected",
         )
 
     result = run_generate(

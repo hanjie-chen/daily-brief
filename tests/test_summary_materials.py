@@ -224,13 +224,22 @@ def test_special_material_keeps_retrieval_provenance_without_text_prefix(origin,
 
 
 def test_alternate_reporting_is_disclosed_to_the_model_but_not_the_reader():
-    item = candidate(fetched_text="Event report body.")
+    item = candidate(fetched_text="Decrypt reports that police charged a woman; she disputes the allegation.")
     plain_prompt = build_summary_prompt(item)
     item.article_retrieval.material_origin = "alternate_reporting"
+    item.article_retrieval.retrieved_url = "https://decrypt.co/123/report"
     prompt = build_summary_prompt(item)
 
-    assert "Untrusted Reuters report on the same event" in prompt
+    assert "Source URL: https://example.com" in prompt
+    assert "Retrieved webpage URL: https://decrypt.co/123/report" in prompt
+    assert "Untrusted Other reporting on the same event" in prompt
     assert "[Source type: alternate_reporting]" in prompt
+    assert "其他媒体对同一事件的另一篇报道" in prompt
+    assert "只使用实际取得的报道明确支持的信息" in prompt
+    assert "不据此推断原文的内容和立场" in prompt
+    assert "不把指控写成已证实的事实" in prompt
+    assert "Decrypt reports that police charged a woman" in prompt
+    assert "Reuters" not in prompt
     assert "Untrusted Extracted webpage body" in plain_prompt
     assert "alternate_reporting" not in plain_prompt
     text = "某公司宣布新的数据中心计划。"

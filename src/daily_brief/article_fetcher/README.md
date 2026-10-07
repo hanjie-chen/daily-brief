@@ -64,10 +64,16 @@ bounded flow:
    uses an unredirected Authorization header and is never logged.
 6. Return `ArticleFetchResult` with transport, extractor, attempt count,
    retrieved URL, fallback reason, material origin, and optional bounded
-   `source_evidence`. The latter preserves fetched title, author, and explicit
+   `source_evidence`. The latter preserves fetched title, author, publication
+   date, and explicit
    source relations from article headers, Reader introductions, or YouTube
    descriptions; it is not itself an acceptance decision. It survives direct,
    Jina, and Wayback routing and never substitutes for article/caption text.
+   Publication dates are bounded to 64 characters and come only from explicit
+   page publication metadata, article JSON-LD, or article/header time elements;
+   modification dates and unrelated page dates are excluded. Reader/YouTube
+   metadata can supply a publication date explicitly, but prose and search
+   results are not used to infer it.
 
 Complete extracted text has a 2 MiB hard ceiling, independent of downstream
 model evidence budgets. HTML and PDF download ceilings remain 4 and 20 MiB.

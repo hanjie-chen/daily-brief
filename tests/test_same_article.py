@@ -53,7 +53,7 @@ def result(*, title=None, relations=(), text=None, method="direct"):
         "The results show the new models still use the prohibited interface in this evaluation. " * 5,
     ])
     evidence = SimpleNamespace(
-        title=title or source().story.title + " | Goodhart Labs",
+        title=source().story.title + " | Goodhart Labs" if title is None else title,
         author="Dean", relations=relations,
     )
     return ArticleFetchResult(text=body, method=method, source_evidence=evidence)
@@ -123,15 +123,50 @@ def test_validator_rejects_bare_links_teasers_and_wrong_post(relations, text, re
     assert checked.reason == reason
 
 
-def test_validator_rejects_eink_style_summary_and_wrong_title():
+def test_validator_rejects_eink_style_summary():
     relation = SimpleNamespace(kind="crosspost", url=LESSWRONG_URL, context="Cross-posted")
     summary = "This post summarizes the article and links back to the original. " * 40
     assert validate_same_article(source(), SameArticleCandidate("x", GOODHART_URL), result(relations=(relation,), text=summary)).reason == "summary_or_aggregator"
-    assert validate_same_article(source(), SameArticleCandidate("x", GOODHART_URL), result(title="A different post", relations=(relation,))).reason == "page_title_mismatch"
+
+
+@pytest.mark.parametrize("kind", ["crosspost", "republication"])
+def test_validator_accepts_rewritten_publisher_title_with_exact_source_relation(kind):
+    relation = SimpleNamespace(kind=kind, url=LESSWRONG_URL, context="Publisher-declared original")
+    checked = validate_same_article(
+        source(), SameArticleCandidate("untrusted search headline", GOODHART_URL),
+        result(title="New frontier models exploit the chess engine in alignment tests", relations=(relation,)),
+    )
+    assert checked.accepted is True
+    assert checked.evidence == (f"{kind}:{LESSWRONG_URL}:Publisher-declared original",)
+
+
+@pytest.mark.parametrize("relations", [
+    (),
+    (SimpleNamespace(kind="canonical", url=LESSWRONG_URL, context=""),),
+    (SimpleNamespace(kind="republication", url="https://example.com/another-article", context="Originally published"),),
+])
+def test_rewritten_title_does_not_establish_same_article_identity(relations):
+    checked = validate_same_article(
+        source(), SameArticleCandidate(source().story.title, GOODHART_URL),
+        result(title="New frontier models exploit the chess engine in alignment tests", relations=relations),
+    )
+    assert checked.accepted is False
+    assert checked.reason == "missing_explicit_source_relation"
+
+
+@pytest.mark.parametrize("title", ["", "   ", 123])
+def test_validator_still_requires_fetched_title(title):
+    relation = SimpleNamespace(kind="crosspost", url=LESSWRONG_URL, context="Cross-posted")
+    checked = validate_same_article(
+        source(), SameArticleCandidate(source().story.title, GOODHART_URL),
+        result(title=title, relations=(relation,)),
+    )
+    assert checked.accepted is False
+    assert checked.reason == "missing_page_title"
 
 
 def test_validator_accepts_youtube_only_when_narration_is_explicit():
     narration = SimpleNamespace(kind="narration", url=LESSWRONG_URL, context="Narration of the LessWrong post")
-    checked = validate_same_article(source(), SameArticleCandidate("x", "https://youtube.com/watch?v=a"), result(relations=(narration,), method="youtube_caption"))
+    checked = validate_same_article(source(), SameArticleCandidate("x", "https://youtube.com/watch?v=a"), result(title="An audio reading of the model cheating experiment", relations=(narration,), method="youtube_caption"))
     assert checked.accepted is True
     assert checked.evidence[0].startswith("narration:")

@@ -21,8 +21,6 @@ MAX_SAME_ARTICLE_FETCHES = 3
 MIN_SAME_ARTICLE_BODY_CHARS = 800
 HN_DOMAIN = "news.ycombinator.com"
 
-_TITLE_WORD = re.compile(r"[\w]+", re.UNICODE)
-_SITE_TITLE_SUFFIX = re.compile(r"\s+(?:[|–—-])\s+[^|–—-]{1,80}$")
 _TEASER_SIGNALS = (
     "read the full article",
     "read more",
@@ -157,8 +155,11 @@ def validate_same_article(
     del alternative  # Search-result metadata is untrusted discovery material.
     evidence_obj = getattr(fetched, "source_evidence", None)
     page_title = getattr(evidence_obj, "title", "") if evidence_obj else ""
-    if not isinstance(page_title, str) or not _titles_match(source.story.title, page_title):
-        return SameArticleValidation(False, "page_title_mismatch")
+    # HN submitters and republishers can rewrite a headline. The explicit
+    # publisher-declared relation below establishes which work was copied;
+    # requiring matching headline words would reject genuine republications.
+    if not isinstance(page_title, str) or not page_title.strip():
+        return SameArticleValidation(False, "missing_page_title")
 
     relation_evidence: list[str] = []
     is_youtube = fetched.method == "youtube_caption" or fetched.extractor == "youtube_caption"
@@ -197,18 +198,6 @@ def validate_same_article(
 def _body_without_metadata(text: str) -> str:
     marker = "\n\nExtracted body:\n"
     return text.split(marker, 1)[-1].strip()
-
-
-def _title_words(title: str) -> tuple[str, ...]:
-    title = " ".join(title.split())
-    return tuple(word.casefold() for word in _TITLE_WORD.findall(title))
-
-
-def _titles_match(story_title: str, page_title: str) -> bool:
-    expected = _title_words(story_title)
-    return bool(expected and expected in (
-        _title_words(page_title), _title_words(_SITE_TITLE_SUFFIX.sub("", page_title))
-    ))
 
 
 def _has_substantive_paragraphs(text: str, *, is_youtube: bool = False) -> bool:

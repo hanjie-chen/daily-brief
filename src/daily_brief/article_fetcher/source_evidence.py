@@ -7,6 +7,7 @@ quotes, navigation, and comment threads must not establish source identity.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from urllib.parse import urljoin
@@ -42,6 +43,7 @@ class SourceEvidence:
     title: str
     author: str = ""
     relations: tuple[SourceRelation, ...] = ()
+    published_at: str = ""
 
 
 def extract_html_source_evidence(markup: str, page_url: str) -> SourceEvidence:
@@ -63,7 +65,10 @@ def extract_html_source_evidence(markup: str, page_url: str) -> SourceEvidence:
     canonical = _canonical_relation(document, page_url)
     if canonical is not None:
         relations += (canonical,)
-    return SourceEvidence(title=title, author=author, relations=relations[:MAX_RELATIONS])
+    return SourceEvidence(
+        title=title, author=author, relations=relations[:MAX_RELATIONS],
+        published_at=_publication_date(document, header_nodes),
+    )
 
 
 def extract_markdown_source_evidence(
@@ -73,13 +78,80 @@ def extract_markdown_source_evidence(
     title: str = "",
     author: str = "",
     description: str = "",
+    published_at: str = "",
 ) -> SourceEvidence:
     """Collect equivalent bounded signals from Reader/YouTube publisher metadata."""
     clean_title = _clean(title)[:512] or _markdown_heading(content)
     clean_author = _clean(author)[:256]
     intro = "\n".join((description[:2000], content[:4000]))
     relations = _relations_from_text(intro, page_url)
-    return SourceEvidence(title=clean_title, author=clean_author, relations=relations)
+    return SourceEvidence(
+        title=clean_title, author=clean_author, relations=relations,
+        published_at=_bounded_date(published_at),
+    )
+
+
+def _bounded_date(value: str) -> str:
+    value = _clean(value) if isinstance(value, str) else ""
+    return value if len(value) <= 64 else ""
+
+
+def _publication_date(document, header_nodes: tuple) -> str:
+    # Publication metadata is distinct from modification dates. Never infer a
+    # publication date from navigation, search results, or arbitrary body prose.
+    for node in document.xpath("./head/meta[@content]"):
+        names = {node.get(key, "").lower() for key in ("property", "name", "itemprop")}
+        if names & {"article:published_time", "datepublished", "pubdate"}:
+            value = _bounded_date(node.get("content"))
+            if value:
+                return value
+
+    for script in document.xpath("//script[@type='application/ld+json']")[:8]:
+        if _excluded(script.getparent()):
+            continue
+        raw = script.text or ""
+        if len(raw) > 32768:
+            continue
+        try:
+            data = json.loads(raw)
+        except (ValueError, RecursionError):
+            continue
+        # Only the root and explicit @graph nodes describe the page; nested
+        # recommendations and related articles cannot supply its date.
+        nodes = data if isinstance(data, list) else [data]
+        if isinstance(data, dict) and isinstance(data.get("@graph"), list):
+            nodes = [data, *data["@graph"][:100]]
+        for item in nodes[:100]:
+            if not isinstance(item, dict):
+                continue
+            types = item.get("@type", [])
+            types = [types] if isinstance(types, str) else types
+            if not isinstance(types, list) or not any(
+                kind in {"Article", "NewsArticle", "BlogPosting"}
+                for kind in types if isinstance(kind, str)
+            ):
+                continue
+            value = _bounded_date(item.get("datePublished"))
+            if value:
+                return value
+
+    dates = document.xpath("//article//time[@datetime][@itemprop='datePublished' or @pubdate]")
+    dates += [time for node in header_nodes if node.tag == "header"
+              for time in node.xpath(".//time[@datetime]")]
+    for node in dates:
+        if _excluded(node):
+            continue
+        parent = node.getparent()
+        context = " ".join((node.get("itemprop", ""), node.get("class", ""),
+                            node.get("id", ""), node.text_content(),
+                            parent.text_content()[:500] if parent is not None else ""))
+        explicit_publication = node.get("itemprop") == "datePublished" or "pubdate" in node.attrib
+        if not explicit_publication and re.search(r"\b(?:updated|modified|datemodified)\b", context, re.I):
+            continue
+        value = _bounded_date(node.get("datetime"))
+        if value:
+            return value
+    return ""
 
 
 def _header_nodes(document) -> tuple:

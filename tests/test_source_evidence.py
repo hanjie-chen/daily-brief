@@ -90,3 +90,74 @@ def test_markdown_quotes_and_comment_sections_are_not_identity_evidence():
         'https://publisher.test/a',
     )
     assert not evidence.relations
+
+
+def test_publication_metadata_is_distinct_from_modified_date():
+    evidence = extract_html_source_evidence('''<html><head>
+      <meta property="article:modified_time" content="2026-10-07T12:00:00Z">
+      <meta property="article:published_time" content="2026-10-06T09:00:00Z">
+    </head><body><article><h1>News</h1></article></body></html>''',
+    'https://publisher.test/news')
+    assert evidence.published_at == '2026-10-06T09:00:00Z'
+
+
+def test_publication_metadata_accepts_explicit_name_and_itemprop():
+    for attribute, name in [('name', 'pubdate'), ('itemprop', 'datePublished')]:
+        evidence = extract_html_source_evidence(
+            f'<html><head><meta {attribute}="{name}" content="2026-10-06"></head></html>',
+            'https://publisher.test/news',
+        )
+        assert evidence.published_at == '2026-10-06'
+
+
+def test_publication_date_accepts_article_jsonld_graph():
+    evidence = extract_html_source_evidence('''<html><head>
+    <script type="application/ld+json">{"@graph":[
+      {"@type":"WebSite", "datePublished":"2000-01-01"},
+      {"@type":["Article", "NewsArticle"], "datePublished":"2026-10-06",
+       "dateModified":"2026-10-07"}]}</script></head></html>''',
+    'https://publisher.test/news')
+    assert evidence.published_at == '2026-10-06'
+
+
+def test_publication_date_accepts_header_time_and_explicit_article_time():
+    for markup in [
+        '<article><header><p>Published <time datetime="2026-10-06">October 6</time></p></header></article>',
+        '<article><time itemprop="datePublished" datetime="2026-10-06">October 6</time>'
+        '<time itemprop="dateModified" datetime="2026-10-07">Updated October 7</time></article>',
+    ]:
+        assert extract_html_source_evidence(markup, 'https://publisher.test/news').published_at == '2026-10-06'
+
+
+def test_publication_date_does_not_use_unrelated_or_updated_dates():
+    markup = '''<html><head><meta name="dateModified" content="2026-10-07">
+    <script type="application/ld+json">{"@type":"WebSite","datePublished":"2000-01-01"}</script>
+    </head><body><nav><time datetime="2026-10-07">Today</time></nav>
+    <article><header><p>Updated <time datetime="2026-10-07">October 7</time></p></header>
+    <p>Historical event: <time datetime="1999-01-01">January 1</time></p>
+    <div class="related"><time itemprop="datePublished" datetime="2000-01-01">Related</time></div>
+    </article></body></html>'''
+    assert extract_html_source_evidence(markup, 'https://publisher.test/news').published_at == ''
+
+
+def test_publication_date_ignores_nested_recommendations_and_malformed_jsonld():
+    markup = '''<html><head>
+    <script type="application/ld+json">{invalid JSON}</script>
+    <script type="application/ld+json">{"@type":"NewsArticle","dateModified":"2026-10-07",
+    "related":{"@type":"NewsArticle","datePublished":"2000-01-01"}}</script>
+    </head></html>'''
+    assert extract_html_source_evidence(markup, 'https://publisher.test/news').published_at == ''
+
+
+def test_publication_date_is_bounded_and_markdown_requires_explicit_metadata():
+    evidence = extract_html_source_evidence(
+        '<html><head><meta name="pubdate" content="' + 'x' * 65 + '"></head></html>',
+        'https://publisher.test/news',
+    )
+    assert evidence.published_at == ''
+    assert extract_markdown_source_evidence(
+        '# Article\nPublished: 2026-10-06', 'https://publisher.test/news',
+    ).published_at == ''
+    assert extract_markdown_source_evidence(
+        '# Article', 'https://publisher.test/news', published_at=' 2026-10-06 ',
+    ).published_at == '2026-10-06'

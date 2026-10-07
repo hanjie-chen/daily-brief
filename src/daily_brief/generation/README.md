@@ -72,11 +72,14 @@ this package that owns it.
    After an origin browser challenge exhausts retrieval, selected-item summary
    retrieval first tries `recovery/same_article.py`: one title-based Tavily basic query,
    ten discovery candidates, and at most three unique candidate fetches. Only HN
-   is excluded. An independently fetched matching title, explicit publisher
+   is excluded. An independently fetched nonempty title, explicit publisher
    cross-post/republication backlink to the source, and substantive body are
    required. YouTube candidates use the existing captions path and must declare
    narration of that source. Search snippets and bare/canonical backlinks are
-   insufficient. Rejections continue to the existing Reuters recovery routes.
+   insufficient. Rejections continue to source-appropriate recovery: Reuters syndicated copies
+   or same-event reporting from other publishers. The latter reuses already
+   fetched pages before issuing an additional search, while preserving the
+   original URL and marking accepted material as `alternate_reporting`.
 7. `summaries.py`: Ordinary items make one summary call after material preparation.
    `llm/summarizer.py` presents webpage metadata, extracted webpage material, HN
    self-post text, and the discussion sample as separately labeled inputs. It

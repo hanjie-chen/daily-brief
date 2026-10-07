@@ -577,6 +577,13 @@ def test_combined_self_post_is_labeled_as_hn_post_not_retrieved_webpage():
     assert source_summary_prefix(item) == "根据 HN 帖子正文："
 
 
+def test_legacy_alternate_reporting_prefix_does_not_invent_publisher_identity():
+    from daily_brief.llm.summarizer import source_summary_prefix
+    item = candidate(story_text="", fetched_text="Decrypt reports the same event.")
+    item.article_retrieval.material_origin = "alternate_reporting"
+    assert source_summary_prefix(item) == "据其他媒体对同一事件的报道："
+
+
 def test_community_roundup_uses_question_only_as_context_and_comments_as_evidence():
     item = candidate(
         story_text="What are you working on?",

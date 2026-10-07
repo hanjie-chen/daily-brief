@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from daily_brief.recovery.alternate_reporting import (
-    ALTERNATE_REPORTING_HOST_ALLOWLIST,
+    EXCLUDED_REPORTING_HOSTS,
     MAX_ALTERNATE_REPORTING_CANDIDATES,
     AlternateReportingCandidate,
     AlternateReportingFinderError,
@@ -79,10 +79,8 @@ def alternate_body(*, footer=True, date_text="Aug 28"):
     return beginning + ("x" * filler_length) + ending
 
 
-def test_query_uses_clean_event_anchors_without_exact_phrase():
-    assert build_tavily_query(source_candidate()) == (
-        "anthropic government blacklisting Reuters"
-    )
+def test_query_uses_event_title_without_publisher_restriction():
+    assert build_tavily_query(source_candidate()) == source_candidate().story.title
 
 
 def test_tavily_finder_is_independent_and_discards_provider_content():
@@ -116,10 +114,9 @@ def test_tavily_finder_is_independent_and_discards_provider_content():
     request, timeout = requests[0]
     payload = json.loads(request.data)
     assert timeout == 10
-    assert payload["query"] == "anthropic government blacklisting Reuters"
-    assert payload["include_domains"] == sorted(
-        ALTERNATE_REPORTING_HOST_ALLOWLIST
-    )
+    assert payload["query"] == source_candidate().story.title
+    assert "include_domains" not in payload
+    assert payload["exclude_domains"] == sorted(EXCLUDED_REPORTING_HOSTS)
     assert payload["exact_match"] is False
     assert payload["include_answer"] is False
     assert payload["include_raw_content"] is False
@@ -159,15 +156,16 @@ def test_tavily_finder_bounds_results():
 @pytest.mark.parametrize(
     "url",
     [
-        "https://evil.example/article",
+        "https://127.0.0.1/article",
+        "https://www.reddit.com/r/news/article",
         "file:///tmp/article",
         "https://user:pass@finance.yahoo.com/article",
         "https://finance.yahoo.com:8443/article",
-        "https://www.reuters.com.evil.example/article",
+        "https://[::1]/article",
         "not a url",
     ],
 )
-def test_candidate_url_filter_rejects_unsafe_or_non_allowlisted_urls(url):
+def test_candidate_url_filter_rejects_unsafe_or_discussion_urls(url):
     assert normalize_allowed_candidate_url(url) is None
 
 
@@ -241,11 +239,6 @@ def test_real_body_manifest_replays_body_only_validation_when_fixture_exists():
     [
         ("Aug 28 (Reuters) - short (Reporting by A B)", "body_too_short"),
         (
-            alternate_body().replace("(Reuters)", "(News service)"),
-            "missing_reuters_marker",
-        ),
-        (alternate_body(footer=False), "missing_reporting_footer"),
-        (
             alternate_body().replace("x" * 30, "Read the full article" + "x" * 9, 1),
             "teaser_content",
         ),
@@ -267,7 +260,7 @@ def test_validator_rejects_same_day_unrelated_anthropic_matx_report():
         "Aug 28 (Reuters) - Anthropic is in talks with chip startup MatX to "
         "accelerate chip design, according to people familiar with the matter. "
     )
-    body = beginning + ("Unrelated semiconductor reporting. " * 12) + (
+    body = beginning + ("The chip designers are working on accelerator hardware for a planned manufacturing partnership. " * 6) + (
         "(Reporting by Example Reporter)"
     )
     result = validate_alternate_reporting(
@@ -284,7 +277,7 @@ def test_search_result_title_cannot_make_unrelated_body_pass():
         "Aug 28 (Reuters) - Anthropic is in talks with chip startup MatX to "
         "accelerate chip design, according to people familiar with the matter. "
     )
-    body = beginning + ("Unrelated semiconductor reporting. " * 12) + (
+    body = beginning + ("The chip designers are working on accelerator hardware for a planned manufacturing partnership. " * 6) + (
         "(Reporting by Example Reporter)"
     )
     result = validate_alternate_reporting(
@@ -359,3 +352,21 @@ def test_conflicting_verified_event_identities_fail_closed():
         matched_anchors=("unrelated", "signals", "only"),
     )
     assert validations_conflict([first, conflict]) is True
+
+
+def test_validator_accepts_other_publishers_without_reuters_attribution():
+    body = alternate_body(footer=False).replace("(Reuters)", "(News service)")
+    result = validate_alternate_reporting(
+        source_candidate(), AlternateReportingCandidate("Untrusted title", "https://www.yahoo.com/news/story.html"), body,
+    )
+    assert result.accepted
+    assert normalize_allowed_candidate_url("https://decrypt.co/123/report") is not None
+
+
+def test_title_case_source_does_not_turn_every_headline_word_into_a_name():
+    candidate = source_candidate()
+    candidate.story = replace(candidate.story, title="Judge Rules Trump Administration’s Blacklisting Of Anthropic Was Illegal")
+    result = validate_alternate_reporting(
+        candidate, AlternateReportingCandidate("Ignored", YAHOO_URL), alternate_body(),
+    )
+    assert result.accepted

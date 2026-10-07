@@ -4,16 +4,21 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Protocol
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit
 
+from ..article_fetcher.source_evidence import SourceEvidence
 from ..models import Candidate
+from .same_article import normalize_candidate_url
 from .tavily import TavilyFinder
 
 MAX_ALTERNATE_REPORTING_CANDIDATES = 5
 MIN_ALTERNATE_REPORTING_BODY_CHARS = 400
-REUTERS_HOSTS = {"reuters.com", "www.reuters.com"}
-YAHOO_HOSTS = {"finance.yahoo.com", "ca.finance.yahoo.com"}
-ALTERNATE_REPORTING_HOST_ALLOWLIST = REUTERS_HOSTS | YAHOO_HOSTS
+# These are discussion/social endpoints, not replacement news articles. Public
+# address validation is still enforced by the article client on every request.
+EXCLUDED_REPORTING_HOSTS = {
+    "news.ycombinator.com", "reddit.com", "x.com", "twitter.com", "facebook.com",
+    "instagram.com", "linkedin.com", "youtube.com", "youtu.be", "github.com",
+}
 
 _WORD = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 _NUMBER_SIGNAL = re.compile(
@@ -23,15 +28,6 @@ _NUMBER_SIGNAL = re.compile(
 )
 _NYTIMES_DATE = re.compile(r"/(20\d{2})/(\d{2})/(\d{2})(?:/|$)")
 _REUTERS_DATE = re.compile(r"-(20\d{2})-(\d{2})-(\d{2})(?:/|$)")
-_REUTERS_MARKER = re.compile(
-    r"(?:\(\s*reuters\s*\)|\bby\s+[^\n]{0,80}\breuters\b|\breuters\s*[-\u2013\u2014])",
-    re.IGNORECASE,
-)
-_REPORTING_FOOTER = re.compile(
-    r"(?:\(|^|\n)\s*reporting\s+by\s+[^\n()]{2,300}"
-    r"(?:\n|;\s*)?(?:editing\s+by\s+[^\n()]{2,200})?\s*\)?\s*$",
-    re.IGNORECASE,
-)
 _TEASER_SIGNALS = (
     "read the full article",
     "get unlimited access",
@@ -91,10 +87,10 @@ _MONTHS = {
     "december": 12,
 }
 _TEXTUAL_DATE = re.compile(
-    r"\b(" + "|".join(_MONTHS) + r")\.?\s+(\d{1,2})(?:\s+(20\d{2}))?\b",
+    r"\b(" + "|".join(_MONTHS) + r")\.?\s+(\d{1,2})(?:,?\s+(20\d{2}))?\b",
     re.IGNORECASE,
 )
-_ISO_DATE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
+_ISO_DATE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})(?:\b|(?=T\d{2}:))")
 
 
 @dataclass(frozen=True)
@@ -130,70 +126,70 @@ class TavilyAlternateReportingFinder(TavilyFinder):
             AlternateReportingFinderError,
             query=build_tavily_query(candidate),
             max_results=MAX_ALTERNATE_REPORTING_CANDIDATES,
-            include_domains=sorted(ALTERNATE_REPORTING_HOST_ALLOWLIST),
+            exclude_domains=sorted(EXCLUDED_REPORTING_HOSTS),
             exact_match=False,
         )
         return [AlternateReportingCandidate(title=title, url=url) for title, url in results]
 
 
 def normalize_allowed_candidate_url(url: str) -> str | None:
-    try:
-        parsed = urlsplit(url.strip())
-        hostname = (parsed.hostname or "").lower()
-        port = parsed.port
-    except ValueError:
+    normalized = normalize_candidate_url(url)
+    if normalized is None:
         return None
-    if (
-        parsed.scheme.lower() not in {"http", "https"}
-        or hostname not in ALTERNATE_REPORTING_HOST_ALLOWLIST
-        or parsed.username is not None
-        or parsed.password is not None
-        or not parsed.path.startswith("/")
-        or (port is not None and port not in {80, 443})
+    parsed = urlsplit(normalized)
+    hostname = parsed.hostname or ""
+    if parsed.port not in {None, 80, 443} or any(
+        hostname == host or hostname.endswith("." + host)
+        for host in EXCLUDED_REPORTING_HOSTS
     ):
         return None
-    netloc = hostname if port is None else f"{hostname}:{port}"
-    return urlunsplit((parsed.scheme.lower(), netloc, parsed.path, parsed.query, ""))
-
-
-def is_yahoo_url(url: str) -> bool:
-    normalized = normalize_allowed_candidate_url(url)
-    return bool(normalized and (urlsplit(normalized).hostname or "") in YAHOO_HOSTS)
+    return normalized
 
 
 def validate_alternate_reporting(
     source: Candidate,
     alternate: AlternateReportingCandidate,
     body: str,
+    *,
+    source_evidence: SourceEvidence | None = None,
 ) -> AlternateReportingValidation:
-    text = body.strip()
+    del alternate  # Search titles/snippets only discover URLs, never verify them.
+    text = body.split("\n\nExtracted body:\n", 1)[-1].strip()
     if len(text) < MIN_ALTERNATE_REPORTING_BODY_CHARS:
         return AlternateReportingValidation(False, "body_too_short")
     normalized_text = " ".join(text.lower().split())
     if any(signal in normalized_text for signal in _TEASER_SIGNALS):
         return AlternateReportingValidation(False, "teaser_content")
-    if _REUTERS_MARKER.search(text[:700]) is None:
-        return AlternateReportingValidation(False, "missing_reuters_marker")
-    if _REPORTING_FOOTER.search(text[-600:]) is None:
-        return AlternateReportingValidation(False, "missing_reporting_footer")
+    # Require prose, rather than a headline, keyword list, or search snippet.
+    sentences = re.split(r"(?<=[.!?])\s+|\n+", text)
+    if sum(len(sentence.strip()) >= 60 for sentence in sentences) < 2:
+        return AlternateReportingValidation(False, "insufficient_substantive_material")
 
     source_date = _source_date(source)
     if source_date is None:
         return AlternateReportingValidation(False, "source_date_missing")
-    reporting_date = _nearby_reporting_date(text[:1600], source_date)
+    published_at = getattr(source_evidence, "published_at", "")
+    # Explicit publication metadata takes precedence: a recent date mentioned
+    # in an old article must not make it look like a fresh report.
+    reporting_date = _nearby_reporting_date(
+        published_at if published_at else text[:1600], source_date
+    )
     if reporting_date is None:
         return AlternateReportingValidation(False, "date_mismatch")
 
     source_anchors = _event_anchors(source)
     identity_words = {
         _canonical_token(word)
-        for word in _WORD.findall(text)
+        for word in _WORD.findall(text[:4000])
     }
     matched = tuple(anchor for anchor in source_anchors if anchor in identity_words)
     required = min(5, max(3, (len(source_anchors) + 1) // 2))
     if len(source_anchors) < 3 or len(matched) < required:
         return AlternateReportingValidation(False, "insufficient_event_signals")
-    identity_numbers = set(_number_signals(text))
+    entities = _source_entities(source)
+    if any(entity not in identity_words for entity in entities):
+        return AlternateReportingValidation(False, "entity_mismatch")
+    identity_numbers = set(_number_signals(text[:4000]))
     if any(
         signal not in identity_numbers for signal in _source_number_signals(source)
     ):
@@ -225,19 +221,41 @@ def validations_conflict(
 
 
 def build_tavily_query(candidate: Candidate) -> str:
+    # Preserve the event in the HN title; numeric publisher article IDs from
+    # slugs and a hard-coded news agency make the search less useful.
+    title = " ".join(candidate.story.title.split())
+    if title:
+        return title[:400]
     anchors = _slug_search_terms(candidate.story.source_url)
-    if len(anchors) < 3:
-        for anchor in _title_search_terms(candidate.story.title):
-            if anchor not in anchors:
-                anchors.append(anchor)
-            if len(anchors) >= 3:
-                break
     if not anchors:
         raise AlternateReportingFinderError(
             "source URL and title do not contain searchable event anchors",
             error_code="invalid_source_metadata",
         )
-    return (" ".join(anchors[:3]) + " Reuters")[:400]
+    return " ".join(anchors[:8])[:400]
+
+
+def _source_entities(candidate: Candidate) -> tuple[str, ...]:
+    # Headline/slug agreement identifies names without treating sentence-initial
+    # verbs as entities. Multiword names also survive when absent from the slug.
+    title = candidate.story.title
+    slug_words = set(_slug_anchors(candidate.story.source_url))
+    words = re.findall(r"[a-zA-Z]+", title)
+    # Capitalization cannot identify names in a Title Case headline. In that
+    # case rely on the event-word checks instead of requiring every headline
+    # word as if it were part of a person's name.
+    significant = [word for word in words if word.lower() not in _STOP_WORDS and len(word) >= 3]
+    if len(significant) >= 5 and sum(word[0].isupper() for word in significant) / len(significant) > 0.7:
+        return ()
+    names = []
+    for match in re.finditer(r"\b[A-Z][a-zA-Z]+(?:[ -]+[A-Z][a-zA-Z]+)*\b", title):
+        words = _WORD.findall(match.group())
+        for word in words:
+            token = _canonical_token(word)
+            if (token not in _STOP_WORDS and len(token) >= 3
+                    and (token in slug_words or len(words) > 1)):
+                names.append(token)
+    return tuple(dict.fromkeys(names))
 
 
 def _event_anchors(candidate: Candidate) -> list[str]:
@@ -251,9 +269,6 @@ def _event_anchors(candidate: Candidate) -> list[str]:
 def _title_anchors(title: str) -> list[str]:
     return _distinctive_anchors(_WORD.findall(title))
 
-
-def _title_search_terms(title: str) -> list[str]:
-    return _distinctive_search_terms(_WORD.findall(title))
 
 
 def _slug_anchors(url: str) -> list[str]:
@@ -283,6 +298,7 @@ def _distinctive_anchors(words: list[str]) -> list[str]:
         canonical = _canonical_token(lowered)
         if (
             lowered not in _STOP_WORDS
+            and not lowered.isdigit()
             and len(canonical) >= 4
             and canonical not in anchors
         ):
@@ -296,6 +312,7 @@ def _distinctive_search_terms(words: list[str]) -> list[str]:
         lowered = word.lower()
         if (
             lowered not in _STOP_WORDS
+            and not lowered.isdigit()
             and len(lowered) >= 4
             and lowered not in terms
         ):

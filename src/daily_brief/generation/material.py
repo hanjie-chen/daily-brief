@@ -137,11 +137,13 @@ def _attempt_search_recovery(
     syndicated_finder: SyndicatedCopyFinder | None,
     alternate_reporting_finder: AlternateReportingFinder | None,
 ) -> _SearchRecovery:
-    """Try same-article, then one Reuters route, stopping at the first success."""
+    """Try same-article, then a source-appropriate recovery route."""
     same_article = SameArticleRecovery()
+    fetched_candidates = ()
     if failure.fallback_attempted and is_origin_block_reason(failure.fallback_reason):
         outcome = attempt_same_article_recovery(candidate, article_client, same_article_finder)
         same_article = outcome.audit
+        fetched_candidates = outcome.fetched_candidates
         if outcome.material is not None:
             return _SearchRecovery(outcome.material, "same_article", same_article=same_article)
     if _should_attempt_reuters_recovery(candidate, failure):
@@ -151,7 +153,8 @@ def _attempt_search_recovery(
         )
     if _should_attempt_alternate_reporting(candidate, failure):
         outcome = attempt_alternate_reporting_recovery(
-            candidate, article_client, alternate_reporting_finder
+            candidate, article_client, alternate_reporting_finder,
+            fetched_candidates=fetched_candidates,
         )
         return _SearchRecovery(
             outcome.material,

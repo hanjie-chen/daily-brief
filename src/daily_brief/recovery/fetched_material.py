@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..article_fetcher import ArticleFetchError, ArticleFetchResult
+from ..article_fetcher import ArticleFetchError, ArticleFetchResult, SourceEvidence
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,7 @@ class FetchedMaterial:
     fallback_reason: str
     retrieved_url: str
     material_origin: str
+    source_evidence: SourceEvidence | None = None
 
 
 def coerce_fetched_material(fetch_result, retrieved_url: str) -> FetchedMaterial:
@@ -57,4 +58,8 @@ def coerce_fetched_material(fetch_result, retrieved_url: str) -> FetchedMaterial
         fallback_reason=fallback_reason,
         retrieved_url=effective_url,
         material_origin=material_origin,
+        source_evidence=(
+            fetch_result.source_evidence
+            if isinstance(fetch_result, ArticleFetchResult) else None
+        ),
     )
