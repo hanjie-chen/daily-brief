@@ -1,5 +1,7 @@
 # OpenRouter 接入与运行
 
+为什么选择 Qwen 分类与 Luna 摘要、其他候选的取舍和下次重测条件，见 [2026 年 10 月模型选型记录](./model-selection-2026-10.md)。
+
 `generate`、`retry`、`evaluate-model` 及未显式传入 backend 的库入口共用模型选择配置。为兼容既有安装，未设置 provider 时仍用 Gemini；生产切换需要明确配置：
 
 ```sh
