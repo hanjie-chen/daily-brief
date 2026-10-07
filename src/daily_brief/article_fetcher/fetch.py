@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import socket
 import time
+from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
+from functools import partial
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request
 
 from .challenges import _is_network_timeout, _is_tls_issuer_unavailable
@@ -206,23 +210,36 @@ def fetch_article(
         policy=policy,
     )
 
+    fetch_direct = partial(
+        _fetch_direct_response,
+        opener=open_request,
+        resolver=resolver,
+        timeout_seconds=timeout_seconds,
+        html_max_bytes=html_max_bytes,
+        pdf_max_bytes=pdf_max_bytes,
+        extracted_max_bytes=extracted_max_bytes,
+        pdf_max_pages=pdf_max_pages,
+        pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
+        pdf_address_space_bytes=pdf_address_space_bytes,
+        adobe_pdf_enabled=policy.adobe_pdf_enabled,
+        adobe_pdf_timeout_seconds=policy.adobe_pdf_timeout_seconds,
+    )
     for attempt in range(1, policy.direct_max_attempts + 1):
         try:
-            result = _fetch_direct_response(
-                direct_request,
-                opener=open_request,
-                resolver=resolver,
-                timeout_seconds=timeout_seconds,
-                html_max_bytes=html_max_bytes,
-                pdf_max_bytes=pdf_max_bytes,
-                extracted_max_bytes=extracted_max_bytes,
-                pdf_max_pages=pdf_max_pages,
-                pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
-                pdf_address_space_bytes=pdf_address_space_bytes,
-                adobe_pdf_enabled=policy.adobe_pdf_enabled,
-                adobe_pdf_timeout_seconds=policy.adobe_pdf_timeout_seconds,
-            )
+            result = fetch_direct(direct_request)
         except HTTPError as exc:
+            if (
+                exc.code == 404
+                and exc.url == direct_request.full_url
+                and policy.url_correction_enabled
+                and urlsplit(url).path.endswith("\\")
+            ):
+                return _retry_without_trailing_backslash(
+                    direct_request,
+                    fetch_direct=fetch_direct,
+                    resolver=resolver,
+                    direct_attempts=attempt,
+                )
             fallback_reason = _http_fallback_reason(exc)
             if fallback_reason:
                 return _recover_direct_failure(
@@ -313,3 +330,51 @@ def fetch_article(
         )
 
     raise AssertionError("direct article retry loop ended unexpectedly")
+
+
+def _retry_without_trailing_backslash(
+    request: Request,
+    *,
+    fetch_direct: Callable[[Request], ArticleFetchResult],
+    resolver,
+    direct_attempts: int,
+) -> ArticleFetchResult:
+    """Make one direct correction attempt; never start another recovery chain."""
+    # Preserve the exact query/fragment (including empty delimiters). Only the
+    # final literal path character is removed, without decoding percent escapes.
+    url = request.full_url
+    path_end = min((url.find(c) for c in "?#" if c in url), default=len(url))
+    corrected_url = url[:path_end - 1] + url[path_end:]
+    reason = "url_trailing_backslash"
+    attempts = direct_attempts
+    LOGGER.warning(
+        "component=article_fetch method=direct status=http_404 "
+        "correction=%s attempts=%d", reason, direct_attempts,
+    )
+    try:
+        _validate_public_http_url(corrected_url, resolver)
+        attempts += 1
+        result = fetch_direct(Request(corrected_url, headers=dict(request.header_items())))
+    except Exception as exc:
+        if isinstance(exc, HTTPError):
+            code = f"http_{exc.code}"
+        elif isinstance(exc, ArticleFetchError):
+            code = exc.error_code
+        elif _is_network_timeout(exc):
+            code = "network_timeout"
+        else:
+            code = "request_failed"
+        raise ArticleFetchError(
+            f"direct URL correction failed after original HTTP 404: {exc}",
+            error_code=code,
+            method="direct",
+            extractor=getattr(exc, "extractor", ""),
+            fallback_attempted=True,
+            fallback_reason=reason,
+            attempts=attempts,
+        ) from exc
+    LOGGER.info(
+        "component=article_fetch method=direct extractor=%s status=success "
+        "fallback_reason=%s attempts=%d", result.extractor, reason, attempts,
+    )
+    return replace(result, attempts=attempts, fallback_reason=reason)

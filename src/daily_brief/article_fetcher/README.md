@@ -37,6 +37,18 @@ bounded flow:
    classification and summary retrieval, duration logging, and an explicit,
    logged local `pypdf` fallback.
 4. Retry a direct network timeout only when the policy permits it.
+   Summary retrieval also permits one narrowly scoped URL correction: when the
+   original URL (not a redirected destination) returns HTTP 404 and its path
+   ends in a literal backslash, remove exactly that final character and make
+   one direct request. Preserve the query and fragment, validate the corrected
+   URL again, and use the same response/extraction limits. Percent-encoded
+   backslashes are not changed. A failed correction ends retrieval without
+   timeout retries, Jina, Wayback, or search recovery. Classification disables
+   URL correction. The original story URL remains unchanged; success records
+   the actual `retrieved_url`, total attempts, and the private fallback reason
+   `url_trailing_backslash`. Failure retains that reason and the final error.
+   Logs record the correction; public provenance maps the new reason to the
+   existing `unknown` value without expanding the public schema.
 5. For eligible failures, try Jina Reader and then, for eligible browser
    challenges only, a validated Wayback capture. Wayback index and replay
    requests prefer identity encoding, but also accept gzip. Both the downloaded

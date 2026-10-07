@@ -56,6 +56,7 @@ class ArticleFetchPolicy:
     youtube_enabled: bool = True
     adobe_pdf_enabled: bool = True
     adobe_pdf_timeout_seconds: int = DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS
+    url_correction_enabled: bool = True
 
 
 SUMMARY_FETCH_POLICY = ArticleFetchPolicy()
@@ -65,6 +66,7 @@ CLASSIFICATION_FETCH_POLICY = ArticleFetchPolicy(
     wayback_enabled=False,
     youtube_enabled=False,
     adobe_pdf_enabled=True,
+    url_correction_enabled=False,
 )
 
 

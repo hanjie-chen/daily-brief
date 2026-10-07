@@ -7,6 +7,7 @@ from email.message import Message
 from io import BytesIO
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request
 
 import pytest
 from pypdf import PdfWriter
@@ -2455,6 +2456,149 @@ def test_fetch_jina_reader_text_preserves_markdown_structure():
     )
 
     assert text == content
+
+
+@pytest.mark.parametrize("suffix", ["", "?a=%2F&b=\\#part", "?#", "#section"])
+def test_trailing_backslash_404_retries_corrected_url_once(suffix, caplog):
+    source = "https://example.com/article/\\" + suffix
+    corrected = Request("https://example.com/article/" + suffix).full_url
+    requests = []
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        if len(requests) == 1:
+            raise http_error(request.full_url, 404)
+        return FakeResponse(b"Recovered facts.", content_type="text/plain", final_url=corrected)
+
+    with caplog.at_level("INFO", logger="daily_brief.article_fetcher"):
+        result = fetch_article(source, opener=open_response, resolver=resolver_for({}))
+
+    assert requests == [Request(source).full_url, corrected]
+    assert result.text == "Recovered facts."
+    assert result.retrieved_url == corrected
+    assert result.method == "direct"
+    assert result.attempts == 2
+    assert result.fallback_reason == "url_trailing_backslash"
+    assert "correction=url_trailing_backslash" in caplog.text
+
+
+@pytest.mark.parametrize("source", [
+    "https://example.com/article",
+    "https://example.com/article%5C",
+    "https://example.com/arti\\cle",
+    "https://example.com/article?q=\\",
+    "https://example.com/article#\\",
+])
+def test_404_does_not_guess_other_url_corrections(source):
+    requests = []
+
+    def deny(request, timeout):
+        requests.append(request.full_url)
+        raise http_error(request.full_url, 404)
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(source, opener=deny, resolver=resolver_for({}))
+    assert requests == [source]
+    assert caught.value.attempts == 1
+    assert not caught.value.fallback_attempted
+
+
+@pytest.mark.parametrize("status", [403, 500])
+def test_trailing_backslash_is_not_corrected_for_other_http_errors(status):
+    requests = []
+    source = "https://example.com/article/\\"
+
+    def deny(request, timeout):
+        requests.append(request.full_url)
+        raise http_error(request.full_url, status)
+
+    with pytest.raises(ArticleFetchError):
+        fetch_article(source, opener=deny, resolver=resolver_for({}))
+    assert requests == [source]
+
+
+def test_successful_url_with_trailing_backslash_is_unchanged():
+    source = "https://example.com/article/\\"
+    requests = []
+
+    def open_response(request, timeout):
+        requests.append(request.full_url)
+        return FakeResponse(b"Original facts.", content_type="text/plain", final_url=source)
+
+    result = fetch_article(source, opener=open_response, resolver=resolver_for({}))
+    assert requests == [source]
+    assert result.retrieved_url == source
+    assert result.fallback_reason == ""
+
+
+@pytest.mark.parametrize("failure,code", [
+    (lambda url: http_error(url, 404), "http_404"),
+    (lambda url: http_error(url, 403, cf_mitigated="challenge"), "http_403"),
+    (lambda url: TimeoutError("timed out"), "network_timeout"),
+    (lambda url: ArticleFetchError("empty", error_code="empty_content"), "empty_content"),
+])
+def test_corrected_request_failure_stops_without_more_recovery(failure, code):
+    # Multiple backslashes must not trigger repeated correction attempts.
+    source = "https://example.com/article/\\\\"
+    requests = []
+
+    def deny(request, timeout):
+        requests.append(request.full_url)
+        if len(requests) == 1:
+            raise http_error(request.full_url, 404)
+        raise failure(request.full_url)
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(source, opener=deny, resolver=resolver_for({}))
+    assert requests == [source, source[:-1]]
+    assert caught.value.error_code == code
+    assert caught.value.attempts == 2
+    assert caught.value.fallback_attempted
+    assert caught.value.fallback_reason == "url_trailing_backslash"
+
+
+def test_correction_revalidates_public_address_before_request():
+    source = "https://example.com/article/\\"
+    requests = []
+    addresses = {"example.com": PUBLIC_ADDRESS}
+
+    def deny(request, timeout):
+        requests.append(request.full_url)
+        addresses["example.com"] = "127.0.0.1"
+        raise http_error(request.full_url, 404)
+
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(source, opener=deny, resolver=resolver_for(addresses))
+    assert requests == [source]
+    assert caught.value.error_code == "unsafe_url"
+    assert caught.value.fallback_reason == "url_trailing_backslash"
+
+
+def test_classification_policy_does_not_correct_url():
+    requests = []
+    source = "https://example.com/article/\\"
+
+    def deny(request, timeout):
+        requests.append(request.full_url)
+        raise http_error(request.full_url, 404)
+
+    with pytest.raises(ArticleFetchError):
+        fetch_article(source, opener=deny, resolver=resolver_for({}),
+                      policy=CLASSIFICATION_FETCH_POLICY)
+    assert requests == [source]
+
+
+def test_redirected_404_does_not_correct_original_url():
+    requests = []
+    source = "https://example.com/article/\\"
+
+    def deny(request, timeout):
+        requests.append(request.full_url)
+        raise http_error("https://example.com/moved", 404)
+
+    with pytest.raises(ArticleFetchError):
+        fetch_article(source, opener=deny, resolver=resolver_for({}))
+    assert requests == [source]
 
 
 @pytest.mark.parametrize("status_code", [401, 403, 404])
