@@ -80,8 +80,12 @@ def test_classifier_contract_and_no_thinking():
 
 def test_summary_records_usage_cost_and_sources():
     item = material()
-    client = backend(Opener(completion(output())))
+    transport = Opener(completion(output()))
+    client = backend(transport)
     assert client.summarize(item) == '一个本地备份工具。'
+    payload = json.loads(transport.requests[0].data)
+    assert payload['reasoning'] == {'effort': 'medium', 'exclude': True}
+    assert payload['max_tokens'] == 8192
     assert item.summary_sources_used == ['web_body']
     assert client.last_summary_usage['thought_tokens'] == 4
     assert client.last_summary_usage['cache_write_tokens'] == 80
@@ -103,7 +107,9 @@ def test_roundup_uses_comments_schema_and_formats_entries():
                           {'name': 'Book B', 'description': '介绍设计决策。'}]}
     transport = Opener(completion(result))
     assert '- Book A：解释系统思维。' in backend(transport).summarize(item)
-    schema = json.loads(transport.requests[0].data)['response_format']['json_schema']['schema']
+    payload = json.loads(transport.requests[0].data)
+    assert payload['reasoning'] == {'effort': 'medium', 'exclude': True}
+    schema = payload['response_format']['json_schema']['schema']
     assert schema['required'] == ['status', 'introduction', 'entries', 'reason']
 
 

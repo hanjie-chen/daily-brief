@@ -51,6 +51,13 @@ The prompt organizes the text around the subject, key facts or mechanisms, and
 conditions or limitations. Length is flexible: usually two to four sentences,
 shorter for simple material and longer when explanation requires it. The existing
 1,000-character validation ceiling remains a defensive bound, not a length target.
+The title locates the event, while supplied material verifies it. Distinguishing
+actors, methods, contributions, and identifying names or versions take priority
+over secondary examples. Publisher metadata may identify a subject named only
+generically in the body; body evidence overrides conflicting metadata. The model
+must declare every source supplying retained facts, including identity details,
+rather than only the dominant source. These are prompt requirements, not semantic
+source-attribution checks in the validator.
 The material prompt puts the core explanation and its limits ahead of examples.
 It requires availability status (available, preview, planned), the distinction
 between an author's expectation and an observed result, and metric definitions
@@ -145,7 +152,7 @@ fail before CLI collection. Evaluation disables Gemini cross-model fallback;
 OpenRouter never uses cross-model fallback.
 
 OpenRouter defaults to `qwen/qwen3.8-flash` with reasoning disabled for classification
-(512 output tokens), and `openai/gpt-6-luna` with requested low reasoning for summaries
+(512 output tokens), and `openai/gpt-6-luna` with requested medium reasoning for summaries
 (8192 output tokens). Actual reasoning usage can be zero. All summary routes reuse
 the existing schemas and validators, including the comments-only roundup list.
 Requests use strict JSON schema and require provider parameter support; same-model

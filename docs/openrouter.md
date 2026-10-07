@@ -12,7 +12,7 @@ DAILY_BRIEF_OPENROUTER_SUMMARIZER_MODEL=openai/gpt-6-luna
 DAILY_BRIEF_OPENROUTER_MAX_RUN_COST_USD=0.25
 ```
 
-凭据只写本机 `.env`，不要提交。CLI 不自动加载 `.env`，沿用现有环境加载方式。全部常用参数及默认值在 `.env.example`；模型参数分别为分类关闭思考、摘要 low，实际 reasoning tokens 以响应为准。
+凭据只写本机 `.env`，不要提交。CLI 不自动加载 `.env`，沿用现有环境加载方式。全部常用参数及默认值在 `.env.example`；模型参数分别为分类关闭思考、摘要 medium，实际 reasoning tokens 以响应为准。
 
 ## 调用与费用
 

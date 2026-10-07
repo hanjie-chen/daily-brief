@@ -191,7 +191,7 @@ class OpenRouterBackend:
         input_price, output_price = self._prices[task]
         payload = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                    "max_tokens": output_limit, "stream": False,
-                   "reasoning": {"enabled": False} if task == "classify" else {"effort": "low", "exclude": True},
+                   "reasoning": {"enabled": False} if task == "classify" else {"effort": "medium", "exclude": True},
                    "response_format": {"type": "json_schema", "json_schema": {"name": "daily_brief_" + task, "strict": True, "schema": schema}},
                    "provider": {"require_parameters": True, "allow_fallbacks": True,
                                 "max_price": {"prompt": input_price, "completion": output_price}}}

@@ -686,7 +686,12 @@ def _build_summary_route_prompt(candidate: Candidate) -> str:
 不添加与核心解释无关的轶事。
 
 先找出核心内容，再选择最有解释价值的事实：
-- 开头直接讲清对象、发生的变化或核心观点，不用“发帖者发起讨论”“本文探讨了”介绍文章或讨论过程。
+- 结合标题定位当前条目的核心事件，并用材料核实。摘要应让读者理解谁或什么做了什么、产生了什么结果。
+  主体、方法或参与方式若是该事件的关键区别，必须保留，不要泛化成“研究团队”“某工具”等而丢失这一区别。
+  材料明确提供的名称、型号或版本若影响核心主体的识别，应保留；不逐项罗列无关品牌。
+  标题突出但材料不支持的说法，不得照搬；材料明确纠正标题时，保留这一纠正。
+  空间有限时，优先删去次要参数和例子，保留核心事件及改变其含义的限制。
+  开头直接讲内容，不用“发帖者发起讨论”“本文探讨了”介绍文章或讨论过程。
   陌生项目或概念若材料有解释，用平实中文简要交代。
 - 接着说明关键机制、结果或理由，让读者知道具体是什么、为什么；不要用“探讨了”“讨论了优缺点”
   代替实际内容，也不要把标题换一种说法就结束。
@@ -705,7 +710,9 @@ def _build_summary_route_prompt(candidate: Candidate) -> str:
 材料缺少上述信息时，不猜测补齐；改用证据支持的较窄表述，必要时省略会误导的细节。
 
 综合材料时遵守这些边界：
-- 网页正文是理解条目的主要依据；元信息用于补充对象定位，不重复正文，也不把发布者的宣传或自评当作已验证结论。
+- 网页正文是理解条目的主要依据；网页元信息明确提供的主体名称、型号或版本可以补充正文中的泛称，
+  不因它只出现在元信息中就省略对识别核心主体有用的信息。元信息与正文冲突时以正文为准；
+  不把发布者的宣传或自评当作已验证结论，也不根据 HN 标题补齐材料未提供的身份。
 - HN 帖子由提交者提供，不一定是作者。评论仅在提供有用的具体纠错、限制或使用经验时采用；
   与正文重复或缺乏信息的评论直接省略。有用内容放在它解释的对象或结论旁边，不在结尾追加“有评论补充指出”。
 - 需要区分事实、作者观点和个人经验时，在相关句子中自然说明，如“作者认为”“一位使用者报告”。
@@ -726,6 +733,9 @@ def _build_summary_route_prompt(candidate: Candidate) -> str:
 Return exactly JSON fields status, summary, summary_sources, reason.
 summary_sources lists only sources actually used in summary, without duplicates:
 web_metadata, web_body, hn_post, hn_comments. Available but unused sources must be omitted.
+Account for every source that supplies a retained fact, including names, model IDs, and versions.
+If metadata supplies an identity absent from the body, include web_metadata alongside web_body
+when using both; do not report only the dominant source. Merely reading a source does not count as using it.
 For sufficient, summary and summary_sources must be nonempty and reason empty.
 For insufficient, summary must be empty, summary_sources empty, and reason nonempty (at most 300 characters).
 
