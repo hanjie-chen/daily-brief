@@ -21,12 +21,13 @@ from .http_safety import (
     _validate_public_http_url,
 )
 from .responses import _normalize_document_text
-from .source_evidence import SourceEvidence, extract_markdown_source_evidence
+from .source_evidence import SourceEvidence, _bounded_date, extract_markdown_source_evidence
 
 
 JINA_READER_BASE_URL = "https://r.jina.ai/"
 JINA_CACHE_TOLERANCE_SECONDS = 5 * 60
 JINA_JSON_CONTENT_TYPES = {"application/json", "text/json"}
+JINA_ORIGIN_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
 @dataclass(frozen=True)
@@ -119,8 +120,11 @@ def _fetch_jina_reader_once(
         request.add_unredirected_header("Authorization", f"Bearer {api_key}")
     open_request = opener or _build_safe_opener(resolver).open
 
+    reader_http_status = code = status = http_status = None
+    content_chars = None
     try:
         with open_request(request, timeout=timeout_seconds) as response:
+            reader_http_status = getattr(response, "status", None)
             _validate_public_http_url(response.geturl(), resolver)
             content_type = response.headers.get_content_type().lower()
             if content_type not in JINA_JSON_CONTENT_TYPES:
@@ -146,9 +150,15 @@ def _fetch_jina_reader_once(
 
         code = envelope.get("code")
         status = envelope.get("status")
+        data = envelope.get("data")
+        if isinstance(data, dict):
+            http_status = data.get("httpStatus")
+            if isinstance(data.get("content"), str):
+                content_chars = len(data["content"])
         if not (_is_json_integer(code) and 200 <= code < 300):
             raise ArticleFetchError(
-                "Jina Reader envelope code does not indicate success",
+                "Jina Reader envelope code does not indicate success: "
+                f"code={_diagnostic_status(code)}",
                 error_code="jina_provider_status",
             )
         if not (
@@ -156,20 +166,25 @@ def _fetch_jina_reader_once(
             and (200 <= status < 300 or 20000 <= status < 20100)
         ):
             raise ArticleFetchError(
-                "Jina Reader envelope status does not indicate success",
+                "Jina Reader envelope status does not indicate success: "
+                f"status={_diagnostic_status(status)}",
                 error_code="jina_provider_status",
             )
 
-        data = envelope.get("data")
         if not isinstance(data, dict):
             raise ArticleFetchError(
                 "Jina Reader envelope data is not an object",
                 error_code="jina_invalid_envelope",
             )
-        http_status = data.get("httpStatus")
-        if not (_is_json_integer(http_status) and 200 <= http_status < 300):
+        # Reader can return rendered article content alongside a redirect status.
+        # These statuses still require all URL, content and challenge checks below.
+        if not (
+            _is_json_integer(http_status)
+            and (200 <= http_status < 300 or http_status in JINA_ORIGIN_REDIRECT_STATUSES)
+        ):
             raise ArticleFetchError(
-                "Jina Reader origin status does not indicate success",
+                "Jina Reader origin status does not indicate success: "
+                f"origin_http_status={_diagnostic_status(http_status)}",
                 error_code="jina_origin_status",
             )
 
@@ -214,9 +229,11 @@ def _fetch_jina_reader_once(
                 title=data.get("title") if isinstance(data.get("title"), str) else "",
                 author=data.get("author") if isinstance(data.get("author"), str) else "",
                 description=data.get("description") if isinstance(data.get("description"), str) else "",
+                published_at=_publication_date(data),
             ),
         )
     except HTTPError as exc:
+        reader_http_status = exc.code
         raise ArticleFetchError(
             f"Jina Reader request failed: HTTP {exc.code}",
             error_code=f"http_{exc.code}",
@@ -237,6 +254,37 @@ def _fetch_jina_reader_once(
             method="jina",
             extractor="jina",
         ) from exc
+    finally:
+        # Do not log response strings, URLs, body text or credentials. Provider
+        # fields may be malformed or attacker-controlled even in a JSON envelope.
+        LOGGER.info(
+            "component=jina_reader auth=%s event=response http_status=%s "
+            "code=%s status=%s origin_http_status=%s content_chars=%s",
+            "api_key" if api_key else "anonymous",
+            _diagnostic_status(reader_http_status),
+            _diagnostic_status(code),
+            _diagnostic_status(status),
+            _diagnostic_status(http_status),
+            content_chars if content_chars is not None else "unknown",
+        )
+
+
+def _publication_date(data: dict) -> str:
+    published_at = _bounded_date(data.get("publishedTime"))
+    if published_at:
+        return published_at
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        return _bounded_date(metadata.get("article:published_time"))
+    return ""
+
+
+def _diagnostic_status(value) -> str:
+    if value is None:
+        return "missing"
+    if _is_json_integer(value) and 0 <= value <= 99999:
+        return str(value)
+    return "invalid"
 
 
 def _is_json_integer(value) -> bool:

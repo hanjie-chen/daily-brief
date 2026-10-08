@@ -60,8 +60,17 @@ bounded flow:
    challenges, malformed responses, timeouts, and other failures do not trigger
    this retry. Each request retains the existing timeout and size limits;
    attempt counts include both requests, including when Wayback follows.
-   Logs distinguish anonymous/API-key attempts using stable codes only. The key
-   uses an unredirected Authorization header and is never logged.
+   Reader validates its successful JSON envelope separately from the reported
+   origin status. Origin 2xx and 301/302/303/307/308 proceed to the existing
+   public-URL, nonempty-content, challenge-page and size checks: rendered article
+   content can accompany a redirect status. Other statuses (including 304),
+   missing values and noninteger values are rejected. Acceptance does not prove
+   article completeness or change the requested URL/query parameters.
+   Per-request logs distinguish anonymous/API-key attempts and record outer HTTP
+   status, envelope code/status, origin status and content length, without body
+   text or credentials. Status errors include bounded numeric status values;
+   malformed fields are represented by markers, never echoed. The key uses an
+   unredirected Authorization header and is never logged.
 6. Return `ArticleFetchResult` with transport, extractor, attempt count,
    retrieved URL, fallback reason, material origin, and optional bounded
    `source_evidence`. The latter preserves fetched title, author, publication
@@ -73,7 +82,9 @@ bounded flow:
    page publication metadata, article JSON-LD, or article/header time elements;
    modification dates and unrelated page dates are excluded. Reader/YouTube
    metadata can supply a publication date explicitly, but prose and search
-   results are not used to infer it.
+   results are not used to infer it. Reader prefers `publishedTime`, falling back
+   to `metadata["article:published_time"]` when the former is missing, nonstring,
+   blank or over the 64-character bound. Modification timestamps are not used.
 
 Complete extracted text has a 2 MiB hard ceiling, independent of downstream
 model evidence budgets. HTML and PDF download ceilings remain 4 and 20 MiB.
