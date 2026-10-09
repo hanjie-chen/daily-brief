@@ -34,7 +34,7 @@ LOGGER = logging.getLogger(__name__)
 _DIAGNOSTICS = (
     "article_retrieval", "discussion_retrieval", "summary_mode", "summary_context",
     "summary_input_mode", "summary_sources_used", "summary_basis", "summary_status",
-    "source_material", "summary_generation", "content_reason",
+    "source_material", "summary_generation", "content_reason", "hn_post_retrieval",
 )
 
 
@@ -117,7 +117,10 @@ def run_retry(
             if not isinstance(fresh_story, Story) or fresh_story.hn_item_id != item_id:
                 raise ValueError("HN story fetch returned a mismatched item")
             candidate.story = replace(candidate.story, story_text=fresh_story.story_text)
+            candidate.hn_post_retrieval_status = "success" if fresh_story.story_text.strip() else "empty"
         except Exception as exc:
+            candidate.hn_post_retrieval_status = "failed"
+            candidate.hn_post_retrieval_error_code = getattr(exc, "error_code", "hn_post_fetch_failed")
             post_retrieval = {
                 "status": "failed",
                 "error_code": getattr(exc, "error_code", "hn_post_fetch_failed"),
@@ -144,6 +147,8 @@ def run_retry(
         attempt = {"attempted_at": datetime.now(TIMEZONE).isoformat(timespec="seconds"),
                    "status": "failed", "hn_post_retrieval": post_retrieval}
         attempt.update({key: new_record[key] for key in _DIAGNOSTICS})
+        # Preserve the richer existing retry-only request diagnostic.
+        attempt["hn_post_retrieval"] = post_retrieval
         if candidate.summary_status == "success":
             # Validate each replacement before admitting it to the saved brief.
             replacement_brief = json.loads(render_public_brief_json(

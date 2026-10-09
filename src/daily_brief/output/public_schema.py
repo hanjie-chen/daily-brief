@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from urllib.parse import parse_qs, urlsplit
 
@@ -42,6 +43,19 @@ PROVENANCE_VALUES = {
         "tls_issuer_unavailable", "source_material_insufficient", "unknown",
     },
 }
+
+
+MATERIAL_STATUSES = {"success", "empty", "failed", "not_attempted", "not_needed", "unknown"}
+GENERATION_STATUSES = {"success", "insufficient", "failed", "not_attempted", "unknown"}
+SUMMARY_SOURCES = {"web_metadata", "web_body", "hn_post", "hn_comments"}
+GENERATION_REASONS = {
+    "none", "unknown", "challenge_page", "cloudflare_challenge", "datadome_challenge",
+    "vercel_challenge", "empty_content", "network_timeout", "tls_issuer_unavailable",
+    "source_material_insufficient", "network_error", "http_error", "extraction_failed",
+    "rate_limited", "authentication_failed", "provider_unavailable", "invalid_response",
+    "no_materials",
+}
+MODEL_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,127}", re.ASCII)
 
 
 class PublicBriefValidationError(ValueError):
@@ -87,13 +101,15 @@ def validate_public_brief(payload) -> None:
 
 
 def _validate_item(item) -> None:
-    if not isinstance(item, dict) or set(item) not in (
-        ITEM_KEYS, ITEM_KEYS | {"provenance"}
-    ):
+    if (not isinstance(item, dict) or not ITEM_KEYS <= set(item)
+            or set(item) - ITEM_KEYS - {"provenance", "generation_info"}):
         raise PublicBriefValidationError("item must contain the exact schema v2 fields")
 
     if "provenance" in item:
         _validate_provenance(item["provenance"])
+
+    if "generation_info" in item:
+        _validate_generation_info(item["generation_info"])
 
     hn_item_id = _validate_text(item["hn_item_id"], "hn_item_id", 32)
     if not hn_item_id.isdigit():
@@ -125,6 +141,40 @@ def _validate_provenance(value) -> None:
     for field, allowed in PROVENANCE_VALUES.items():
         if not isinstance(value[field], str) or value[field] not in allowed:
             raise PublicBriefValidationError(f"unsupported provenance.{field}")
+
+
+def _validate_generation_info(value) -> None:
+    def exact(obj, keys, name):
+        if not isinstance(obj, dict) or set(obj) != set(keys):
+            raise PublicBriefValidationError(f"invalid generation_info.{name} fields")
+
+    def enum(code, allowed, name):
+        if not isinstance(code, str) or code not in allowed:
+            raise PublicBriefValidationError(f"unsupported generation_info.{name}")
+
+    exact(value, {"materials", "summary_sources", "generation"}, "root")
+    exact(value["materials"], {"webpage", "hn_post", "hn_comments"}, "materials")
+    for name, material in value["materials"].items():
+        keys = {"status", "reason", "method", "origin"} if name == "webpage" else {"status", "reason"}
+        exact(material, keys, name)
+        enum(material["status"], MATERIAL_STATUSES, f"{name}.status")
+        enum(material["reason"], GENERATION_REASONS, f"{name}.reason")
+        if name == "webpage":
+            enum(material["method"], PROVENANCE_VALUES["retrieval_method"], "webpage.method")
+            enum(material["origin"], PROVENANCE_VALUES["material_origin"], "webpage.origin")
+    sources = value["summary_sources"]
+    if sources is not None:
+        if (not isinstance(sources, list) or len(sources) > 4
+                or any(not isinstance(source, str) or source not in SUMMARY_SOURCES for source in sources)
+                or len(sources) != len(set(sources))):
+            raise PublicBriefValidationError("invalid generation_info.summary_sources")
+    generation = value["generation"]
+    exact(generation, {"status", "model", "reason"}, "generation")
+    enum(generation["status"], GENERATION_STATUSES, "generation.status")
+    enum(generation["reason"], GENERATION_REASONS, "generation.reason")
+    model = generation["model"]
+    if model is not None and (not isinstance(model, str) or MODEL_IDENTIFIER.fullmatch(model) is None):
+        raise PublicBriefValidationError("invalid generation_info.generation.model")
 
 
 def _validate_date(value) -> None:

@@ -162,9 +162,13 @@ def test_hn_post_failure_does_not_block_web_and_comments(tmp_path):
         raise RuntimeError('HN temporarily unavailable')
     kwargs['hn_story_fetcher'] = fail_post
     result = run_retry(briefs, data, date_label=DAY, item_ids=['1'], model_backend=FakeSummarizer(), **kwargs)
-    _, audit = read_outputs(briefs, data)
+    public, audit = read_outputs(briefs, data)
     assert result.updated == 1
     assert audit[0]['last_retry']['hn_post_retrieval']['status'] == 'failed'
+    assert audit[0]['last_retry']['hn_post_retrieval']['error_message'] == 'HN temporarily unavailable'
+    assert audit[0]['hn_post_retrieval']['status'] == 'failed'
+    assert public['sections']['ai']['items'][0]['generation_info']['materials']['hn_post']['status'] == 'failed'
+    assert public['sections']['ai']['items'][0]['generation_info']['generation']['status'] == 'success'
 
 
 def test_roundup_uses_fresh_comment_summary_without_reclassification(tmp_path):

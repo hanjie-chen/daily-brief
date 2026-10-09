@@ -56,6 +56,7 @@ Each package with its own guide lists its files there.
 | [`recovery/`](recovery/README.md) | Search-based recovery after the original source is blocked |
 | `output/__init__.py` | Stable facade for rendering, public payload validation, and publishing |
 | `output/render.py` | Markdown, public JSON, and private candidate-audit serialization |
+| `output/generation_info.py` | Safe projection of per-material acquisition, declared sources, and actual model diagnostics |
 | `output/public_schema.py` | Public payload contract shared by generation and publishing |
 | `output/publisher.py` | Website delivery, retry, and local success state |
 | `output/artifacts.py` | Atomic local text artifact replacement |
@@ -116,17 +117,20 @@ listed only in that package's guide.
 - Public JSON and private audit data have different trust and compatibility
   boundaries. Public output uses the strict schema in `output/public_schema.py` and never
   exposes raw provider diagnostics, recovery URLs, or private evaluation material.
-- Schema v2 items may include `provenance`, an exact five-field enum-only object:
-  `summary_basis`, `retrieval_method`, `retrieval_status`, `material_origin`, and
-  `fallback_reason`. Allowed codes live in `PROVENANCE_VALUES` in
-  `output/public_schema.py` and must match the website validator. Old items omit
-  the object and remain valid; unknown internal values become `unknown`, never
-  raw diagnostics. Basis describes a successful summary's evidence (or `none`
-  on failure), independently of the last recorded retrieval attempt. It does not
-  imply that every available material source, especially HN comments, was used;
-  combinations the public enum cannot express become `unknown`. Exact per-source
-  usage remains private audit data. Roundup questions are context only.
-  Deploy the accepting website before enabling generator output with this field.
+- Schema v2 items may include `provenance` and `generation_info` independently.
+  Existing provenance retains its five-field enum-only contract and is still
+  emitted. New generation info separates webpage, HN post, and HN comment
+  acquisition from model-declared source usage and summary generation. It uses
+  exact nested objects, allowlisted statuses/reasons, nullable source declarations,
+  and a nullable ASCII model identifier (at most 128 characters). It never exposes
+  raw provider errors, recovery URLs, or model-generated insufficiency prose.
+  Successful summaries without declared usage export null; unsuccessful summaries
+  export an empty source array. A fetched but insufficient roundup comment sample
+  remains an acquisition success when nonempty. Retrieval success does not imply
+  generation success. Retry records HN post failure separately from an empty post.
+  Failed retries preserve the prior public summary and generation info together.
+  Historical items omit either object and remain valid; no backfill is required.
+  Deploy the accepting website before enabling generator output with new fields.
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never
   scans or catches up old dates implicitly.

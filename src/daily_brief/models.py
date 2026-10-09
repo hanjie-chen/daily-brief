@@ -164,6 +164,8 @@ class Candidate:
     summary_mode: str = "not_routed"
     summary_input_mode: str = "legacy"
     summary_sources_used: list[str] = field(default_factory=list)
+    hn_post_retrieval_status: str = "unknown"
+    hn_post_retrieval_error_code: str = ""
     summary_context_strategy: str = "not_prepared"
     summary_context_source_chars: int = 0
     summary_context_selected_chars: int = 0

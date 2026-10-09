@@ -117,8 +117,10 @@ A successful summary replaces only that item's public summary/provenance/status
 and generation diagnostics, then regenerates Markdown from the saved selection.
 A failed attempt leaves its prior public result and base audit intact; its latest
 attempt diagnostics are stored under `last_retry` in the candidate audit. This
-single record is replaced on the next retry, not appended indefinitely. No raw
-page, post, comment text, or model-input capture is written. Explicit model
+single record is replaced on the next retry, not appended indefinitely. HN post acquisition is recorded separately in the candidate audit and public
+`generation_info`, so a failed fresh story request cannot appear as an empty post.
+The public generation info remains paired with the saved summary when a retry
+fails. No raw page, post, comment text, or model-input capture is written. Explicit model
 comparison captures remain a separate opt-in workflow.
 
 Writes use atomic file replacement and check for changes to the inputs made while

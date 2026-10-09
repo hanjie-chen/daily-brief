@@ -216,7 +216,9 @@ def _summary_model(summary_client) -> str:
     )
     if not isinstance(model, str):
         return ""
-    return " ".join(model.split())[:128]
+    # Keep overlong identifiers distinguishable from valid public identifiers.
+    # Public projection rejects >128 rather than publishing a truncated model.
+    return " ".join(model.split())[:512]
 
 
 def _summary_attempts(summary_client) -> int:

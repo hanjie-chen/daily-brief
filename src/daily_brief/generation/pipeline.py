@@ -300,7 +300,8 @@ def _persist_generation(
 
 def _candidate(story: Story) -> Candidate:
     return score_candidate(
-        Candidate(story=story, matched_keywords=_keyword_matches(story))
+        Candidate(story=story, matched_keywords=_keyword_matches(story),
+                  hn_post_retrieval_status="success" if story.story_text.strip() else "empty")
     )
 
 

@@ -5,6 +5,7 @@ from dataclasses import asdict
 
 from ..models import Candidate
 from .public_schema import PROVENANCE_VALUES, PUBLIC_BRIEF_SCHEMA_VERSION
+from .generation_info import public_generation_info
 
 
 def render_markdown(
@@ -106,6 +107,10 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                         "rejection_reasons": alternate_recovery.rejection_reasons,
                         "error_code": alternate_recovery.error_code,
                     },
+                },
+                "hn_post_retrieval": {
+                    "status": candidate.hn_post_retrieval_status,
+                    "error_code": candidate.hn_post_retrieval_error_code,
                 },
                 "discussion_retrieval": {
                     "status": candidate.discussion_retrieval.status,
@@ -291,6 +296,7 @@ def _public_item(candidate: Candidate) -> dict:
         "points": story.points,
         "comments": story.comments,
         "provenance": _public_provenance(candidate),
+        "generation_info": public_generation_info(candidate),
     }
 
 

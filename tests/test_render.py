@@ -104,6 +104,7 @@ def test_render_candidates_json_uses_snake_case_fields():
         "rejection_reason",
         "article_retrieval",
         "discussion_retrieval",
+        "hn_post_retrieval",
         "summary_basis",
         "summary_status",
         "summary_generation",
@@ -245,6 +246,15 @@ def test_render_public_brief_json_contains_stable_schema_and_selected_items():
                         "discussion_url": "https://news.ycombinator.com/item?id=1",
                         "points": 30,
                         "comments": 5,
+                        "generation_info": {
+                            "materials": {
+                                "webpage": {"status": "not_attempted", "method": "unknown", "origin": "unknown", "reason": "none"},
+                                "hn_post": {"status": "unknown", "reason": "unknown"},
+                                "hn_comments": {"status": "not_attempted", "reason": "none"},
+                            },
+                            "summary_sources": [],
+                            "generation": {"status": "not_attempted", "model": None, "reason": "none"},
+                        },
                         "provenance": {
                             "summary_basis": "unknown",
                             "retrieval_method": "unknown",
@@ -268,6 +278,15 @@ def test_render_public_brief_json_contains_stable_schema_and_selected_items():
                         "discussion_url": "https://news.ycombinator.com/item?id=1",
                         "points": 30,
                         "comments": 5,
+                        "generation_info": {
+                            "materials": {
+                                "webpage": {"status": "not_attempted", "method": "unknown", "origin": "unknown", "reason": "none"},
+                                "hn_post": {"status": "unknown", "reason": "unknown"},
+                                "hn_comments": {"status": "not_attempted", "reason": "none"},
+                            },
+                            "summary_sources": [],
+                            "generation": {"status": "not_attempted", "model": None, "reason": "none"},
+                        },
                         "provenance": {
                             "summary_basis": "unknown",
                             "retrieval_method": "unknown",
