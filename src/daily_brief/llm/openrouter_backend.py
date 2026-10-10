@@ -30,6 +30,7 @@ DEFAULT_CLASSIFIER_MODEL = "qwen/qwen3.8-flash"
 DEFAULT_SUMMARIZER_MODEL = "openai/gpt-6-luna"
 CLASSIFIER_MAX_OUTPUT_TOKENS = 512
 SUMMARY_MAX_OUTPUT_TOKENS = 8192
+SUMMARY_REASONING_EFFORT = "medium"
 MODEL_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}/[a-z0-9][a-z0-9._:-]{0,127}$")
 LOGGER = logging.getLogger(__name__)
 
@@ -135,6 +136,7 @@ class OpenRouterBackend:
         self.accounted_cost_usd = 0.0
         self.request_records: list[dict] = []
         self._last_started = {}
+        self.last_summary_reasoning_effort = None
         self.last_summary_model = self.summarizer_model
         self.last_summary_attempts = 0
         self.last_summary_provider_status = ""
@@ -165,6 +167,7 @@ class OpenRouterBackend:
             raise OpenRouterResponseError("OpenRouter classifier returned invalid decisions") from None
 
     def summarize(self, candidate: Candidate) -> str:
+        self.last_summary_reasoning_effort = None
         self.last_summary_model = self.summarizer_model
         self.last_summary_attempts = 0
         self.last_summary_provider_status = ""
@@ -191,7 +194,7 @@ class OpenRouterBackend:
         input_price, output_price = self._prices[task]
         payload = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                    "max_tokens": output_limit, "stream": False,
-                   "reasoning": {"enabled": False} if task == "classify" else {"effort": "medium", "exclude": True},
+                   "reasoning": {"enabled": False} if task == "classify" else {"effort": SUMMARY_REASONING_EFFORT, "exclude": True},
                    "response_format": {"type": "json_schema", "json_schema": {"name": "daily_brief_" + task, "strict": True, "schema": schema}},
                    "provider": {"require_parameters": True, "allow_fallbacks": True,
                                 "max_price": {"prompt": input_price, "completion": output_price}}}
@@ -208,6 +211,8 @@ class OpenRouterBackend:
                       "reserved_usd": reservation, "cost_usd": None, "status": "pending"}
             self.request_records.append(record)
             if task == "summarize":
+                self.last_summary_reasoning_effort = payload["reasoning"]["effort"]
+                record["reasoning_effort"] = self.last_summary_reasoning_effort
                 self.last_summary_attempts += 1
                 self.last_summary_provider_status = ""
                 self.last_summary_usage = {}

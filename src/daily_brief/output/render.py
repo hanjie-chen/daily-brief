@@ -140,6 +140,7 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                     "status": candidate.summary_generation.status,
                     "provider": candidate.summary_generation.provider,
                     "model": candidate.summary_generation.model,
+                    "reasoning_effort": candidate.summary_generation.reasoning_effort,
                     "attempts": candidate.summary_generation.attempts,
                     "provider_status": (
                         candidate.summary_generation.provider_status

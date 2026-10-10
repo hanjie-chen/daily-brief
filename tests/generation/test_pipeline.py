@@ -77,6 +77,7 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
         "model": "",
         "attempts": 1,
         "provider_status": "completed",
+        "reasoning_effort": None,
         "input_tokens": 100,
         "output_tokens": 20,
         "thought_tokens": 60,

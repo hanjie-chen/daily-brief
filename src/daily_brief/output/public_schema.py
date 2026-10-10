@@ -46,6 +46,7 @@ PROVENANCE_VALUES = {
 
 
 MATERIAL_STATUSES = {"success", "empty", "failed", "not_attempted", "not_needed", "unknown"}
+REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 GENERATION_STATUSES = {"success", "insufficient", "failed", "not_attempted", "unknown"}
 SUMMARY_SOURCES = {"web_metadata", "web_body", "hn_post", "hn_comments"}
 GENERATION_REASONS = {
@@ -169,7 +170,13 @@ def _validate_generation_info(value) -> None:
                 or len(sources) != len(set(sources))):
             raise PublicBriefValidationError("invalid generation_info.summary_sources")
     generation = value["generation"]
-    exact(generation, {"status", "model", "reason"}, "generation")
+    required = {"status", "model", "reason"}
+    if (not isinstance(generation, dict) or not required <= set(generation)
+            or set(generation) - required - {"reasoning_effort"}):
+        raise PublicBriefValidationError("invalid generation_info.generation fields")
+    effort = generation.get("reasoning_effort")
+    if effort is not None:
+        enum(effort, REASONING_EFFORTS, "generation.reasoning_effort")
     enum(generation["status"], GENERATION_STATUSES, "generation.status")
     enum(generation["reason"], GENERATION_REASONS, "generation.reason")
     model = generation["model"]

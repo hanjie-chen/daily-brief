@@ -57,5 +57,9 @@ def test_openrouter_roundup_is_classified_from_comments_and_reused(tmp_path):
     assert audit['49686380']['selected'] is True
     assert audit['49686380']['summary_generation']['provider'] == 'openrouter'
     assert audit['49686380']['summary_generation']['model'] == 'openai/gpt-6-luna'
+    assert audit['49686380']['summary_generation']['reasoning_effort'] == 'medium'
+    public = json.loads((tmp_path/'briefs'/'2026-09-16.json').read_text())
+    assert all(item['generation_info']['generation']['reasoning_effort'] == 'medium'
+               for item in public['sections']['ai']['items'])
     assert '\n  - 日历：' in result.brief_path.read_text()
     assert 'test' not in json.dumps(backend.request_records)

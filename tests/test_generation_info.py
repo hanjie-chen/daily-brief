@@ -176,3 +176,29 @@ def test_overlong_actual_model_is_not_published_as_a_truncated_identifier():
     generate_candidate_summary(item, Backend())
     assert item.summary_generation.model == Backend.last_summary_model
     assert info(item)['generation']['model'] is None
+
+
+@pytest.mark.parametrize('effort', ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', None])
+def test_reasoning_effort_additive_contract(effort):
+    item = candidate()
+    item.summary_generation.reasoning_effort = effort
+    data = payload(item)
+    generation = data['sections']['ai']['items'][0]['generation_info']['generation']
+    if effort is None:
+        assert 'reasoning_effort' not in generation
+        generation['reasoning_effort'] = None
+    else:
+        assert generation['reasoning_effort'] == effort
+    validate_public_brief(data)
+
+
+@pytest.mark.parametrize('effort', ['auto', '', {}, True, 3])
+def test_invalid_effort_is_not_exported_and_is_rejected_at_public_boundary(effort):
+    item = candidate()
+    item.summary_generation.reasoning_effort = effort
+    data = payload(item)
+    generation = data['sections']['ai']['items'][0]['generation_info']['generation']
+    assert 'reasoning_effort' not in generation
+    generation['reasoning_effort'] = effort
+    with pytest.raises(PublicBriefValidationError):
+        validate_public_brief(data)

@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..models import Candidate
 from .public_schema import (
     GENERATION_REASONS, GENERATION_STATUSES, MATERIAL_STATUSES, MODEL_IDENTIFIER,
-    PROVENANCE_VALUES, SUMMARY_SOURCES,
+    PROVENANCE_VALUES, REASONING_EFFORTS, SUMMARY_SOURCES,
 )
 
 
@@ -94,6 +94,10 @@ def public_generation_info(candidate: Candidate) -> dict:
                                   and len(set(sources)) == len(sources)) else None
     else:
         sources = None if status == "unknown" else []
+    public_generation = {"status": status, "model": model, "reason": reason}
+    effort = generation.reasoning_effort
+    if isinstance(effort, str) and effort in REASONING_EFFORTS:
+        public_generation["reasoning_effort"] = effort
     return {
         "materials": {
             "webpage": {"status": page_status, "method": page_method, "origin": origin, "reason": page_reason},
@@ -101,5 +105,5 @@ def public_generation_info(candidate: Candidate) -> dict:
             "hn_comments": {"status": comment_status, "reason": comment_reason},
         },
         "summary_sources": sources,
-        "generation": {"status": status, "model": model, "reason": reason},
+        "generation": public_generation,
     }

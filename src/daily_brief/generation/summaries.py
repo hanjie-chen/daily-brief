@@ -126,6 +126,7 @@ def generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
             status="success",
             provider=provider,
             model=model,
+            reasoning_effort=_summary_reasoning_effort(summary_client),
             attempts=_summary_attempts(summary_client),
             provider_status=_summary_provider_status(summary_client),
             **summary_usage,
@@ -146,6 +147,7 @@ def generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
             status="insufficient",
             provider=provider,
             model=model,
+            reasoning_effort=_summary_reasoning_effort(summary_client),
             attempts=_summary_attempts(summary_client),
             provider_status=_summary_provider_status(summary_client),
             **_summary_usage(summary_client),
@@ -171,6 +173,7 @@ def generate_candidate_summary(candidate: Candidate, summary_client) -> bool:
             status="failed",
             provider=provider,
             model=model,
+            reasoning_effort=_summary_reasoning_effort(summary_client),
             attempts=_summary_attempts(summary_client),
             provider_status=_summary_provider_status(summary_client, exc),
             **summary_usage,
@@ -219,6 +222,12 @@ def _summary_model(summary_client) -> str:
     # Keep overlong identifiers distinguishable from valid public identifiers.
     # Public projection rejects >128 rather than publishing a truncated model.
     return " ".join(model.split())[:512]
+
+
+def _summary_reasoning_effort(summary_client) -> str | None:
+    # Only use the per-call record, never the backend's default configuration.
+    effort = getattr(summary_client, "last_summary_reasoning_effort", None)
+    return effort if isinstance(effort, str) and len(effort) <= 32 else None
 
 
 def _summary_attempts(summary_client) -> int:

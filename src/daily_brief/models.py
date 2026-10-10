@@ -126,6 +126,7 @@ class SummaryGeneration:
     model: str = ""
     attempts: int = 0
     provider_status: str = ""
+    reasoning_effort: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
     thought_tokens: int | None = None

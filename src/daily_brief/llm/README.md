@@ -153,7 +153,10 @@ OpenRouter never uses cross-model fallback.
 
 OpenRouter defaults to `qwen/qwen3.8-flash` with reasoning disabled for classification
 (512 output tokens), and `openai/gpt-6-luna` with requested medium reasoning for summaries
-(8192 output tokens). Actual reasoning usage can be zero. All summary routes reuse
+(8192 output tokens). The request and per-attempt diagnostics share the fixed `SUMMARY_REASONING_EFFORT`
+constant. `last_summary_reasoning_effort` resets before each summary and is set
+only when an HTTP attempt is admitted; pre-request budget failures leave it null.
+It describes requested effort, not measured reasoning usage, which can be zero. All summary routes reuse
 the existing schemas and validators, including the comments-only roundup list.
 Requests use strict JSON schema and require provider parameter support; same-model
 provider fallback is allowed. The fixed HTTPS endpoint rejects redirects.

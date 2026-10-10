@@ -184,6 +184,7 @@ def test_render_candidates_json_uses_snake_case_fields():
         "model": "",
         "attempts": 0,
         "provider_status": "",
+        "reasoning_effort": None,
         "input_tokens": None,
         "output_tokens": None,
         "thought_tokens": None,

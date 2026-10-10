@@ -61,6 +61,7 @@ def test_run_generate_records_summary_failure_diagnostics(tmp_path, caplog):
         "model": "test-summary-model",
         "attempts": 4,
         "provider_status": "",
+        "reasoning_effort": None,
         "input_tokens": None,
         "output_tokens": None,
         "thought_tokens": None,

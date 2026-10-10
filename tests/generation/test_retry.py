@@ -77,6 +77,8 @@ def test_single_retry_refetches_all_material_preserves_selection_and_does_not_sa
     calls = []
 
     class Backend:
+        last_summary_reasoning_effort = "medium"
+
         def summarize(self, item):
             context = build_summary_context(item)
             assert all(text in context.text for text in ('Fresh HN post', 'Fresh webpage', 'Fresh comment'))
@@ -99,6 +101,9 @@ def test_single_retry_refetches_all_material_preserves_selection_and_does_not_sa
     assert audit[1:] == before_audit[1:]
     assert audit[0]['score'] == before_audit[0]['score']
     assert audit[0]['last_retry']['status'] == 'updated'
+    assert updated_item['generation_info']['generation']['reasoning_effort'] == 'medium'
+    assert audit[0]['summary_generation']['reasoning_effort'] == 'medium'
+    assert 'reasoning_effort' not in public['sections']['ai']['items'][1]['generation_info']['generation']
     assert updated_item['summary'] in (briefs / f'{DAY}.md').read_text()
     assert set(tmp_path.rglob('*')) == original_files
     assert (data / 'recommendation-history.json').read_text() == 'history sentinel'
@@ -142,14 +147,18 @@ def test_failed_retry_preserves_published_fields_and_updates_only_latest_diagnos
     old_public = (briefs / f'{DAY}.json').read_bytes()
     old_markdown = (briefs / f'{DAY}.md').read_bytes()
     _, old_audit = read_outputs(briefs, data)
+    class FailedBackend(RaisingSummarizer):
+        last_summary_reasoning_effort = "medium"
+
     for _ in range(2):
         result = run_retry(briefs, data, date_label=DAY, item_ids=['1'],
-                           model_backend=RaisingSummarizer(), **inputs([]))
+                           model_backend=FailedBackend(), **inputs([]))
         assert result.failed == 1 and result.updated == 0
     _, audit = read_outputs(briefs, data)
     assert (briefs / f'{DAY}.json').read_bytes() == old_public
     assert (briefs / f'{DAY}.md').read_bytes() == old_markdown
     assert audit[0]['last_retry']['summary_generation']['error_code'] == 'quota_exceeded'
+    assert audit[0]['last_retry']['summary_generation']['reasoning_effort'] == 'medium'
     assert audit[0]['last_retry']['status'] == 'failed'
     assert {k: v for k, v in audit[0].items() if k != 'last_retry'} == old_audit[0]
     assert audit[1:] == old_audit[1:]

@@ -87,7 +87,9 @@ this package that owns it.
    insufficiency result does not cause a second discussion-fallback call. The
    model returns one integrated summary and its declared sources. Code validates
    source availability and records usage without adding source prefixes or a
-   separate comment note.
+   separate comment note. Recorded per-call requested reasoning effort follows the
+   summary diagnostics into private audit and optional public generation info;
+   no effort is inferred for backends or historical items without a record.
    `community_roundup` remains the exception: its comment-led overview was
    assessed before selection and is reused. An external-source retrieval failure
    never becomes a title- or model-knowledge-based article summary.

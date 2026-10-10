@@ -122,7 +122,11 @@ listed only in that package's guide.
   emitted. New generation info separates webpage, HN post, and HN comment
   acquisition from model-declared source usage and summary generation. It uses
   exact nested objects, allowlisted statuses/reasons, nullable source declarations,
-  and a nullable ASCII model identifier (at most 128 characters). It never exposes
+  and a nullable ASCII model identifier (at most 128 characters). Summary generation
+  optionally includes `reasoning_effort` (`none`, `minimal`, `low`, `medium`,
+  `high`, or `xhigh`; null is accepted) from recorded call diagnostics. Missing
+  history or backends with no recorded effort omit it; defaults are never inferred.
+  It never exposes
   raw provider errors, recovery URLs, or model-generated insufficiency prose.
   Successful summaries without declared usage export null; unsuccessful summaries
   export an empty source array. A fetched but insufficient roundup comment sample

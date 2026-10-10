@@ -247,3 +247,38 @@ def test_summary_diagnostics_reset_after_previous_success():
     assert client.last_summary_usage == {}
     assert client.last_summary_provider == ''
     assert client.last_summary_attempts == 1
+
+
+@pytest.mark.parametrize('result', ['success', 'insufficient', 'failed'])
+def test_summary_requested_effort_reaches_audit_and_public_payload(result):
+    from daily_brief.generation.summaries import generate_candidate_summary
+    from daily_brief.output import render_candidates_json, render_public_brief_json, validate_public_brief
+    responses = {
+        'success': completion(output()),
+        'insufficient': completion(output(status='insufficient', summary='', summary_sources=[], reason='No evidence.')),
+        'failed': TimeoutError(),
+    }
+    transport = Opener(responses[result])
+    client = backend(transport, max_retries=0)
+    item = material()
+    item.why = 'Relevant tool'
+    generate_candidate_summary(item, client)
+    requested = json.loads(transport.requests[0].data)['reasoning']['effort']
+    assert client.last_summary_reasoning_effort == requested == 'medium'
+    assert client.request_records[-1]['reasoning_effort'] == requested
+    audit = json.loads(render_candidates_json([item]))
+    assert audit[0]['summary_generation']['reasoning_effort'] == requested
+    public = json.loads(render_public_brief_json('2026-10-10', '2026-10-10T08:00:00+08:00', [item], []))
+    validate_public_brief(public)
+    assert public['sections']['ai']['items'][0]['generation_info']['generation']['reasoning_effort'] == requested
+
+
+def test_budget_failure_clears_prior_requested_effort_without_inventing_attempt():
+    client = backend(Opener(completion(output())))
+    client.summarize(material())
+    assert client.last_summary_reasoning_effort == 'medium'
+    client.max_run_cost_usd = client.accounted_cost_usd
+    with pytest.raises(OpenRouterAPIError):
+        client.summarize(material())
+    assert client.last_summary_attempts == 0
+    assert client.last_summary_reasoning_effort is None
