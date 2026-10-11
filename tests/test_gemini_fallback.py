@@ -294,13 +294,13 @@ def test_cli_records_actual_model_for_insufficient_fallback_decision():
 def test_environment_defaults_fallbacks_but_explicit_choice_can_disable_or_replace_them():
     default = GeminiBackend.from_environment({"GEMINI_API_KEY": "key"}, opener=RecordingOpener())
     disabled = GeminiBackend.from_environment({
-        "GEMINI_API_KEY": "key", "DAILY_BRIEF_GEMINI_SUMMARIZER_FALLBACK_MODELS": "",
+        "GEMINI_API_KEY": "key", "GEMINI_SUMMARIZER_FALLBACK_MODELS": "",
     }, opener=RecordingOpener())
     custom_primary = GeminiBackend.from_environment({
-        "GEMINI_API_KEY": "key", "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL": "another-model",
+        "GEMINI_API_KEY": "key", "GEMINI_SUMMARIZER_MODEL": "another-model",
     }, opener=RecordingOpener())
     custom_fallbacks = GeminiBackend.from_environment({
-        "GEMINI_API_KEY": "key", "DAILY_BRIEF_GEMINI_SUMMARIZER_FALLBACK_MODELS": " 3.7 , 3.8 ",
+        "GEMINI_API_KEY": "key", "GEMINI_SUMMARIZER_FALLBACK_MODELS": " 3.7 , 3.8 ",
     }, opener=RecordingOpener())
 
     assert default.summarizer_fallback_models == ("gemini-3.7-flash", "gemini-3.8-flash")
@@ -321,7 +321,7 @@ def test_evaluate_model_explicitly_disables_summary_fallbacks(monkeypatch, tmp_p
             return type("Backend", (), {"name": "fake"})()
 
     from daily_brief.llm import factory as backend_factory
-    monkeypatch.delenv("DAILY_BRIEF_MODEL_BACKEND", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setattr(backend_factory, "GeminiBackend", Factory)
     monkeypatch.setattr(
         cli, "run_model_evaluation",

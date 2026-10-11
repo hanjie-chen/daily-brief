@@ -10,8 +10,8 @@ from .openrouter_backend import OpenRouterBackend
 
 def create_model_backend(env: Mapping[str, str] | None = None, *, evaluation=False):
     environment = os.environ if env is None else env
-    provider = environment.get("DAILY_BRIEF_MODEL_BACKEND", "gemini").strip().lower()
-    # Keep existing installations on Gemini until configuration explicitly opts in.
+    provider = environment.get("LLM_PROVIDER", "gemini").strip().lower()
+    # Preserve the unset default; .env.example explicitly selects OpenRouter.
     options = {} if env is None else {"env": environment}
     if provider == "gemini":
         if evaluation:
@@ -19,4 +19,4 @@ def create_model_backend(env: Mapping[str, str] | None = None, *, evaluation=Fal
         return GeminiBackend.from_environment(**options)
     if provider == "openrouter":
         return OpenRouterBackend.from_environment(**options)
-    raise ValueError("DAILY_BRIEF_MODEL_BACKEND must be gemini or openrouter")
+    raise ValueError("LLM_PROVIDER must be gemini or openrouter")

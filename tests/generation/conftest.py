@@ -8,7 +8,7 @@ from fakes import FakeGeminiBackendFactory
 
 @pytest.fixture(autouse=True)
 def prevent_live_classifier_and_article_calls(monkeypatch):
-    monkeypatch.delenv("DAILY_BRIEF_MODEL_BACKEND", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setattr(backend_factory, "GeminiBackend", FakeGeminiBackendFactory)
     monkeypatch.setattr(
         material,

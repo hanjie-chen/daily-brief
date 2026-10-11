@@ -402,11 +402,32 @@ def test_publish_rejects_invalid_item_contract_before_network(
         )
 
 
-def test_publish_requires_endpoint_and_token(tmp_path):
-    with pytest.raises(PublishError, match="DAILY_BRIEF_PUBLISH_URL"):
+def test_publish_reads_renamed_environment(tmp_path, monkeypatch):
+    brief_dir = tmp_path / "briefs"
+    _write_brief(brief_dir)
+    monkeypatch.setenv("PUBLISH_URL", "https://example.com/publish")
+    monkeypatch.setenv("PUBLISH_TOKEN", "test-token")
+    calls = []
+
+    def opener(request, timeout):
+        calls.append(request)
+        return FakeResponse()
+
+    result = publish_brief(brief_dir, tmp_path / "data", "2026-07-25", opener=opener)
+    assert result.published == 1
+    assert calls[0].full_url == "https://example.com/publish"
+    assert calls[0].get_header("X-daily-brief-token") == "test-token"
+
+
+def test_publish_requires_endpoint_and_token(tmp_path, monkeypatch):
+    monkeypatch.delenv("PUBLISH_URL", raising=False)
+    monkeypatch.delenv("PUBLISH_TOKEN", raising=False)
+    monkeypatch.setenv("DAILY_BRIEF_PUBLISH_URL", "https://old.example.com")
+    monkeypatch.setenv("DAILY_BRIEF_PUBLISH_TOKEN", "old-token")
+    with pytest.raises(PublishError, match="PUBLISH_URL"):
         publish_brief(tmp_path, tmp_path, "2026-07-25", endpoint="", token="")
 
-    with pytest.raises(PublishError, match="DAILY_BRIEF_PUBLISH_TOKEN"):
+    with pytest.raises(PublishError, match="PUBLISH_TOKEN"):
         publish_brief(
             tmp_path,
             tmp_path,

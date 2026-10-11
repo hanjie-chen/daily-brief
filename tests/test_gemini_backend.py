@@ -622,10 +622,10 @@ def test_from_environment_uses_explicit_model_overrides():
     backend = GeminiBackend.from_environment(
         {
             "GEMINI_API_KEY": "key-from-env",
-            "DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL": "gemini-classifier-stable",
-            "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL": "gemini-summary-stable",
-            "DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS": "6.5",
-            "DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS": "20.5",
+            "GEMINI_CLASSIFIER_MODEL": "gemini-classifier-stable",
+            "GEMINI_SUMMARIZER_MODEL": "gemini-summary-stable",
+            "GEMINI_CLASSIFIER_INTERVAL_SECONDS": "6.5",
+            "GEMINI_SUMMARIZER_INTERVAL_SECONDS": "20.5",
         },
         opener=RecordingOpener(),
     )
@@ -637,11 +637,11 @@ def test_from_environment_uses_explicit_model_overrides():
     assert backend.summarizer_min_request_interval_seconds == 20.5
 
 
-def test_from_environment_uses_legacy_shared_interval_as_fallback():
+def test_from_environment_uses_shared_interval_as_fallback():
     backend = GeminiBackend.from_environment(
         {
             "GEMINI_API_KEY": "key-from-env",
-            "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS": "12.5",
+            "GEMINI_INTERVAL_SECONDS": "12.5",
         },
         opener=RecordingOpener(),
     )
@@ -650,12 +650,27 @@ def test_from_environment_uses_legacy_shared_interval_as_fallback():
     assert backend.summarizer_min_request_interval_seconds == 12.5
 
 
+def test_old_environment_names_do_not_override_gemini_defaults():
+    backend = GeminiBackend.from_environment({
+        "GEMINI_API_KEY": "test-key",
+        "DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL": "old-classifier",
+        "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL": "old-summary",
+        "DAILY_BRIEF_GEMINI_SUMMARIZER_FALLBACK_MODELS": "",
+        "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS": "99",
+    })
+    assert backend.classifier_model == "gemini-3.5-flash-lite"
+    assert backend.summarizer_model == "gemini-3.6-flash"
+    assert backend.summarizer_fallback_models == ("gemini-3.7-flash", "gemini-3.8-flash")
+    assert backend.classifier_min_request_interval_seconds == 6
+    assert backend.summarizer_min_request_interval_seconds == 20
+
+
 @pytest.mark.parametrize(
     "name",
     [
-        "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS",
-        "DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS",
-        "DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS",
+        "GEMINI_INTERVAL_SECONDS",
+        "GEMINI_CLASSIFIER_INTERVAL_SECONDS",
+        "GEMINI_SUMMARIZER_INTERVAL_SECONDS",
     ],
 )
 def test_from_environment_rejects_non_numeric_request_interval(name):

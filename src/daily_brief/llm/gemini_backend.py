@@ -179,7 +179,7 @@ class GeminiBackend:
     ) -> GeminiBackend:
         environment = os.environ if env is None else env
         shared_interval = environment.get(
-            "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS"
+            "GEMINI_INTERVAL_SECONDS"
         )
         if "classifier_min_request_interval_seconds" in kwargs:
             classifier_interval = kwargs.pop(
@@ -188,7 +188,7 @@ class GeminiBackend:
         else:
             classifier_interval = _environment_request_interval(
                 environment,
-                "DAILY_BRIEF_GEMINI_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS",
+                "GEMINI_CLASSIFIER_INTERVAL_SECONDS",
                 shared_interval,
                 DEFAULT_CLASSIFIER_MIN_REQUEST_INTERVAL_SECONDS,
             )
@@ -199,12 +199,12 @@ class GeminiBackend:
         else:
             summarizer_interval = _environment_request_interval(
                 environment,
-                "DAILY_BRIEF_GEMINI_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS",
+                "GEMINI_SUMMARIZER_INTERVAL_SECONDS",
                 shared_interval,
                 DEFAULT_SUMMARIZER_MIN_REQUEST_INTERVAL_SECONDS,
             )
         primary_model = environment.get(
-            "DAILY_BRIEF_GEMINI_SUMMARIZER_MODEL", DEFAULT_SUMMARIZER_MODEL
+            "GEMINI_SUMMARIZER_MODEL", DEFAULT_SUMMARIZER_MODEL
         )
         if "summarizer_fallback_models" not in kwargs:
             default_fallbacks = (
@@ -212,7 +212,7 @@ class GeminiBackend:
                 if primary_model.strip() == DEFAULT_SUMMARIZER_MODEL else ""
             )
             value = environment.get(
-                "DAILY_BRIEF_GEMINI_SUMMARIZER_FALLBACK_MODELS", default_fallbacks
+                "GEMINI_SUMMARIZER_FALLBACK_MODELS", default_fallbacks
             )
             kwargs["summarizer_fallback_models"] = (
                 tuple(value.split(",")) if value.strip() else ()
@@ -220,7 +220,7 @@ class GeminiBackend:
         return cls(
             api_key=environment.get("GEMINI_API_KEY", ""),
             classifier_model=environment.get(
-                "DAILY_BRIEF_GEMINI_CLASSIFIER_MODEL", DEFAULT_CLASSIFIER_MODEL
+                "GEMINI_CLASSIFIER_MODEL", DEFAULT_CLASSIFIER_MODEL
             ),
             summarizer_model=primary_model,
             classifier_min_request_interval_seconds=classifier_interval,
@@ -514,6 +514,6 @@ def _environment_request_interval(
         source_name = (
             name
             if name in environment
-            else "DAILY_BRIEF_GEMINI_MIN_REQUEST_INTERVAL_SECONDS"
+            else "GEMINI_INTERVAL_SECONDS"
         )
         raise GeminiConfigurationError(f"{source_name} must be numeric") from exc

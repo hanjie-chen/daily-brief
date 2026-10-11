@@ -147,8 +147,23 @@ class OpenRouterBackend:
     def from_environment(cls, env: Mapping[str, str] | None = None, **kwargs):
         environment = os.environ if env is None else env
         options = {"api_key": environment.get("OPENROUTER_API_KEY", "")}
-        for key in ("classifier_model", "summarizer_model", "timeout_seconds", "max_retries", "retry_base_seconds", "min_request_interval_seconds", "classifier_min_request_interval_seconds", "summarizer_min_request_interval_seconds", "max_run_cost_usd", "classifier_input_price_per_million", "classifier_output_price_per_million", "summarizer_input_price_per_million", "summarizer_output_price_per_million"):
-            value = environment.get("DAILY_BRIEF_OPENROUTER_" + key.upper())
+        settings = {
+            "CLASSIFIER_MODEL": "classifier_model",
+            "SUMMARIZER_MODEL": "summarizer_model",
+            "TIMEOUT_SECONDS": "timeout_seconds",
+            "MAX_RETRIES": "max_retries",
+            "RETRY_BASE_SECONDS": "retry_base_seconds",
+            "INTERVAL_SECONDS": "min_request_interval_seconds",
+            "CLASSIFIER_INTERVAL_SECONDS": "classifier_min_request_interval_seconds",
+            "SUMMARIZER_INTERVAL_SECONDS": "summarizer_min_request_interval_seconds",
+            "RUN_BUDGET_USD": "max_run_cost_usd",
+            "CLASSIFIER_INPUT_PRICE_CAP": "classifier_input_price_per_million",
+            "CLASSIFIER_OUTPUT_PRICE_CAP": "classifier_output_price_per_million",
+            "SUMMARIZER_INPUT_PRICE_CAP": "summarizer_input_price_per_million",
+            "SUMMARIZER_OUTPUT_PRICE_CAP": "summarizer_output_price_per_million",
+        }
+        for name, key in settings.items():
+            value = environment.get("OPENROUTER_" + name)
             if value is not None:
                 options[key] = value
         options.update(kwargs)

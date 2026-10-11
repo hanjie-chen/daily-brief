@@ -145,11 +145,19 @@ quality gate; evidence selection and provider-call counts are unchanged.
 
 ## Provider Selection and OpenRouter
 
-`create_model_backend()` reads `DAILY_BRIEF_MODEL_BACKEND` (`gemini` by default for
-existing installations; `openrouter` opts in). Generate, retry, evaluate-model and
+`create_model_backend()` reads `LLM_PROVIDER` (`gemini` when unset;
+the environment template explicitly selects `openrouter`). Generate, retry, evaluate-model and
 library defaults use the same factory. Unknown providers and missing credentials
 fail before CLI collection. Evaluation disables Gemini cross-model fallback;
 OpenRouter never uses cross-model fallback.
+
+Environment settings use `OPENROUTER_` or `GEMINI_` prefixes, with per-task
+`CLASSIFIER_INTERVAL_SECONDS` and `SUMMARIZER_INTERVAL_SECONDS` settings.
+The previous `DAILY_BRIEF_` names are not read. Both API keys may be present;
+only the selected service is constructed. Optional budget and price overrides
+are documented in [docs/openrouter.md](../../../docs/openrouter.md) rather than
+the everyday environment template. Unset model, pacing, retry, and cost defaults
+are unchanged.
 
 OpenRouter defaults to `qwen/qwen3.8-flash` with reasoning disabled for classification
 (512 output tokens), and `openai/gpt-6-luna` with requested medium reasoning for summaries
@@ -194,7 +202,7 @@ These rules live in `gemini_backend.py`, with daily-quota detection in
 Production `GeminiBackend.from_environment()` enables ordered summary fallback
 from `gemini-3.6-flash` to `gemini-3.7-flash` and `gemini-3.8-flash`. A custom
 primary has no implicit fallback; an explicit comma-separated
-`DAILY_BRIEF_GEMINI_SUMMARIZER_FALLBACK_MODELS` overrides the list, and an empty
+`GEMINI_SUMMARIZER_FALLBACK_MODELS` overrides the list, and an empty
 value disables it. Direct construction remains single-model by default, keeping
 model evaluation isolated. The `evaluate-model` CLI explicitly disables fallback,
 even when the environment enables it. Classification has no model fallback.

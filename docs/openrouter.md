@@ -2,17 +2,32 @@
 
 为什么选择 Qwen 分类与 Luna 摘要、其他候选的取舍和下次重测条件，见 [2026 年 10 月模型选型记录](./model-selection-2026-10.md)。
 
-`generate`、`retry`、`evaluate-model` 及未显式传入 backend 的库入口共用模型选择配置。为兼容既有安装，未设置 provider 时仍用 Gemini；生产切换需要明确配置：
+`generate`、`retry`、`evaluate-model` 及未显式传入 backend 的库入口共用 `LLM_PROVIDER` 配置。未设置时仍用 Gemini；`.env.example` 明确选择 OpenRouter：
 
 ```sh
-DAILY_BRIEF_MODEL_BACKEND=openrouter
+LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=你的凭据
-DAILY_BRIEF_OPENROUTER_CLASSIFIER_MODEL=qwen/qwen3.8-flash
-DAILY_BRIEF_OPENROUTER_SUMMARIZER_MODEL=openai/gpt-6-luna
-DAILY_BRIEF_OPENROUTER_MAX_RUN_COST_USD=0.25
 ```
 
 凭据只写本机 `.env`，不要提交。CLI 不自动加载 `.env`，沿用现有环境加载方式。全部常用参数及默认值在 `.env.example`；模型参数分别为分类关闭思考、摘要 medium，实际 reasoning tokens 以响应为准。
+
+环境变量使用新的简短名称，不再读取原有 `DAILY_BRIEF_` 名称。两种服务的 API key 可以同时填写，仅使用 `LLM_PROVIDER` 指定的服务。发布配置为 `PUBLISH_URL` 和 `PUBLISH_TOKEN`，与模型服务选择无关。
+
+### 不常用的配置覆盖
+
+预算和供应商价格上限默认由代码提供，不列入日常 `.env.example`。确需调整时，可以设置以下变量；价格单位为美元／百万 token，限制供应商可接受的单价，也用于请求前的费用预留估算：
+
+| 环境变量 | 默认值 |
+| --- | ---: |
+| `OPENROUTER_RUN_BUDGET_USD` | `0.25` |
+| `OPENROUTER_CLASSIFIER_INPUT_PRICE_CAP` | `0.15` |
+| `OPENROUTER_CLASSIFIER_OUTPUT_PRICE_CAP` | `0.47` |
+| `OPENROUTER_SUMMARIZER_INPUT_PRICE_CAP` | `0.10` |
+| `OPENROUTER_SUMMARIZER_OUTPUT_PRICE_CAP` | `0.50` |
+
+上述价格默认值仅对应默认模型。设置自定义 `OPENROUTER_CLASSIFIER_MODEL` 或 `OPENROUTER_SUMMARIZER_MODEL` 时，必须显式填写该任务的输入、输出价格上限，并另行核查缓存费用；缺少任一项会在配置阶段报错。
+
+`OPENROUTER_RETRY_BASE_SECONDS` 可覆盖退避基数（默认 1 秒）。`OPENROUTER_INTERVAL_SECONDS` 可同时覆盖两类请求间隔，并优先于分别设置的间隔。Gemini 的 `GEMINI_INTERVAL_SECONDS` 则作为共享默认值，分类、摘要各自的间隔设置优先。日常使用模板中的分任务间隔即可。
 
 ## 调用与费用
 
@@ -35,4 +50,4 @@ DAILY_BRIEF_OPENROUTER_MAX_RUN_COST_USD=0.25
 
 ## 维护文档同步建议
 
-根 README 和 API 额度文档由项目所有者维护，本次没有直接改写。建议后续将 README 的“生成简报需 GEMINI_API_KEY”更新为“根据 DAILY_BRIEF_MODEL_BACKEND 配置 GEMINI_API_KEY 或 OPENROUTER_API_KEY”；在额度文档增加 OpenRouter 的按 token 计费、单次运行保护以及月度预算需要独立核对的说明。
+根 README 和 API 额度文档由项目所有者维护，本次没有直接改写。建议后续将 README 的“生成简报需 GEMINI_API_KEY”更新为“根据 LLM_PROVIDER 配置 GEMINI_API_KEY 或 OPENROUTER_API_KEY”，发布配置改为 `PUBLISH_URL`、`PUBLISH_TOKEN`，并说明模板只列出常用配置；在额度文档增加 OpenRouter 的按 token 计费、单次运行保护以及月度预算需要独立核对的说明。

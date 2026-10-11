@@ -16,7 +16,7 @@ from fakes import FakeGeminiBackendFactory, story
 
 @pytest.fixture(autouse=True)
 def prevent_live_model_backend(monkeypatch):
-    monkeypatch.delenv("DAILY_BRIEF_MODEL_BACKEND", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setattr(backend_factory, "GeminiBackend", FakeGeminiBackendFactory)
 
 
@@ -305,10 +305,13 @@ def test_main_evaluate_model_replays_captured_input(tmp_path):
     assert payload["summaries"][0]["summary"] == "Summary for AI tool"
 
 
-def test_openrouter_selected_for_generate_without_gemini_key(monkeypatch):
-    monkeypatch.setenv('DAILY_BRIEF_MODEL_BACKEND', 'openrouter')
+@pytest.mark.parametrize('gemini_key', [None, 'unused-gemini-key'])
+def test_openrouter_selected_for_generate(monkeypatch, gemini_key):
+    monkeypatch.setenv('LLM_PROVIDER', 'openrouter')
     monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
     monkeypatch.delenv('GEMINI_API_KEY', raising=False)
+    if gemini_key is not None:
+        monkeypatch.setenv('GEMINI_API_KEY', gemini_key)
     calls = []
     monkeypatch.setattr(cli, 'run_generate', lambda **kwargs: calls.append(kwargs))
     assert main(['generate']) == 0
@@ -318,8 +321,17 @@ def test_openrouter_selected_for_generate_without_gemini_key(monkeypatch):
     assert backend.summarizer_model == 'openai/gpt-6-luna'
 
 
+def test_old_provider_name_is_not_read():
+    backend = backend_factory.create_model_backend(env={
+        'DAILY_BRIEF_MODEL_BACKEND': 'openrouter',
+        'OPENROUTER_API_KEY': 'unused-key',
+        'GEMINI_API_KEY': 'test-key',
+    })
+    assert backend.name != 'openrouter'
+
+
 def test_openrouter_evaluation_uses_selected_provider(monkeypatch, tmp_path):
-    monkeypatch.setenv('DAILY_BRIEF_MODEL_BACKEND', 'openrouter')
+    monkeypatch.setenv('LLM_PROVIDER', 'openrouter')
     monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
     calls = []
     monkeypatch.setattr(cli, 'run_model_evaluation', lambda source, out, backend:
@@ -329,13 +341,13 @@ def test_openrouter_evaluation_uses_selected_provider(monkeypatch, tmp_path):
 
 
 def test_bad_provider_fails_before_collection(monkeypatch):
-    monkeypatch.setenv('DAILY_BRIEF_MODEL_BACKEND', 'unknown')
+    monkeypatch.setenv('LLM_PROVIDER', 'unknown')
     monkeypatch.setattr(cli, 'run_generate', lambda **kwargs: pytest.fail('must not collect'))
     assert main(['generate']) == 1
 
 
 def test_missing_openrouter_key_fails_before_collection(monkeypatch, caplog):
-    monkeypatch.setenv('DAILY_BRIEF_MODEL_BACKEND', 'openrouter')
+    monkeypatch.setenv('LLM_PROVIDER', 'openrouter')
     monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
     monkeypatch.setattr(cli, 'run_generate', lambda **kwargs: pytest.fail('must not collect'))
     assert main(['generate']) == 1

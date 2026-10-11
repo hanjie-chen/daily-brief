@@ -23,7 +23,9 @@ Daily Brief 每天从 Hacker News 收集内容，挑选值得关注的条目，�
 
 ## 模型服务
 
-生成、重试和模型回放统一通过 `DAILY_BRIEF_MODEL_BACKEND` 选择接口，未设置时保留 Gemini；设为 `openrouter` 时，默认用 Qwen3.8 Flash 分类（关闭思考）、GPT-6 Luna 摘要（medium 思考）。普通材料与社区汇总仍走各自的既有输入和输出契约，OpenRouter 不隐式回退到 Gemini 或其他模型。
+生成、重试和模型回放统一通过 `LLM_PROVIDER` 选择接口，未设置时保留 Gemini；设为 `openrouter` 时，默认用 Qwen3.8 Flash 分类（关闭思考）、GPT-6 Luna 摘要（medium 思考）。普通材料与社区汇总仍走各自的既有输入和输出契约，OpenRouter 不隐式回退到 Gemini 或其他模型。
+
+模型配置使用 `OPENROUTER_`、`GEMINI_` 前缀，发布使用 `PUBLISH_URL` 和 `PUBLISH_TOKEN`；原有 `DAILY_BRIEF_` 环境变量不再读取。模板只列出常用设置，费用保护继续使用代码默认值，不常用的覆盖项见 OpenRouter 运行文档。
 
 OpenRouter 请求使用严格 JSON schema，并限制供应商单价、输出量、响应大小、请求间隔和重试次数。临时服务错误、限流或网络失败可有限重试；鉴权、余额不足、地区限制、格式错误和材料不足不重复请求。每个 backend 实例在调用前预留成本，收到明确费用后更新，未知费用的失败保留预留；默认每次运行上限 $0.25，不是跨进程或月度账单上限。分类和摘要费用写入日志，token 诊断沿用候选记录，公开简报字段不变。
 

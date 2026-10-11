@@ -20,7 +20,7 @@ and publishing stay in `output/`.
 
 ## Generation Flow
 
-`run_generate(...)` and `run_retry(...)` use `llm.create_model_backend()` when no backend is injected, matching CLI provider selection through `DAILY_BRIEF_MODEL_BACKEND`.
+`run_generate(...)` and `run_retry(...)` use `llm.create_model_backend()` when no backend is injected, matching CLI provider selection through `LLM_PROVIDER`.
 
 `run_generate(...)` runs these stages in order. Each step names the module in
 this package that owns it.

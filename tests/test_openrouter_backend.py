@@ -199,10 +199,50 @@ def test_invalid_configuration(kwargs):
 
 def test_environment_parses_budget_and_retry_settings():
     client = OpenRouterBackend.from_environment({'OPENROUTER_API_KEY': 'test',
-        'DAILY_BRIEF_OPENROUTER_MAX_RUN_COST_USD': '0.15',
-        'DAILY_BRIEF_OPENROUTER_MAX_RETRIES': '1'})
+        'OPENROUTER_RUN_BUDGET_USD': '0.15',
+        'OPENROUTER_MAX_RETRIES': '1'})
     assert client.max_run_cost_usd == .15
     assert client.max_retries == 1
+
+
+def test_environment_overrides_models_prices_and_request_settings():
+    transport = Opener(completion(output()))
+    client = OpenRouterBackend.from_environment({
+        'OPENROUTER_API_KEY': 'test',
+        'OPENROUTER_CLASSIFIER_MODEL': 'other/classifier',
+        'OPENROUTER_SUMMARIZER_MODEL': 'other/summarizer',
+        'OPENROUTER_CLASSIFIER_INPUT_PRICE_CAP': '0.2',
+        'OPENROUTER_CLASSIFIER_OUTPUT_PRICE_CAP': '0.6',
+        'OPENROUTER_SUMMARIZER_INPUT_PRICE_CAP': '0.3',
+        'OPENROUTER_SUMMARIZER_OUTPUT_PRICE_CAP': '0.8',
+        'OPENROUTER_TIMEOUT_SECONDS': '45',
+        'OPENROUTER_RETRY_BASE_SECONDS': '2',
+        'OPENROUTER_CLASSIFIER_INTERVAL_SECONDS': '2.5',
+        'OPENROUTER_SUMMARIZER_INTERVAL_SECONDS': '3.5',
+    }, opener=transport)
+    assert client.classifier_model == 'other/classifier'
+    assert client.summarizer_model == 'other/summarizer'
+    assert client.timeout_seconds == 45
+    assert client.retry_base_seconds == 2
+    assert client.classifier_min_request_interval_seconds == 2.5
+    assert client.summarizer_min_request_interval_seconds == 3.5
+    assert client._prices['classify'] == (.2, .6)
+    client.summarize(material())
+    payload = json.loads(transport.requests[0].data)
+    assert payload['model'] == 'other/summarizer'
+    assert payload['provider']['max_price'] == {'prompt': .3, 'completion': .8}
+
+
+def test_old_environment_names_do_not_override_defaults():
+    client = OpenRouterBackend.from_environment({
+        'OPENROUTER_API_KEY': 'test',
+        'DAILY_BRIEF_OPENROUTER_SUMMARIZER_MODEL': 'other/old-model',
+        'DAILY_BRIEF_OPENROUTER_MAX_RUN_COST_USD': '0.01',
+        'DAILY_BRIEF_OPENROUTER_MAX_RETRIES': '0',
+    })
+    assert client.summarizer_model == 'openai/gpt-6-luna'
+    assert client.max_run_cost_usd == .25
+    assert client.max_retries == 2
 
 
 def test_retry_after_is_bounded_and_pacing_uses_injected_clock():

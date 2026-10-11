@@ -36,6 +36,9 @@ latest retry diagnostics. See the [generation guide](generation/README.md#retry-
 Publishing is a separate, explicitly targeted operation. `output/publisher.py`
 validates the public payload, sends it to the website, and records successful
 content hashes for idempotent retries.
+Publishing reads `PUBLISH_URL` and `PUBLISH_TOKEN`; model selection reads
+`LLM_PROVIDER`. Configuration no longer accepts the previous `DAILY_BRIEF_`
+environment names.
 
 ## Module Map
 
