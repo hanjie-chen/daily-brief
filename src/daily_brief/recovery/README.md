@@ -44,7 +44,8 @@ All searches and candidate fetches reuse the source-material preparation's
 [`article_fetcher/budget.py`](../article_fetcher/budget.py). Tavily opener calls
 count alongside direct requests, Reader, and Wayback; nested candidate fetches
 do not reset the budget. Socket timeouts are clipped to remaining time, and
-budget checks stop further stages after exhaustion. This does not preempt CPU
+budget checks stop new stages after exhaustion. Completed results still undergo
+normal validation and are not discarded for arriving late. This does not preempt CPU
 work, response reads, or injected blocking calls; subprocesses retain their own
 limits. urllib redirect hops are bounded separately rather than counted as
 additional opener calls.

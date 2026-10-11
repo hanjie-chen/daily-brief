@@ -90,7 +90,7 @@ def test_failed_requests_consume_budget_and_new_scope_resets_it():
     assert len(calls) == 2
 
 
-def test_expiry_prevents_request_and_closes_late_response():
+def test_expiry_preserves_completed_response_but_prevents_next_request():
     clock = Clock()
     response = BytesIO(b"late")
     calls = []
@@ -102,12 +102,12 @@ def test_expiry_prevents_request_and_closes_late_response():
 
     opener = budgeted_opener(slow)
     with retrieval_budget(timeout_seconds=5, clock=clock):
+        with opener("request", timeout=15) as completed:
+            assert completed.read() == b"late"
+        assert response.closed  # The caller still owns response cleanup.
         with pytest.raises(ArticleFetchError) as caught:
             opener("request", timeout=15)
         assert_exhausted(caught)
-        assert response.closed
-        with pytest.raises(ArticleFetchError):
-            opener("request", timeout=15)
     assert calls == [5]
 
 
@@ -174,7 +174,7 @@ def test_tavily_shares_article_transport_budget_and_retains_error_code():
     assert requests == [8]
 
 
-def test_tavily_checks_deadline_after_body_read():
+def test_tavily_preserves_completed_search_but_cannot_start_another():
     clock = Clock()
 
     class SlowResponse(BytesIO):
@@ -189,6 +189,7 @@ def test_tavily_checks_deadline_after_body_read():
 
     finder = TavilyFinder(api_key="test-key", opener=lambda *args, **kwargs: SlowResponse(b'{"results": []}'))
     with retrieval_budget(timeout_seconds=8, clock=clock):
+        assert finder._search(FinderError, query="title", max_results=3, exact_match=False) == []
         with pytest.raises(FinderError) as caught:
             finder._search(FinderError, query="title", max_results=3, exact_match=False)
         assert caught.value.error_code == "retrieval_budget_exhausted"

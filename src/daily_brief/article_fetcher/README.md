@@ -39,9 +39,11 @@ bounded flow:
 4. When the policy permits it, retry transient direct failures once: network
    timeouts or interrupted connections, HTTP 408, and HTTP 5xx. Ordinary HTTP
    429 also permits one direct retry. Numeric and HTTP-date `Retry-After` values
-   are honored in full, up to a 15-second wait; longer waits defer retrieval for
-   this source. Missing or invalid values use the normal one-second delay.
-   A wait must also fit the remaining item deadline. Ordinary rate limits do
+   are honored for a direct retry, up to a 15-second wait. A longer wait, or one
+   that cannot fit the remaining deadline, skips the direct retry: HTTP 408/5xx
+   may still use Reader, while ordinary HTTP 429 stops. Missing or invalid values
+   use the normal one-second delay. Only an actual direct retry waits.
+   Recognized challenges use recovery immediately, including HTTP 5xx. Ordinary rate limits do
    not switch to Jina or search. A recognized Vercel verification response with
    HTTP 429 and no `Retry-After` follows the challenge recovery path.
    Summary retrieval also permits one narrowly scoped URL correction: when the
@@ -118,14 +120,17 @@ paths must not run when the active policy disables them.
 requests, retries, Reader, Wayback discovery/replay, Tavily searches, and fetched
 recovery candidates consume the same scope; nested fetches do not reset it.
 Standalone `fetch_article(...)` calls start a scope when none exists. Socket
-timeouts are clipped to the remaining time, and elapsed time is checked around
-transport calls and at retrieval/recovery boundaries. Exhaustion stops further
-recovery with `retrieval_budget_exhausted`; existing HN materials remain available
-to generation.
+timeouts are clipped to the remaining time. Checks decide whether to start new
+requests or recovery stages; completed responses and extracted material still
+undergo normal validation and are retained even when they arrive after the deadline.
+Exhaustion stops further recovery with `retrieval_budget_exhausted` when no usable
+material was obtained; existing HN materials remain available to generation.
 
 This is not a hard wall-clock cutoff: CPU extraction, response reads, injected
 blocking functions, or subprocess work can run past the deadline before the next
 check. PDF and YouTube subprocesses retain their own time and resource limits.
+In particular, Adobe conversion keeps its 300-second limit in both classification
+and summary retrieval; a successful conversion taking over 120 seconds is accepted.
 Requests are counted at the top-level opener invocation; redirects inside urllib
 are bounded separately and do not consume additional shared request slots. The
 budget does not replace per-response, per-route, or extraction limits.

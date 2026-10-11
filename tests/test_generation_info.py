@@ -47,6 +47,19 @@ def test_recovered_page_retains_origin_failure_without_marking_final_fetch_faile
     }
 
 
+@pytest.mark.parametrize('recovered', [False, True])
+def test_connection_failure_has_existing_public_network_reason(recovered):
+    item = candidate()
+    item.article_retrieval = ArticleRetrieval(
+        status='success' if recovered else 'failed',
+        method='jina' if recovered else 'direct',
+        fallback_reason='request_failed' if recovered else '',
+        error_code='' if recovered else 'request_failed',
+    )
+    assert info(item)['materials']['webpage']['reason'] == 'network_error'
+    validate_public_brief(payload(item))
+
+
 def test_nonempty_roundup_comments_are_acquired_even_when_not_sufficient():
     item = candidate()
     item.discussion_retrieval = DiscussionRetrieval(status='insufficient', chars=40, comments=1)

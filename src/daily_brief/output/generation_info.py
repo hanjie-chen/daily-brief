@@ -32,6 +32,7 @@ def _reason(code: str, http_status: int | None = None, *, model_service: bool = 
         "insufficient_comments": "source_material_insufficient",
         "html_extraction_failed": "extraction_failed", "pdf_extraction_failed": "extraction_failed",
         "invalid_json": "invalid_response",
+        "request_failed": "network_error",
     }
     return aliases.get(code, "unknown")
 

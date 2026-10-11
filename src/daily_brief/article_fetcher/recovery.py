@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from urllib.error import HTTPError
 
-from .budget import check_budget
 from .challenges import (
     _is_cloudflare_challenge,
     _is_datadome_challenge,
@@ -234,7 +233,6 @@ def _fetch_jina_fallback(
             timeout_seconds=timeout_seconds,
             max_bytes=max_bytes,
         )
-        check_budget()
     except ArticleFetchError as jina_exc:
         if wayback_enabled and jina_exc.error_code not in {
             "unsafe_url", "retrieval_budget_exhausted",
@@ -346,7 +344,6 @@ def _fetch_wayback_fallback(
             pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
             pdf_address_space_bytes=pdf_address_space_bytes,
         )
-        check_budget()
     except ArticleFetchError as wayback_exc:
         raise ArticleFetchError(
             "article retrieval failed: "

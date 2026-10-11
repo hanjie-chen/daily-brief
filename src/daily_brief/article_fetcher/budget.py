@@ -2,8 +2,9 @@
 
 Nested retrieval and search calls reuse the current context. Requests count at
 an opener's entry, not per urllib redirect hop. The deadline clips transport
-socket timeouts and is checked around calls; it cannot preempt CPU work or an
-injected blocking function that ignores its timeout.
+socket timeouts and prevents new operations. Completed results still undergo
+normal validation and are not discarded for elapsed time. A converter retains
+its own execution timeout.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
@@ -130,15 +131,8 @@ class _BudgetedOpener:
         except Exception:
             check_budget()
             raise
-        try:
-            check_budget()
-        except ArticleFetchError:
-            # A late response must not leak its transport resource.
-            close = getattr(response, "close", None)
-            if close is not None:
-                with suppress(Exception):
-                    close()
-            raise
+        # The caller owns and validates a completed response, even if the
+        # request finished after the deadline. Only further work is stopped.
         return response
 
 

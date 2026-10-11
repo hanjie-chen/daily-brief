@@ -90,10 +90,13 @@ this package that owns it.
    `material.py` shares one 120-second cooperative deadline and 24-opener-request
    budget across source retrieval, retries, Reader, Wayback, searches, and all
    recovery candidates. Nested calls reuse it. Socket timeouts are clipped to
-   remaining time, and elapsed time is checked at retrieval/recovery boundaries;
-   exhaustion records `retrieval_budget_exhausted` while HN material can still
-   support the summary. The deadline cannot preempt CPU work, response reads,
-   or injected blocking calls; PDF/YouTube subprocesses keep their own limits.
+   remaining time, and budget checks guard new requests and recovery stages.
+   Completed material is validated and retained even after the deadline. Without
+   usable material, exhaustion records `retrieval_budget_exhausted` while HN
+   material can still support the summary. The deadline cannot preempt CPU work,
+   response reads, or injected blocking calls; PDF/YouTube subprocesses keep their
+   own limits. Adobe's 300-second conversion limit applies in both classification
+   and summary retrieval without a post-success 120-second rejection.
    urllib redirect hops are bounded separately and do not count as additional
    shared requests. HN discussion acquisition and model calls retain their own
    bounds outside this source-retrieval scope.

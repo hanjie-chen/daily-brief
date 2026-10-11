@@ -127,7 +127,7 @@ def test_retry_after_on_429_waits_then_stops_without_reader(headers):
     assert caught.value.error_code == "http_429"
 
 
-@pytest.mark.parametrize("status", [429, 503])
+@pytest.mark.parametrize("status", [429])
 def test_long_retry_after_defers_source_instead_of_shortening_wait(status):
     calls, sleeps = [], []
 
@@ -140,6 +140,65 @@ def test_long_retry_after_defers_source_instead_of_shortening_wait(status):
     assert calls == [SOURCE]
     assert sleeps == []
     assert caught.value.error_code == f"http_{status}"
+
+
+@pytest.mark.parametrize("headers", [
+    {"retry_after": "120"},
+    {"retry_after": "60", "cf_mitigated": "challenge"},
+    {"cf_mitigated": "challenge"},
+])
+def test_503_with_long_wait_or_challenge_goes_straight_to_reader(headers):
+    calls, sleeps = [], []
+
+    def respond(request, timeout):
+        calls.append(request.full_url)
+        if request.full_url == SOURCE:
+            raise http_error(SOURCE, 503, **headers)
+        assert request.full_url == READER
+        return FakeResponse(make_jina_payload(), content_type="application/json",
+                            final_url=READER)
+
+    result = fetch_article(SOURCE, opener=respond, resolver=resolver_for({}), sleeper=sleeps.append)
+    assert calls == [SOURCE, READER]
+    assert sleeps == []
+    assert result.method == "jina"
+    assert result.attempts == 2
+    assert result.fallback_reason == (
+        "cloudflare_challenge" if "cf_mitigated" in headers else "http_503"
+    )
+
+
+def test_503_wait_longer_than_remaining_budget_still_allows_reader():
+    calls, sleeps = [], []
+
+    def respond(request, timeout):
+        calls.append(request.full_url)
+        if request.full_url == SOURCE:
+            raise http_error(SOURCE, 503, retry_after="10")
+        return FakeResponse(make_jina_payload(), content_type="application/json",
+                            final_url=READER)
+
+    with retrieval_budget(timeout_seconds=5, clock=lambda: 0):
+        result = fetch_article(SOURCE, opener=respond, resolver=resolver_for({}), sleeper=sleeps.append)
+    assert calls == [SOURCE, READER]
+    assert sleeps == []
+    assert result.method == "jina"
+
+
+def test_503_short_retry_after_retries_once_then_uses_reader():
+    calls, sleeps = [], []
+
+    def respond(request, timeout):
+        calls.append(request.full_url)
+        if request.full_url == SOURCE:
+            raise http_error(SOURCE, 503, retry_after="3")
+        return FakeResponse(make_jina_payload(), content_type="application/json",
+                            final_url=READER)
+
+    result = fetch_article(SOURCE, opener=respond, resolver=resolver_for({}), sleeper=sleeps.append)
+    assert calls == [SOURCE, SOURCE, READER]
+    assert sleeps == [3]
+    assert result.attempts == 3
 
 
 def test_retry_after_http_date_and_invalid_values():

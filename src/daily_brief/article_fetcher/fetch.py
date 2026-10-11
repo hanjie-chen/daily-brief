@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
 
-from .budget import budgeted_opener, budgeted_sleep, check_budget, with_retrieval_budget
+from .budget import budgeted_opener, budgeted_sleep, remaining_seconds, with_retrieval_budget
 from .challenges import _is_network_timeout, _is_tls_issuer_unavailable
 from .contracts import (
     ArticleFetchError,
@@ -143,7 +143,6 @@ def fetch_article(
             caption.language,
             str(caption.generated).lower(),
         )
-        check_budget()
         return ArticleFetchResult(
             text=caption.text,
             method="youtube_caption",
@@ -166,7 +165,6 @@ def fetch_article(
             "component=article_fetch method=github_readme extractor=plain_text "
             "status=success"
         )
-        check_budget()
         return ArticleFetchResult(
             text=text,
             method="github_readme",
@@ -193,7 +191,6 @@ def fetch_article(
             adobe_pdf_enabled=policy.adobe_pdf_enabled,
             adobe_pdf_timeout_seconds=policy.adobe_pdf_timeout_seconds,
         )
-        check_budget()
         return result
 
     direct_request = Request(
@@ -255,27 +252,27 @@ def fetch_article(
                 fallback_reason = ""
             # Recognized verification responses retain their diagnostic reason;
             # ordinary rate limits must wait, never immediately switch egress.
-            transient = exc.code == 408 or 500 <= exc.code <= 599 or (
-                exc.code == 429 and not fallback_reason
+            is_challenge = bool(fallback_reason) and not fallback_reason.startswith("http_")
+            transient = not is_challenge and (
+                exc.code == 408 or 500 <= exc.code <= 599 or exc.code == 429
             )
             if transient:
                 delay = _http_retry_delay(exc)
-                can_retry = attempt < policy.direct_max_attempts
-                if delay is None:
-                    raise ArticleFetchError(
-                        "server retry delay exceeds the retrieval wait limit",
-                        error_code=f"http_{exc.code}", method="direct", attempts=attempt,
-                    ) from exc
-                if can_retry or (exc.code != 429 and policy.jina_enabled):
+                can_retry = delay is not None and attempt < policy.direct_max_attempts
+                if can_retry:
+                    remaining = remaining_seconds()
+                    can_retry = remaining is None or delay < remaining
+                if can_retry:
                     exc.close()
                     budgeted_sleep(delay, sleeper)
-                if can_retry:
                     LOGGER.warning(
                         "component=article_fetch method=direct status=http_%d "
                         "attempt=%d/%d retry_in=%ss", exc.code, attempt,
                         policy.direct_max_attempts, delay,
                     )
                     continue
+                # A long wait skips this direct retry. Recoverable errors can
+                # still use Reader; ordinary 429 has no fallback and stops.
             if fallback_reason:
                 exc.close()
                 return _recover_direct_failure(
@@ -359,7 +356,6 @@ def fetch_article(
                 attempts=attempt,
             ) from exc
 
-        check_budget()
         LOGGER.info(
             "component=article_fetch method=direct extractor=%s status=success "
             "attempts=%d",
@@ -380,9 +376,9 @@ def fetch_article(
 
 
 def _http_retry_delay(exc: HTTPError, *, now: datetime | None = None) -> float | None:
-    """Respect Retry-After without shortening a long server-requested wait.
+    """Return an affordable direct retry delay, without shortening Retry-After.
 
-    A daily brief defers this source when waiting would exceed 15 seconds.
+    None skips the direct retry; the caller decides whether recovery is allowed.
     Invalid/missing values use the ordinary short backoff.
     """
     value = (exc.headers.get("Retry-After", "") if exc.headers else "").strip()
@@ -422,7 +418,6 @@ def _retry_without_trailing_backslash(
         _validate_public_http_url(corrected_url, resolver)
         attempts += 1
         result = fetch_direct(Request(corrected_url, headers=dict(request.header_items())))
-        check_budget()
     except Exception as exc:
         if isinstance(exc, HTTPError):
             code = f"http_{exc.code}"
