@@ -6,12 +6,14 @@ from datetime import datetime, timedelta
 from functools import partial
 
 from ..article_fetcher import (
+    ArticleFetchError,
     CLASSIFICATION_FETCH_POLICY,
     CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
     CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS,
     SUMMARY_FETCH_POLICY,
     fetch_article,
 )
+from ..article_fetcher.budget import check_budget, with_retrieval_budget
 from ..candidates import HNDiscussionFetchError, HNDiscussionResult, fetch_hn_discussion
 from ..llm import article_fetch_failure_summary
 from ..models import (
@@ -44,6 +46,7 @@ MIN_DISCUSSION_COMMENTS = 3
 MIN_DISCUSSION_CHARS = 500
 
 
+@with_retrieval_budget
 def prepare_candidate_material(
     candidate: Candidate,
     article_fetcher_fn,
@@ -80,6 +83,13 @@ def prepare_candidate_material(
                 syndicated_finder=syndicated_finder,
                 alternate_reporting_finder=alternate_reporting_finder,
             )
+            if recovery.error_code:
+                failure = replace(
+                    failure,
+                    error_type="ArticleFetchError",
+                    error_code=recovery.error_code,
+                    error_message="Retrieval budget exhausted",
+                )
         if recovery.material is None:
             _record_retrieval_failure(candidate, failure, recovery)
             return False
@@ -104,6 +114,7 @@ class _SearchRecovery:
 
     material: FetchedMaterial | None = None
     material_origin: str = ""
+    error_code: str = ""
     same_article: SameArticleRecovery = field(default_factory=SameArticleRecovery)
     syndicated: SyndicatedRecovery = field(default_factory=SyndicatedRecovery)
     alternate_reporting: AlternateReportingRecovery = field(
@@ -138,31 +149,49 @@ def _attempt_search_recovery(
     alternate_reporting_finder: AlternateReportingFinder | None,
 ) -> _SearchRecovery:
     """Try same-article, then a source-appropriate recovery route."""
-    same_article = SameArticleRecovery()
-    fetched_candidates = ()
-    if failure.fallback_attempted and is_origin_block_reason(failure.fallback_reason):
-        outcome = attempt_same_article_recovery(candidate, article_client, same_article_finder)
-        same_article = outcome.audit
-        fetched_candidates = outcome.fetched_candidates
-        if outcome.material is not None:
-            return _SearchRecovery(outcome.material, "same_article", same_article=same_article)
+    if not _is_search_recovery_eligible(failure):
+        return _SearchRecovery()
+    recovery = _check_recovery_budget(_SearchRecovery())
+    if recovery.error_code:
+        return recovery
+    outcome = attempt_same_article_recovery(candidate, article_client, same_article_finder)
+    same_article = outcome.audit
+    fetched_candidates = outcome.fetched_candidates
+    recovery = _check_recovery_budget(_SearchRecovery(
+        outcome.material, "same_article", same_article=same_article,
+    ))
+    if recovery.material is not None or recovery.error_code:
+        return recovery
     if _should_attempt_reuters_recovery(candidate, failure):
         outcome = attempt_syndicated_recovery(candidate, article_client, syndicated_finder)
-        return _SearchRecovery(
-            outcome.material, "syndicated_copy", same_article=same_article, syndicated=outcome.audit
-        )
+        return _check_recovery_budget(_SearchRecovery(
+            outcome.material, "syndicated_copy", same_article=same_article, syndicated=outcome.audit,
+        ))
     if _should_attempt_alternate_reporting(candidate, failure):
         outcome = attempt_alternate_reporting_recovery(
             candidate, article_client, alternate_reporting_finder,
             fetched_candidates=fetched_candidates,
         )
-        return _SearchRecovery(
+        return _check_recovery_budget(_SearchRecovery(
             outcome.material,
             "alternate_reporting",
             same_article=same_article,
             alternate_reporting=outcome.audit,
-        )
-    return _SearchRecovery(same_article=same_article)
+        ))
+    return recovery
+
+
+def _check_recovery_budget(recovery: _SearchRecovery) -> _SearchRecovery:
+    """Keep completed route diagnostics when no further request is permitted."""
+    if recovery.material is not None:
+        return recovery
+    try:
+        check_budget(require_request=True)
+    except ArticleFetchError as exc:
+        if exc.error_code != "retrieval_budget_exhausted":
+            raise
+        return replace(recovery, error_code=exc.error_code)
+    return recovery
 
 
 def _record_retrieval_success(
@@ -394,9 +423,7 @@ def _should_attempt_reuters_recovery(
 ) -> bool:
     return (
         is_reuters_url(candidate.story.source_url)
-        and failure.method in {"jina", "wayback"}
-        and failure.fallback_attempted
-        and failure.fallback_reason == "datadome_challenge"
+        and _is_search_recovery_eligible(failure)
     )
 
 
@@ -406,6 +433,26 @@ def _should_attempt_alternate_reporting(
 ) -> bool:
     return (
         not is_reuters_url(candidate.story.source_url)
-        and failure.fallback_attempted is True
-        and is_origin_block_reason(failure.fallback_reason)
+        and _is_search_recovery_eligible(failure)
     )
+
+
+def _is_search_recovery_eligible(failure: RetrievalFailure) -> bool:
+    """Search only after ordinary source retrieval exhausted its backup paths."""
+    if (
+        failure.method not in {"jina", "wayback"}
+        or not failure.fallback_attempted
+        or failure.error_code in {
+            "retrieval_budget_exhausted", "unsafe_url", "rate_limited", "http_429",
+        }
+    ):
+        return False
+    reason = failure.fallback_reason
+    if is_origin_block_reason(reason) or reason in {
+        "empty_content", "network_timeout", "request_failed", "tls_issuer_unavailable",
+    }:
+        return True
+    if reason.startswith("http_") and len(reason) == 8 and reason[5:].isdigit():
+        status = int(reason[5:])
+        return 400 <= status <= 599 and status not in {400, 401, 407, 422, 429, 451}
+    return False

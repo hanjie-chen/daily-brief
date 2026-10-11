@@ -142,7 +142,8 @@ def test_reuters_datadome_failure_recovers_verified_yahoo_copy(tmp_path):
     assert public_item["content_status"] == "ok"
 
 
-def test_reuters_datadome_wayback_failure_still_recovers_yahoo_copy(tmp_path):
+@pytest.mark.parametrize("fallback_reason", ["datadome_challenge", "http_403", "http_404", "network_timeout", "empty_content"])
+def test_reuters_exhausted_retrieval_still_recovers_yahoo_copy(tmp_path, fallback_reason):
     reuters_url = reuters_story_url()
     yahoo_url = yahoo_story_url()
     fetched_urls = []
@@ -161,7 +162,7 @@ def test_reuters_datadome_wayback_failure_still_recovers_yahoo_copy(tmp_path):
     def fetch(url, **kwargs):
         fetched_urls.append(url)
         if url == reuters_url:
-            raise origin_block_failure("datadome_challenge", method="wayback")
+            raise origin_block_failure(fallback_reason, method="wayback")
         return ArticleFetchResult(
             text=verified_reuters_copy_body(),
             method="direct",
@@ -194,7 +195,7 @@ def test_reuters_datadome_wayback_failure_still_recovers_yahoo_copy(tmp_path):
     retrieval = payload["article_retrieval"]
     assert retrieval["material_origin"] == "syndicated_copy"
     assert retrieval["origin_failure"]["method"] == "wayback"
-    assert retrieval["origin_failure"]["fallback_reason"] == "datadome_challenge"
+    assert retrieval["origin_failure"]["fallback_reason"] == fallback_reason
 
 
 @pytest.mark.parametrize(
@@ -604,9 +605,17 @@ def test_origin_block_recovers_verified_alternate_reporting_with_provenance(tmp_
         ("cloudflare_challenge", "wayback"),
         ("datadome_challenge", "wayback"),
         ("vercel_challenge", "wayback"),
+        ("http_403", "wayback"),
+        ("http_404", "wayback"),
+        ("http_410", "wayback"),
+        ("http_500", "wayback"),
+        ("empty_content", "wayback"),
+        ("network_timeout", "wayback"),
+        ("request_failed", "wayback"),
+        ("tls_issuer_unavailable", "wayback"),
     ],
 )
-def test_alternate_reporting_trigger_uses_shared_origin_block_contract(
+def test_alternate_reporting_trigger_accepts_exhausted_ordinary_retrieval(
     tmp_path, fallback_reason, method
 ):
     finder = FakeAlternateReportingFinder([])
@@ -631,13 +640,6 @@ def test_alternate_reporting_trigger_uses_shared_origin_block_contract(
     "failure",
     [
         ArticleFetchError("not found", error_code="http_404", method="direct"),
-        ArticleFetchError(
-            "empty",
-            error_code="empty_content",
-            method="jina",
-            fallback_attempted=True,
-            fallback_reason="empty_content",
-        ),
         ArticleFetchError(
             "unconfirmed block",
             error_code="http_403",

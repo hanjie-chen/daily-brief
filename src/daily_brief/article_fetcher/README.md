@@ -24,8 +24,8 @@ bounded flow:
    and extract bounded HTML, text, or PDF content. HTML extraction includes
    separately labeled publisher metadata (title, description, og:description)
    and body text. Metadata is bounded and deduplicated, and only supplements
-   nonempty body text. Empty bodies still raise `empty_content` and follow the
-   existing policy-controlled Jina recovery path, even when metadata is present.
+   nonempty body text. Empty HTML extraction still raises `empty_content` and
+   follows the policy-controlled Jina recovery path, even when metadata is present.
    Recognizable LessWrong post markup is normalized before extraction: the
    article's `commentOnSelection` wrapper must not cause it to be discarded as
    a discussion comment. A linkpost introduction is retained as page text;
@@ -36,7 +36,14 @@ bounded flow:
    PDF-to-Markdown first when configured, with one bounded hard timeout across
    classification and summary retrieval, duration logging, and an explicit,
    logged local `pypdf` fallback.
-4. Retry a direct network timeout only when the policy permits it.
+4. When the policy permits it, retry transient direct failures once: network
+   timeouts or interrupted connections, HTTP 408, and HTTP 5xx. Ordinary HTTP
+   429 also permits one direct retry. Numeric and HTTP-date `Retry-After` values
+   are honored in full, up to a 15-second wait; longer waits defer retrieval for
+   this source. Missing or invalid values use the normal one-second delay.
+   A wait must also fit the remaining item deadline. Ordinary rate limits do
+   not switch to Jina or search. A recognized Vercel verification response with
+   HTTP 429 and no `Retry-After` follows the challenge recovery path.
    Summary retrieval also permits one narrowly scoped URL correction: when the
    original URL (not a redirected destination) returns HTTP 404 and its path
    ends in a literal backslash, remove exactly that final character and make
@@ -49,8 +56,16 @@ bounded flow:
    `url_trailing_backslash`. Failure retains that reason and the final error.
    Logs record the correction; public provenance maps the new reason to the
    existing `unknown` value without expanding the public schema.
-5. For eligible failures, try Jina Reader and then, for eligible browser
-   challenges only, a validated Wayback capture. Wayback index and replay
+5. For eligible failures, try Jina Reader and then a validated Wayback capture.
+   Eligibility includes ordinary HTTP 400–599 responses except 400, 401, 407,
+   422, 429, and 451; HTTP 404/410 skip Reader and go directly to Wayback.
+   Recognized verification responses preserve their challenge diagnostic reason,
+   including supported DataDome HTTP 401 responses. Missing challenge-vendor
+   markers do not prevent recovery. HTML extraction with no body, network
+   timeouts or interrupted connections after retries, and missing TLS issuer
+   information also qualify. Other certificate verification failures remain
+   terminal. Every eligible Reader failure can proceed to Wayback when enabled,
+   except unsafe URLs or an exhausted retrieval budget. Wayback index and replay
    requests prefer identity encoding, but also accept gzip. Both the downloaded
    payload and the decompressed payload must fit the existing response byte
    limit; corrupt gzip and unsupported encodings are rejected. Decoded replay
@@ -58,7 +73,8 @@ bounded flow:
    Reader always tries anonymously first. Only Reader HTTP 401/429 triggers one
    authenticated retry when `JINA_API_KEY` is configured. Origin-status errors,
    challenges, malformed responses, timeouts, and other failures do not trigger
-   this retry. Each request retains the existing timeout and size limits;
+   this retry. Each request retains the existing size limit and its timeout is
+   clipped to the remaining retrieval deadline;
    attempt counts include both requests, including when Wayback follows.
    Reader validates its successful JSON envelope separately from the reported
    origin status. Origin 2xx and 301/302/303/307/308 proceed to the existing
@@ -95,6 +111,25 @@ after retrieval, preserving full material for recovery validation.
 Classification uses a stricter policy than final summary retrieval. Recovery
 paths must not run when the active policy disables them.
 
+## Shared Retrieval Budget
+
+`budget.py` gives each selected item's source-material preparation a shared
+120-second cooperative deadline and a maximum of 24 opener calls. Direct
+requests, retries, Reader, Wayback discovery/replay, Tavily searches, and fetched
+recovery candidates consume the same scope; nested fetches do not reset it.
+Standalone `fetch_article(...)` calls start a scope when none exists. Socket
+timeouts are clipped to the remaining time, and elapsed time is checked around
+transport calls and at retrieval/recovery boundaries. Exhaustion stops further
+recovery with `retrieval_budget_exhausted`; existing HN materials remain available
+to generation.
+
+This is not a hard wall-clock cutoff: CPU extraction, response reads, injected
+blocking functions, or subprocess work can run past the deadline before the next
+check. PDF and YouTube subprocesses retain their own time and resource limits.
+Requests are counted at the top-level opener invocation; redirects inside urllib
+are bounded separately and do not consume additional shared request slots. The
+budget does not replace per-response, per-route, or extraction limits.
+
 ## Module Map
 
 | File | Responsibility |
@@ -102,6 +137,7 @@ paths must not run when the active policy disables them.
 | `__init__.py` | Stable package facade and supported imports |
 | `contracts.py` | Shared policies, results, errors, limits, and logger |
 | `fetch.py` | URL routing and direct-request retry |
+| `budget.py` | Shared cooperative deadline, request counting, bounded waits, and opener wrapping |
 | `recovery.py` | Jina and Wayback fallback orchestration |
 | `responses.py` | Response decoding and HTML/PDF extraction dispatch |
 | `wayback.py` | Capture discovery, identity checks, and replay retrieval |
@@ -120,7 +156,7 @@ Keep dependencies directed from orchestration toward lower-level modules:
 ```text
 __init__ -> fetch -> recovery -> jina / wayback
                   -> github / responses / youtube_captions
-lower-level modules -> contracts / http_safety / challenges / extract / source_evidence
+lower-level modules -> budget / contracts / http_safety / challenges / extract / source_evidence
 ```
 
 Lower-level modules must not import `fetch.py` or the package facade. Shared
@@ -148,6 +184,8 @@ before every PDF, adding startup time and memory inside the worker's limits.
 Subsystem tests live in `tests/test_article_fetcher.py`, with YouTube captions
 and source evidence covered by `tests/test_youtube_captions.py`,
 `tests/test_source_evidence.py`, and `tests/test_source_evidence_transport.py`.
+`tests/test_retrieval_budget.py` covers shared counts, deadline checks, nested
+scopes, bounded waits, and Tavily integration without real sleeping.
 Tests must use injected openers and resolvers and must never call live article,
 Jina, Wayback, GitHub, or model-provider services.
 

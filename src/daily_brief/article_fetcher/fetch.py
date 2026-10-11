@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import socket
+import ssl
 import time
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from functools import partial
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
 
+from .budget import budgeted_opener, budgeted_sleep, check_budget, with_retrieval_budget
 from .challenges import _is_network_timeout, _is_tls_issuer_unavailable
 from .contracts import (
     ArticleFetchError,
@@ -85,6 +89,7 @@ def fetch_article_text(
     ).text
 
 
+@with_retrieval_budget
 def fetch_article(
     url: str,
     *,
@@ -110,6 +115,7 @@ def fetch_article(
         extracted_max_bytes = max_bytes
 
     _validate_public_http_url(url, resolver)
+    opener = budgeted_opener(opener or _build_safe_opener(resolver).open)
     if youtube_video_id(url) is not None:
         if not policy.youtube_enabled:
             raise ArticleFetchError(
@@ -137,6 +143,7 @@ def fetch_article(
             caption.language,
             str(caption.generated).lower(),
         )
+        check_budget()
         return ArticleFetchResult(
             text=caption.text,
             method="youtube_caption",
@@ -159,6 +166,7 @@ def fetch_article(
             "component=article_fetch method=github_readme extractor=plain_text "
             "status=success"
         )
+        check_budget()
         return ArticleFetchResult(
             text=text,
             method="github_readme",
@@ -168,7 +176,7 @@ def fetch_article(
     github_blob = _github_blob(url)
     if github_blob is not None:
         owner, repository, ref, path = github_blob
-        return fetch_github_blob(
+        result = fetch_github_blob(
             owner,
             repository,
             ref,
@@ -185,6 +193,8 @@ def fetch_article(
             adobe_pdf_enabled=policy.adobe_pdf_enabled,
             adobe_pdf_timeout_seconds=policy.adobe_pdf_timeout_seconds,
         )
+        check_budget()
+        return result
 
     direct_request = Request(
         url,
@@ -193,7 +203,7 @@ def fetch_article(
             "Accept": "text/html,text/plain,application/pdf;q=0.9",
         },
     )
-    open_request = opener or _build_safe_opener(resolver).open
+    open_request = opener
     fallback_context = _JinaFallbackContext(
         url=url,
         opener=open_request,
@@ -241,7 +251,33 @@ def fetch_article(
                     direct_attempts=attempt,
                 )
             fallback_reason = _http_fallback_reason(exc)
+            if exc.code == 429 and exc.headers and exc.headers.get("Retry-After"):
+                fallback_reason = ""
+            # Recognized verification responses retain their diagnostic reason;
+            # ordinary rate limits must wait, never immediately switch egress.
+            transient = exc.code == 408 or 500 <= exc.code <= 599 or (
+                exc.code == 429 and not fallback_reason
+            )
+            if transient:
+                delay = _http_retry_delay(exc)
+                can_retry = attempt < policy.direct_max_attempts
+                if delay is None:
+                    raise ArticleFetchError(
+                        "server retry delay exceeds the retrieval wait limit",
+                        error_code=f"http_{exc.code}", method="direct", attempts=attempt,
+                    ) from exc
+                if can_retry or (exc.code != 429 and policy.jina_enabled):
+                    exc.close()
+                    budgeted_sleep(delay, sleeper)
+                if can_retry:
+                    LOGGER.warning(
+                        "component=article_fetch method=direct status=http_%d "
+                        "attempt=%d/%d retry_in=%ss", exc.code, attempt,
+                        policy.direct_max_attempts, delay,
+                    )
+                    continue
             if fallback_reason:
+                exc.close()
                 return _recover_direct_failure(
                     fallback_context,
                     fallback_reason=fallback_reason,
@@ -273,7 +309,7 @@ def fetch_article(
                 fallback_reason=exc.fallback_reason,
                 attempts=attempt,
             ) from exc
-        except (URLError, TimeoutError) as exc:
+        except (URLError, OSError, HTTPException) as exc:
             if _is_tls_issuer_unavailable(exc):
                 return _recover_direct_failure(
                     fallback_context,
@@ -290,7 +326,7 @@ def fetch_article(
                         policy.direct_max_attempts,
                         DIRECT_RETRY_DELAY_SECONDS,
                     )
-                    sleeper(DIRECT_RETRY_DELAY_SECONDS)
+                    budgeted_sleep(DIRECT_RETRY_DELAY_SECONDS, sleeper)
                     continue
                 return _recover_direct_failure(
                     fallback_context,
@@ -298,6 +334,16 @@ def fetch_article(
                     direct_attempts=attempt,
                     cause=exc,
                     direct_failure=f"network timeout after {attempt} attempts: {exc}",
+                )
+            # Certificate errors other than a missing issuer keep their existing
+            # terminal behavior. Other transport failures can use a new route.
+            if not isinstance(getattr(exc, "reason", exc), ssl.SSLError):
+                if attempt < policy.direct_max_attempts:
+                    budgeted_sleep(DIRECT_RETRY_DELAY_SECONDS, sleeper)
+                    continue
+                return _recover_direct_failure(
+                    fallback_context, fallback_reason="request_failed",
+                    direct_attempts=attempt, cause=exc,
                 )
             raise ArticleFetchError(
                 f"direct article request failed: {exc}",
@@ -313,6 +359,7 @@ def fetch_article(
                 attempts=attempt,
             ) from exc
 
+        check_budget()
         LOGGER.info(
             "component=article_fetch method=direct extractor=%s status=success "
             "attempts=%d",
@@ -330,6 +377,26 @@ def fetch_article(
         )
 
     raise AssertionError("direct article retry loop ended unexpectedly")
+
+
+def _http_retry_delay(exc: HTTPError, *, now: datetime | None = None) -> float | None:
+    """Respect Retry-After without shortening a long server-requested wait.
+
+    A daily brief defers this source when waiting would exceed 15 seconds.
+    Invalid/missing values use the ordinary short backoff.
+    """
+    value = (exc.headers.get("Retry-After", "") if exc.headers else "").strip()
+    if value.isascii() and value.isdigit():
+        delay = float(value) if len(value) < 10 else float("inf")
+    else:
+        try:
+            target = parsedate_to_datetime(value)
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=UTC)
+            delay = max(0.0, (target - (now or datetime.now(UTC))).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            delay = DIRECT_RETRY_DELAY_SECONDS
+    return delay if delay <= 15 else None
 
 
 def _retry_without_trailing_backslash(
@@ -355,6 +422,7 @@ def _retry_without_trailing_backslash(
         _validate_public_http_url(corrected_url, resolver)
         attempts += 1
         result = fetch_direct(Request(corrected_url, headers=dict(request.header_items())))
+        check_budget()
     except Exception as exc:
         if isinstance(exc, HTTPError):
             code = f"http_{exc.code}"

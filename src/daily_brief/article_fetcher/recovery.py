@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from urllib.error import HTTPError
 
+from .budget import check_budget
 from .challenges import (
     _is_cloudflare_challenge,
     _is_datadome_challenge,
@@ -28,7 +29,6 @@ from .wayback import _fetch_wayback_capture, _find_wayback_capture
 class _DirectFailureRule:
     direct_failure: str
     policy_failure: str = ""
-    wayback_after_jina: bool = False
     log_extractor: str = ""
     log_attempts: bool = False
 
@@ -36,21 +36,17 @@ class _DirectFailureRule:
 _DIRECT_FAILURE_RULES = {
     "vercel_challenge": _DirectFailureRule(
         direct_failure="vercel challenge",
-        wayback_after_jina=True,
     ),
     "datadome_challenge": _DirectFailureRule(
         direct_failure="datadome challenge",
         policy_failure="DataDome challenge",
-        wayback_after_jina=True,
     ),
     "cloudflare_challenge": _DirectFailureRule(
         direct_failure="cloudflare challenge",
         policy_failure="Cloudflare challenge",
-        wayback_after_jina=True,
     ),
     "challenge_page": _DirectFailureRule(
         direct_failure="browser verification challenge page",
-        wayback_after_jina=True,
     ),
     "empty_content": _DirectFailureRule(
         direct_failure="trafilatura empty_content",
@@ -63,6 +59,7 @@ _DIRECT_FAILURE_RULES = {
         direct_failure="network timeout",
         log_attempts=True,
     ),
+    "request_failed": _DirectFailureRule(direct_failure="network connection failed"),
 }
 
 
@@ -90,6 +87,11 @@ def _http_fallback_reason(exc: HTTPError) -> str:
         return "datadome_challenge"
     if _is_cloudflare_challenge(exc):
         return "cloudflare_challenge"
+    # A different transport can succeed without a recognizable challenge vendor.
+    # Missing/gone pages go directly to archives; auth, invalid requests and
+    # rate limits are handled separately by the caller.
+    if 400 <= exc.code <= 599 and exc.code not in {400, 401, 407, 422, 429, 451}:
+        return f"http_{exc.code}"
     return ""
 
 
@@ -110,16 +112,43 @@ def _recover_direct_failure(
     extractor: str = "",
     direct_failure: str = "",
 ) -> ArticleFetchResult:
-    rule = _DIRECT_FAILURE_RULES[fallback_reason]
+    rule = _DIRECT_FAILURE_RULES.get(fallback_reason)
+    if rule is None:
+        rule = _DirectFailureRule(direct_failure=fallback_reason)
     policy_failure = direct_failure or rule.policy_failure or rule.direct_failure
     direct_failure = direct_failure or rule.direct_failure
-    if not context.policy.jina_enabled:
+    archive_only = fallback_reason in {"http_404", "http_410"}
+    if not archive_only and not context.policy.jina_enabled:
         raise _direct_policy_failure(
             policy_failure,
             fallback_reason,
             direct_attempts,
             extractor=extractor,
         ) from cause
+
+    if archive_only:
+        if not context.policy.wayback_enabled:
+            raise _direct_policy_failure(
+                policy_failure, fallback_reason, direct_attempts, extractor=extractor,
+            ) from cause
+        return _fetch_wayback_fallback(
+            context.url,
+            direct_failure=direct_failure,
+            jina_failure=None,
+            fallback_reason=fallback_reason,
+            opener=context.opener,
+            resolver=context.resolver,
+            timeout_seconds=context.timeout_seconds,
+            html_max_bytes=context.html_max_bytes,
+            pdf_max_bytes=context.pdf_max_bytes,
+            extracted_max_bytes=context.extracted_max_bytes,
+            pdf_max_pages=context.pdf_max_pages,
+            pdf_parse_timeout_seconds=context.pdf_parse_timeout_seconds,
+            pdf_address_space_bytes=context.pdf_address_space_bytes,
+            prior_attempts=direct_attempts,
+            not_before=context.wayback_not_before,
+            not_after=context.wayback_not_after,
+        )
 
     if rule.log_attempts:
         LOGGER.warning(
@@ -151,7 +180,7 @@ def _recover_direct_failure(
         timeout_seconds=context.timeout_seconds,
         max_bytes=context.extracted_max_bytes,
         direct_attempts=direct_attempts,
-        wayback_enabled=(rule.wayback_after_jina and context.policy.wayback_enabled),
+        wayback_enabled=context.policy.wayback_enabled,
         wayback_not_before=context.wayback_not_before,
         wayback_not_after=context.wayback_not_after,
         html_max_bytes=context.html_max_bytes,
@@ -205,8 +234,11 @@ def _fetch_jina_fallback(
             timeout_seconds=timeout_seconds,
             max_bytes=max_bytes,
         )
+        check_budget()
     except ArticleFetchError as jina_exc:
-        if wayback_enabled:
+        if wayback_enabled and jina_exc.error_code not in {
+            "unsafe_url", "retrieval_budget_exhausted",
+        }:
             LOGGER.warning(
                 "component=article_fetch method=jina extractor=jina status=failed "
                 "code=%s fallback=wayback",
@@ -260,7 +292,7 @@ def _fetch_wayback_fallback(
     url: str,
     *,
     direct_failure: str,
-    jina_failure: ArticleFetchError,
+    jina_failure: ArticleFetchError | None,
     fallback_reason: str,
     opener,
     resolver,
@@ -275,6 +307,9 @@ def _fetch_wayback_fallback(
     not_before: datetime | None,
     not_after: datetime | None,
 ) -> ArticleFetchResult:
+    prior_failure = f"direct={direct_failure}"
+    if jina_failure is not None:
+        prior_failure += f"; jina={jina_failure}"
     try:
         capture = _find_wayback_capture(
             url,
@@ -287,7 +322,7 @@ def _fetch_wayback_fallback(
     except ArticleFetchError as wayback_exc:
         raise ArticleFetchError(
             "article retrieval failed: "
-            f"direct={direct_failure}; jina={jina_failure}; "
+            f"{prior_failure}; "
             f"wayback={wayback_exc}",
             error_code=wayback_exc.error_code,
             method="wayback",
@@ -311,10 +346,11 @@ def _fetch_wayback_fallback(
             pdf_parse_timeout_seconds=pdf_parse_timeout_seconds,
             pdf_address_space_bytes=pdf_address_space_bytes,
         )
+        check_budget()
     except ArticleFetchError as wayback_exc:
         raise ArticleFetchError(
             "article retrieval failed: "
-            f"direct={direct_failure}; jina={jina_failure}; "
+            f"{prior_failure}; "
             f"wayback={wayback_exc}",
             error_code=wayback_exc.error_code,
             method="wayback",

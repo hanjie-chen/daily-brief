@@ -14,6 +14,9 @@ from typing import Self
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from ..article_fetcher.budget import budgeted_opener, check_budget
+from ..article_fetcher.contracts import ArticleFetchError
+
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 TAVILY_TIMEOUT_SECONDS = 10
 TAVILY_MAX_RESPONSE_BYTES = 256 * 1024
@@ -91,8 +94,13 @@ class TavilyFinder:
             method="POST",
         )
         try:
-            with self.opener(request, timeout=self.timeout_seconds) as response:
+            with budgeted_opener(self.opener)(request, timeout=self.timeout_seconds) as response:
                 response_body = response.read(TAVILY_MAX_RESPONSE_BYTES + 1)
+                check_budget()
+        except ArticleFetchError as exc:
+            raise error_type(
+                "Retrieval budget exhausted", error_code=exc.error_code
+            ) from exc
         except HTTPError as exc:
             raise error_type(
                 f"Tavily Search returned HTTP {exc.code}",

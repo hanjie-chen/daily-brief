@@ -2264,16 +2264,10 @@ def test_origin_block_rules_use_wayback_after_jina_failure(
     attempted_wayback = any(
         request.startswith("https://web.archive.org/") for request in requests
     )
-    wayback_reasons = {
-        "vercel_challenge",
-        "datadome_challenge",
-        "cloudflare_challenge",
-        "challenge_page",
-    }
-    assert attempted_wayback is (fallback_reason in wayback_reasons)
-    assert caught.value.method == (
-        "wayback" if fallback_reason in wayback_reasons else "jina"
-    )
+    assert attempted_wayback is True
+    assert caught.value.method == "wayback"
+    assert caught.value.error_code == "wayback_no_capture"
+    assert caught.value.attempts == (4 if fallback_reason == "network_timeout" else 3)
     assert caught.value.fallback_reason == fallback_reason
 
 
@@ -2399,9 +2393,12 @@ def test_datadome_detection_requires_supported_status_and_explicit_header(
             "https://example.com/article",
             opener=deny,
             resolver=resolver_for({}),
+            sleeper=lambda _: None,
         )
 
-    assert requested_urls == ["https://example.com/article"]
+    expected_attempts = 2 if status_code == 429 else 1
+    assert requested_urls == ["https://example.com/article"] * expected_attempts
+    assert caught.value.attempts == expected_attempts
     assert caught.value.error_code == f"http_{status_code}"
     assert caught.value.method == "direct"
     assert caught.value.fallback_attempted is False
@@ -2498,9 +2495,14 @@ def test_404_does_not_guess_other_url_corrections(source):
 
     with pytest.raises(ArticleFetchError) as caught:
         fetch_article(source, opener=deny, resolver=resolver_for({}))
-    assert requests == [source]
-    assert caught.value.attempts == 1
-    assert not caught.value.fallback_attempted
+    assert len(requests) == 2
+    assert requests[0] == source
+    assert requests[1].startswith("https://web.archive.org/cdx/search/cdx?")
+    assert parse_qs(urlparse(requests[1]).query)["url"] == [source]
+    assert caught.value.attempts == 2
+    assert caught.value.error_code == "wayback_http_404"
+    assert caught.value.fallback_reason == "http_404"
+    assert caught.value.fallback_attempted
 
 
 @pytest.mark.parametrize("status", [403, 500])
@@ -2512,9 +2514,19 @@ def test_trailing_backslash_is_not_corrected_for_other_http_errors(status):
         requests.append(request.full_url)
         raise http_error(request.full_url, status)
 
-    with pytest.raises(ArticleFetchError):
-        fetch_article(source, opener=deny, resolver=resolver_for({}))
-    assert requests == [source]
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            source, opener=deny, resolver=resolver_for({}), sleeper=lambda _: None
+        )
+    direct_attempts = 2 if status == 500 else 1
+    assert requests[:direct_attempts] == [source] * direct_attempts
+    assert requests[direct_attempts] == "https://r.jina.ai/" + source
+    assert len(requests) == direct_attempts + 2
+    assert requests[-1].startswith("https://web.archive.org/cdx/search/cdx?")
+    assert parse_qs(urlparse(requests[-1]).query)["url"] == [source]
+    assert caught.value.attempts == len(requests)
+    assert caught.value.fallback_reason == f"http_{status}"
+    assert caught.value.error_code == f"wayback_http_{status}"
 
 
 def test_successful_url_with_trailing_backslash_is_unchanged():
@@ -2596,13 +2608,18 @@ def test_redirected_404_does_not_correct_original_url():
         requests.append(request.full_url)
         raise http_error("https://example.com/moved", 404)
 
-    with pytest.raises(ArticleFetchError):
+    with pytest.raises(ArticleFetchError) as caught:
         fetch_article(source, opener=deny, resolver=resolver_for({}))
-    assert requests == [source]
+    assert len(requests) == 2
+    assert requests[0] == source
+    assert requests[1].startswith("https://web.archive.org/cdx/search/cdx?")
+    assert parse_qs(urlparse(requests[1]).query)["url"] == [source]
+    assert caught.value.fallback_reason == "http_404"
+    assert caught.value.error_code == "wayback_http_404"
 
 
-@pytest.mark.parametrize("status_code", [401, 403, 404])
-def test_fetch_article_text_does_not_use_jina_for_other_http_errors(status_code):
+@pytest.mark.parametrize("status_code", [400, 401, 407, 422, 451])
+def test_fetch_article_text_keeps_terminal_http_errors_direct(status_code):
     requested_urls = []
 
     def deny(request, timeout):
@@ -2757,15 +2774,19 @@ def test_network_timeout_and_jina_failure_preserve_attempt_count():
             sleeper=lambda delay: None,
         )
 
-    assert requested_urls == [
+    assert len(requested_urls) == 4
+    assert requested_urls[:3] == [
         "https://example.com/article",
         "https://example.com/article",
         "https://r.jina.ai/https://example.com/article",
     ]
-    assert caught.value.method == "jina"
+    assert requested_urls[3].startswith("https://web.archive.org/cdx/search/cdx?")
+    assert caught.value.error_code == "wayback_request_failed"
+    assert "jina=Jina Reader request failed" in str(caught.value)
+    assert caught.value.method == "wayback"
     assert caught.value.fallback_attempted is True
     assert caught.value.fallback_reason == "network_timeout"
-    assert caught.value.attempts == 3
+    assert caught.value.attempts == 4
 
 
 @pytest.mark.parametrize(
@@ -2853,6 +2874,12 @@ def test_empty_trafilatura_and_jina_failure_preserve_combined_provenance(
 
     def open_response(request, timeout):
         requests.append(request.full_url)
+        if request.full_url.startswith("https://web.archive.org/cdx/search/cdx?"):
+            return FakeResponse(
+                make_wayback_payload(),
+                content_type="application/json",
+                final_url=request.full_url,
+            )
         return direct_response if len(requests) == 1 else jina_response
 
     with pytest.raises(
@@ -2868,13 +2895,17 @@ def test_empty_trafilatura_and_jina_failure_preserve_combined_provenance(
             resolver=resolver_for({}),
         )
 
-    assert requests == [
+    assert len(requests) == 3
+    assert requests[:2] == [
         "https://example.com/article",
         "https://r.jina.ai/https://example.com/article",
     ]
-    assert caught.value.error_code == "jina_malformed_json"
-    assert caught.value.method == "jina"
-    assert caught.value.extractor == "jina"
+    assert requests[2].startswith("https://web.archive.org/cdx/search/cdx?")
+    assert "wayback=Wayback CDX found no capture" in str(caught.value)
+    assert caught.value.error_code == "wayback_no_capture"
+    assert caught.value.method == "wayback"
+    assert caught.value.extractor == ""
+    assert caught.value.attempts == 3
     assert caught.value.fallback_attempted is True
     assert caught.value.fallback_reason == "empty_content"
 

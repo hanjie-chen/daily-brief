@@ -69,8 +69,8 @@ this package that owns it.
    Specialized GitHub, YouTube, HTML, and PDF paths remain behind the same bounded
    retrieval interface; recovery material is accepted only after deterministic
    validation.
-   After an origin browser challenge exhausts retrieval, selected-item summary
-   retrieval first tries `recovery/same_article.py`: one title-based Tavily basic query,
+   After an eligible source failure exhausts transport recovery, selected-item
+   summary retrieval first tries `recovery/same_article.py`: one title-based Tavily basic query,
    ten discovery candidates, and at most three unique candidate fetches. Only HN
    is excluded. An independently fetched nonempty title, explicit publisher
    cross-post/republication backlink to the source, and substantive body are
@@ -80,6 +80,23 @@ this package that owns it.
    or same-event reporting from other publishers. The latter reuses already
    fetched pages before issuing an additional search, while preserving the
    original URL and marking accepted material as `alternate_reporting`.
+   Search eligibility covers recoverable HTTP errors, challenges, empty HTML
+   extraction, timeouts or interrupted connections, and missing TLS issuer
+   information after Jina/Wayback failure. It does not require a known challenge
+   vendor; Reuters syndicated recovery likewise has no DataDome requirement.
+   Ordinary HTTP 400/401/407/422/429/451, unsafe URLs, failed URL correction, and
+   budget exhaustion do not initiate search. Ordinary HTTP 429 honors a bounded
+   direct retry, including `Retry-After`, and then leaves the source unavailable.
+   `material.py` shares one 120-second cooperative deadline and 24-opener-request
+   budget across source retrieval, retries, Reader, Wayback, searches, and all
+   recovery candidates. Nested calls reuse it. Socket timeouts are clipped to
+   remaining time, and elapsed time is checked at retrieval/recovery boundaries;
+   exhaustion records `retrieval_budget_exhausted` while HN material can still
+   support the summary. The deadline cannot preempt CPU work, response reads,
+   or injected blocking calls; PDF/YouTube subprocesses keep their own limits.
+   urllib redirect hops are bounded separately and do not count as additional
+   shared requests. HN discussion acquisition and model calls retain their own
+   bounds outside this source-retrieval scope.
 7. `summaries.py`: Ordinary items make one summary call after material preparation.
    `llm/summarizer.py` presents webpage metadata, extracted webpage material, HN
    self-post text, and the discussion sample as separately labeled inputs. It

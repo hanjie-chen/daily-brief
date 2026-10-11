@@ -1,7 +1,7 @@
 # Recovery
 
 This package finds replacement material for a selected story whose original page
-is blocked by a browser challenge. It searches for other pages, fetches them,
+remains unavailable after eligible transport recovery. It searches for other pages, fetches them,
 and accepts one only after deterministic validation. The package-level facade is
 the import used by the rest of the application:
 
@@ -18,19 +18,36 @@ in [the architecture guide](../../../docs/architecture.md) (Chinese).
 ## When Recovery Runs
 
 Recovery runs only while preparing a selected story's summary, never during
-classification, and only after `article_fetcher` has exhausted its own
-fallbacks. `generation/material.py` tries at most one route of each kind, in
-this order, and stops at the first accepted page:
+classification, and only after an eligible failure from Jina or Wayback. This
+includes recognized challenges, ordinary recoverable HTTP errors, empty HTML
+extraction, network timeouts or interrupted connections, and missing TLS issuer
+information. HTTP 400, 401, 407, 422, 429, and 451 are excluded from the ordinary
+HTTP path. A recognized challenge retains its own reason. Unsafe URLs, budget
+exhaustion, ordinary rate limits, and failed trailing-backslash correction are
+terminal for search recovery.
 
-1. Same article: the original failure's fallback reason is an origin block
-   (`models.is_origin_block_reason(...)`).
-2. Reuters syndicated copy: the original URL is on Reuters, the failure came
-   from Jina or Wayback, and the fallback reason is `datadome_challenge`.
-3. Alternate reporting: the original URL is not on Reuters and the fallback
-   reason is an origin block.
+`generation/material.py` tries at most one route of each kind, in this order,
+and stops at the first accepted page:
+
+1. Same article: find another publication of the original work.
+2. Reuters syndicated copy: the original URL is on Reuters. This does not
+   require a DataDome marker.
+3. Alternate reporting: the original URL is not on Reuters.
 
 Routes 2 and 3 are mutually exclusive. When every route fails, the story keeps
-its original retrieval failure and `generation/` moves on to the HN discussion.
+its original retrieval failure; budget exhaustion is recorded explicitly when
+it stops further work. Available HN post and discussion materials can still be
+used by generation.
+
+All searches and candidate fetches reuse the source-material preparation's
+120-second cooperative deadline and 24-request budget from
+[`article_fetcher/budget.py`](../article_fetcher/budget.py). Tavily opener calls
+count alongside direct requests, Reader, and Wayback; nested candidate fetches
+do not reset the budget. Socket timeouts are clipped to remaining time, and
+budget checks stop further stages after exhaustion. This does not preempt CPU
+work, response reads, or injected blocking calls; subprocesses retain their own
+limits. urllib redirect hops are bounded separately rather than counted as
+additional opener calls.
 
 ## Routes
 
@@ -146,7 +163,9 @@ persisted in diagnostics.
   article client as the original, and `article_fetcher` never imports this
   package, so fetching a candidate cannot start another search.
 - Everything is bounded: search results, fetches, response sizes
-  (`TAVILY_MAX_RESPONSE_BYTES`), and request time (`TAVILY_TIMEOUT_SECONDS`).
+  (`TAVILY_MAX_RESPONSE_BYTES`), and socket timeouts (`TAVILY_TIMEOUT_SECONDS`),
+  further limited by the shared retrieval budget. Budget exhaustion ends the
+  route and prevents another recovery stage.
 - Candidate URLs are normalized. Syndicated copies retain their publisher
   allowlist; alternate reporting excludes known discussion/social endpoints
   before fetching and again after redirects. `article_fetcher` still enforces public-address checks
@@ -176,7 +195,7 @@ search_recovery -> same_article, syndicated_copy, alternate_reporting, fetched_m
 same_article, syndicated_copy, alternate_reporting -> tavily
 alternate_reporting -> same_article (URL normalization)
 all modules     -> models; search_recovery, same_article, alternate_reporting, fetched_material also
-                   -> article_fetcher (result and error types only)
+                   -> article_fetcher (result and error types); tavily -> article_fetcher.budget
 ```
 
 This package never imports `generation/`. Alternate reporting reuses same-article URL normalization; search transport
