@@ -46,7 +46,7 @@ Each package with its own guide lists its files there.
 
 | Path | Responsibility |
 | --- | --- |
-| `__init__.py` | Package metadata |
+| `__init__.py` | Package marker; the project version is declared in `pyproject.toml` |
 | `__main__.py` | `python -m daily_brief` entry point |
 | `cli.py` | Command-line parsing and command dispatch |
 | `config.py` | Timezone, topic vocabulary, quotas, thresholds, and scoring limits |
