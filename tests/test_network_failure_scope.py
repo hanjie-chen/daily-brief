@@ -48,7 +48,15 @@ def scheduled_run(monkeypatch, tmp_path):
         waits.append(seconds)
         elapsed[0] += seconds
 
-    recovery = NetworkRecovery(sleeper=sleep)
+    checks = []
+    outage_error = [None]
+
+    def check_connection():
+        checks.append(elapsed[0])
+        if outage_error[0] is not None and elapsed[0] < 900:
+            raise outage_error[0]()
+
+    recovery = NetworkRecovery(sleeper=sleep, connectivity_check=check_connection)
     monkeypatch.setattr(daily_run, "NetworkRecovery", lambda: recovery)
     monkeypatch.setattr(daily_run, "daily_window", lambda: SimpleNamespace(date_label="2026-10-12"))
     stories = [
@@ -73,15 +81,22 @@ def scheduled_run(monkeypatch, tmp_path):
     monkeypatch.setattr(daily_run, "publish_brief", publish)
     request_counts = Counter()
 
-    def install_transport(*, article_error=None, local_error=None):
+    def install_transport(*, article_error=None, local_error=None, isolated_dns_error=None,
+                          outage_stage="resolver"):
+        outage_error[0] = local_error
+
         def resolver(host, port, type):
-            if local_error is not None and elapsed[0] < 900:
+            if host == "site2.example" and isolated_dns_error is not None:
+                raise isolated_dns_error()
+            if local_error is not None and elapsed[0] < 900 and host != "site1.example" and outage_stage == "resolver":
                 raise local_error()
             return [(socket.AF_INET, type, socket.IPPROTO_TCP, "", ("93.184.216.34", port))]
 
         def opener(request, **kwargs):
             host = urlparse(request.full_url).hostname
             request_counts[host] += 1
+            if local_error is not None and elapsed[0] < 900 and host != "site1.example" and outage_stage == "transport":
+                raise local_error()
             if host == "site2.example" and article_error is not None:
                 raise article_error(request.full_url)
             return ArticleResponse(request.full_url)
@@ -96,7 +111,7 @@ def scheduled_run(monkeypatch, tmp_path):
     return SimpleNamespace(run=run, install_transport=install_transport, elapsed=elapsed,
                            waits=waits, published=published, backend=backend,
                            counts=request_counts, recovery=recovery, publish=publish,
-                           data_dir=tmp_path / "data")
+                           data_dir=tmp_path / "data", checks=checks)
 
 
 @pytest.mark.parametrize("article_error", [
@@ -110,6 +125,26 @@ def test_one_unavailable_article_does_not_delay_or_prevent_publication(scheduled
     run.install_transport(article_error=article_error)
     assert run.run().published == 1
     assert run.waits == []
+    assert run.checks == [0]
+    assert not run.recovery.exhausted
+    items = run.published[0]["sections"]["ai"]["items"]
+    assert {item["hn_item_id"] for item in items} == {"1", "3", "4", "5"}
+    audit = json.loads((run.data_dir / "2026-10-12-hn-candidates.json").read_text())
+    failed = next(item for item in audit if item["hn_item_id"] == "2")
+    assert failed["rejection_reason"] == "topic_unknown"
+    assert run.counts["site1.example"] == 1
+
+
+@pytest.mark.parametrize("isolated_dns_error", [
+    lambda: socket.gaierror(socket.EAI_AGAIN, "one domain SERVFAIL"),
+    lambda: OSError(errno.ENETUNREACH, "one target has no usable route"),
+], ids=["one-domain-servfail", "one-target-route"])
+def test_one_unresolvable_article_does_not_delay_or_prevent_publication(scheduled_run, isolated_dns_error):
+    run = scheduled_run
+    run.install_transport(isolated_dns_error=isolated_dns_error)
+    assert run.run().published == 1
+    assert run.waits == []
+    assert run.checks == [0]
     assert not run.recovery.exhausted
     items = run.published[0]["sections"]["ai"]["items"]
     assert {item["hn_item_id"] for item in items} == {"1", "3", "4", "5"}
@@ -130,10 +165,24 @@ def test_local_outage_resumes_generation_after_twenty_minutes(scheduled_run, loc
     assert run.run().published == 1
     assert run.waits == [600, 600]
     assert run.elapsed == [1200]
+    assert run.checks == [0, 600]
     assert not run.recovery.exhausted
     assert len(run.published[0]["sections"]["ai"]["items"]) == 5
-    # Successful requests and summaries are each performed once after recovery.
+    # Work completed before the outage and after recovery is each performed once.
     assert set(run.counts.values()) == {1}
+    assert len(run.backend.titles) == len(set(run.backend.titles)) == 5
+
+
+def test_transport_outage_resumes_without_repeating_successful_work(scheduled_run):
+    run = scheduled_run
+    run.install_transport(local_error=lambda: TimeoutError("transport unavailable"), outage_stage="transport")
+    assert run.run().published == 1
+    assert run.waits == [600, 600]
+    assert run.checks == [0, 600]
+    assert not run.recovery.exhausted
+    assert len(run.published[0]["sections"]["ai"]["items"]) == 5
+    assert run.counts["site1.example"] == 1
+    assert run.counts["site3.example"] == run.counts["site4.example"] == run.counts["site5.example"] == 1
     assert len(run.backend.titles) == len(set(run.backend.titles)) == 5
 
 
@@ -157,6 +206,7 @@ def test_critical_service_503_waits_and_resumes_without_regenerating(scheduled_r
         monkeypatch.setattr(daily_run, "publish_brief", request)
     assert run.run().published == 1
     assert run.waits == [600]
+    assert run.checks == []
     assert len(run.published) == 1
     assert set(run.counts.values()) == {1}
     assert len(run.backend.titles) == len(set(run.backend.titles)) == 5

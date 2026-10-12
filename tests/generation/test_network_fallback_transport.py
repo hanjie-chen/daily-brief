@@ -68,7 +68,11 @@ def test_jina_network_failure_survives_missing_archive_and_resumes_current_item(
 
     summarizer = FakeSummarizer()
     fetcher = partial(fetch_article, opener=opener, resolver=resolver)
-    with NetworkRecovery(sleeper=waits.append, max_pauses=1) as recovery:
+
+    def check():
+        raise TimeoutError("HN unavailable")
+
+    with NetworkRecovery(sleeper=waits.append, max_pauses=1, connectivity_check=check) as recovery:
         summarize_selected_candidates(
             [first, second], [], summarizer, fetcher,
             lambda _: HNDiscussionResult("", 0, 0, 1, 0),

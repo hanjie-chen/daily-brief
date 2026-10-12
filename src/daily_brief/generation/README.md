@@ -109,11 +109,14 @@ this package that owns it.
    was observed does the task use a shared pause and retry this item's missing
    acquisitions. Completed items remain in memory. Classification and
    comment-led roundups can pause at their required acquisition directly.
-   Article and recovery hosts are optional: their HTTP 5xx, timeouts and refused
-   connections never spend the shared allowance. Materials require a typed local
-   resolver/route signal (`EAI_AGAIN`, `ENETDOWN`, `ENETUNREACH`) to pause; HN
-   requests retain the critical-service policy. A single broken article can
-   therefore be skipped without preventing publication of other content.
+   Article and recovery hosts are optional: no single-host error, including
+   temporary DNS or route failure, independently spends the shared allowance.
+   `NetworkFailures.wait` makes one bounded HN HTTPS check after all available
+   material routes fail. Only a transient failure of that check permits a pause;
+   a healthy HN response or non-transient check error leaves the item degraded.
+   An already observed critical HN failure bypasses the extra check. Suspended
+   and standalone material acquisition never probes. A single broken article
+   can therefore be skipped without preventing publication of other content.
    Each source-material retry starts a new 120-second/24-request scope; the
    long pause happens outside that scope. The shared run allowance bounds these
    retries across candidates and stages. Without an active recovery scope,

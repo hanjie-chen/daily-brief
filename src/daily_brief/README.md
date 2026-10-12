@@ -130,10 +130,12 @@ listed only in that package's guide.
   is held in memory only. See the architecture guide for the supported failures
   and command boundaries.
 - HN, model and publishing operations use the critical-service retry policy.
-  Optional material hosts do not spend shared pauses for HTTP 5xx, timeouts or
-  refused/reset connections; they retain fallback and item-level degradation.
-  Only typed `EAI_AGAIN`, `ENETDOWN` and `ENETUNREACH` signals from materials can
-  request a shared pause. This is a recovery policy, not a global outage probe.
+  Optional material failures (including DNS and route errors) cannot alone spend
+  shared pauses. After allowed fallbacks yield no usable material, one bounded
+  HN HTTPS check must also fail transiently before a pause is requested. An
+  observed critical-service failure needs no extra check. Available material
+  bypasses the check; a healthy HN response keeps failures item-scoped. This
+  checks a workflow dependency, not global network health.
 - Public JSON retains the compatibility section keys `ai` and `non_ai_hot`.
   Local Markdown labels the core section `Tech picks`, while the website displays
   it as 技术精选. Changing either display label is not a schema migration.

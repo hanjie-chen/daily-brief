@@ -155,8 +155,9 @@ persisted in diagnostics.
 
 When a generation attempt observes network failures, finder failures are also
 reported to its internal observer before returning the existing failure audit.
-These optional services only flag typed local resolver/route faults for a shared
-pause; a search provider's HTTP 5xx or timeout still degrades this material route.
+These optional-service failures are only possible recovery signals. They do not
+request a shared pause unless all allowed material routes fail and a separate
+HN HTTPS check also fails transiently; otherwise this material route degrades.
 Candidate fetch failures are observed by the generation-owned article client.
 The routes themselves never perform long waits: generation decides whether to
 pause only after available fallback routes and material sources are assessed.

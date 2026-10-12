@@ -1,4 +1,5 @@
 import errno
+from io import BytesIO
 import socket
 import ssl
 from urllib.error import HTTPError, URLError
@@ -6,7 +7,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from daily_brief.network_recovery import (
-    NetworkFailures, NetworkRecovery, is_transient_network_error, is_local_network_error,
+    NetworkFailures, NetworkRecovery, is_transient_network_error, check_hn_connection,
     observe_network_failure, recoverable_network, suspend_network_recovery,
 )
 
@@ -29,12 +30,17 @@ def test_transient_network_failures(error):
     HTTPError("https://article.example", 408, "timeout", {}, None),
 ])
 def test_same_error_has_different_scope_for_optional_material_and_critical_service(error):
-    with NetworkFailures() as material_failure:
-        observe_network_failure(error)
-    with NetworkFailures() as service_failure:
-        observe_network_failure(error, critical=True)
-    assert not material_failure.transient
-    assert service_failure.transient
+    checks, waits = [], []
+    with NetworkRecovery(sleeper=waits.append, connectivity_check=lambda: checks.append("HN")):
+        with NetworkFailures() as material_failure:
+            observe_network_failure(error)
+        assert not material_failure.wait("article")
+        assert waits == []
+        with NetworkFailures() as service_failure:
+            observe_network_failure(error, critical=True)
+        assert service_failure.wait("critical")
+    assert checks == ["HN"]
+    assert waits == [600]
 
 
 @pytest.mark.parametrize("cause", [
@@ -42,23 +48,26 @@ def test_same_error_has_different_scope_for_optional_material_and_critical_servi
     OSError(errno.ENETDOWN, "interface down"),
     OSError(errno.ENETUNREACH, "route unavailable"),
 ])
-def test_local_network_signals_survive_wrappers(cause):
+def test_dns_and_route_errors_do_not_establish_shared_outage_even_through_wrappers(cause):
     from daily_brief.article_fetcher import ArticleFetchError
     error = ArticleFetchError("URL validation failed", error_code="unsafe_url")
     error.__cause__ = URLError(cause)
-    assert is_local_network_error(error)
-    with NetworkFailures() as failures:
-        observe_network_failure(error)
-    assert failures.transient
+    with NetworkRecovery(sleeper=lambda _: pytest.fail("isolated failure"),
+                         connectivity_check=lambda: None, max_pauses=0) as recovery:
+        with NetworkFailures() as failures:
+            observe_network_failure(error)
+        assert failures.transient
+        assert not failures.wait("article")
+        assert not recovery.exhausted
 
 
-def test_generic_fallback_reason_does_not_establish_local_outage():
+def test_generic_fallback_reason_requires_failed_hn_check():
     from daily_brief.article_fetcher import ArticleFetchError
     error = ArticleFetchError("archive failed", error_code="wayback_no_capture", fallback_reason="request_failed")
-    assert not is_local_network_error(error)
-    with NetworkFailures() as failures:
-        observe_network_failure(error)
-    assert not failures.transient
+    with NetworkRecovery(connectivity_check=lambda: None):
+        with NetworkFailures() as failures:
+            observe_network_failure(error)
+        assert not failures.wait("article")
 
 
 def test_origin_failure_survives_a_definitively_unavailable_fallback():
@@ -172,3 +181,76 @@ def test_interrupted_wait_propagates_and_cleans_scope():
             fail()
     with pytest.raises(TimeoutError):
         fail()
+
+
+@pytest.mark.parametrize("error, should_wait", [
+    (TimeoutError(), True),
+    (URLError(socket.gaierror(socket.EAI_AGAIN, "temporary DNS failure")), True),
+    (OSError(errno.ENETUNREACH, "no route"), True),
+    (HTTPError("https://hn.example", 503, "unavailable", {}, None), True),
+    (HTTPError("https://hn.example", 429, "limited", {}, None), False),
+    (HTTPError("https://hn.example", 404, "missing", {}, None), False),
+    (URLError(ssl.SSLCertVerificationError("certificate")), False),
+    (ValueError("invalid HN response"), False),
+])
+def test_optional_material_wait_depends_on_actual_hn_failure(error, should_wait):
+    checks, waits = [], []
+
+    def check():
+        checks.append("HN")
+        raise error
+
+    with NetworkRecovery(sleeper=waits.append, connectivity_check=check) as recovery:
+        with NetworkFailures() as failures:
+            observe_network_failure(TimeoutError("article failed"))
+        assert failures.wait("article") is should_wait
+        assert not recovery.exhausted
+    assert checks == ["HN"]
+    assert waits == ([600] if should_wait else [])
+
+
+def test_standalone_and_suspended_materials_do_not_probe_or_spend_allowance():
+    def forbidden():
+        pytest.fail("No probe before fallbacks or outside a scheduled run")
+
+    with NetworkFailures() as failures:
+        observe_network_failure(TimeoutError())
+    assert not failures.wait("standalone")
+    with NetworkRecovery(connectivity_check=forbidden, max_pauses=0) as recovery:
+        with suspend_network_recovery():
+            assert not failures.wait("fallbacks")
+        assert not recovery.exhausted
+
+
+def test_critical_failure_propagates_to_outer_material_observer_without_probe():
+    def forbidden():
+        pytest.fail("Critical service failure already observed")
+
+    waits = []
+    with NetworkRecovery(sleeper=waits.append, connectivity_check=forbidden):
+        with NetworkFailures() as outer, suspend_network_recovery():
+            with NetworkFailures():
+                observe_network_failure(TimeoutError(), critical=True)
+        assert outer.wait("summary")
+    assert waits == [600]
+
+
+def test_hn_check_performs_bounded_http_request_and_closes_response(monkeypatch):
+    calls = []
+    response = BytesIO(b"123456789")
+
+    def opener(url, *, timeout):
+        calls.append((url, timeout))
+        return response
+
+    monkeypatch.setattr("daily_brief.network_recovery.urlopen", opener)
+    check_hn_connection()
+    assert calls == [("https://hacker-news.firebaseio.com/v0/maxitem.json", 10)]
+    assert response.closed
+
+
+@pytest.mark.parametrize("body", [b"null", b"true", b"0", b'"123"', b"<html>error</html>", b"1" * 100])
+def test_hn_check_rejects_invalid_or_oversized_response(monkeypatch, body):
+    monkeypatch.setattr("daily_brief.network_recovery.urlopen", lambda *a, **kw: BytesIO(body))
+    with pytest.raises(ValueError):
+        check_hn_connection()

@@ -19,7 +19,6 @@ from ..llm import article_fetch_failure_summary
 from ..network_recovery import (
     NetworkFailures,
     observe_network_failure,
-    wait_for_network,
 )
 from ..models import (
     AlternateReportingRecovery,
@@ -74,7 +73,7 @@ def prepare_candidate_material(
             return available
         # A new attempt gets its own bounded retrieval scope. The long pause is
         # outside that scope and never consumes its 120-second deadline.
-        if not wait_for_network(f"article_material:{candidate.story.hn_item_id}"):
+        if not failures.wait(f"article_material:{candidate.story.hn_item_id}"):
             return False
 
 

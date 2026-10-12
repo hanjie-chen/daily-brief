@@ -16,6 +16,19 @@ from daily_brief.time_window import daily_window
 from fakes import FakeSummarizer, story
 
 
+@pytest.fixture(autouse=True)
+def unavailable_hn(monkeypatch):
+    checks = []
+
+    def check():
+        assert remaining_seconds() is None
+        checks.append("HN")
+        raise TimeoutError("HN unavailable")
+
+    monkeypatch.setattr("daily_brief.network_recovery.check_hn_connection", check)
+    return checks
+
+
 def no_comments(item_id):
     return HNDiscussionResult(text="", comments=0, chars=0, requested_items=1, failed_items=0)
 
@@ -87,7 +100,7 @@ def test_observed_local_failure_survives_unavailable_archive(monkeypatch):
 
 
 @pytest.mark.parametrize("body_source", ["web", "post", "comments"])
-def test_available_material_avoids_long_wait(body_source):
+def test_available_material_avoids_long_wait(body_source, unavailable_hn):
     candidate = Candidate(story(
         "1", "Rust release", story_text="Useful post." if body_source == "post" else "",
     ))
@@ -110,6 +123,7 @@ def test_available_material_avoids_long_wait(body_source):
         summarize([candidate], fetch, comments)
     assert slept == []
     assert candidate.summary_status == "success"
+    assert unavailable_hn == []
 
 
 def test_resume_current_item_preserves_completed_summary():
@@ -178,7 +192,7 @@ def test_network_failed_search_is_observed_before_fallback_audit(monkeypatch):
     assert slept == [600]
 
 
-def test_definitive_missing_source_does_not_wait(monkeypatch):
+def test_definitive_missing_source_does_not_wait(monkeypatch, unavailable_hn):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     candidate = Candidate(story("1", "Rust release"))
     slept = []
@@ -192,6 +206,7 @@ def test_definitive_missing_source_does_not_wait(monkeypatch):
     with NetworkRecovery(sleeper=slept.append, max_pauses=1):
         assert not prepare(candidate, fetch)
     assert slept == []
+    assert unavailable_hn == []
 
 
 def test_empty_discussion_with_failed_comment_requests_is_retried():

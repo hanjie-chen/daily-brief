@@ -15,7 +15,7 @@ from ..llm import (
     route_summary_mode,
 )
 from ..models import Candidate, DiscussionRetrieval, SummaryGeneration, material_summary_basis
-from ..network_recovery import NetworkFailures, suspend_network_recovery, wait_for_network
+from ..network_recovery import NetworkFailures, suspend_network_recovery
 from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow
 from .material import (
@@ -108,7 +108,7 @@ def _prepare_selected_materials(
             candidate.discussion_text.strip(),
         )) or not failures.transient:
             return
-        if not wait_for_network(f"summary_material:{candidate.story.hn_item_id}"):
+        if not failures.wait(f"summary_material:{candidate.story.hn_item_id}"):
             return
         retry_missing_source = True
         # Only unavailable comments need another acquisition. Successful source
