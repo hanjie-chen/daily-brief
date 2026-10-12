@@ -1,5 +1,7 @@
 """Run-level material recovery uses fake requests and fake ten-minute waits."""
 
+import errno
+
 import pytest
 
 from daily_brief.article_fetcher import ArticleFetchError
@@ -43,7 +45,7 @@ def test_source_retry_has_new_request_budget_and_waits_outside_deadline():
         for _ in range(24):
             opener(url)
         if len(calls) == 1:
-            raise ArticleFetchError("Connection interrupted", error_code="request_failed")
+            raise OSError(errno.ENETDOWN, "Local network unavailable")
         return "Recovered source body."
 
     def sleep(seconds):
@@ -58,7 +60,7 @@ def test_source_retry_has_new_request_budget_and_waits_outside_deadline():
     assert candidate.story.fetched_text == "Recovered source body."
 
 
-def test_original_network_failure_survives_unavailable_archive(monkeypatch):
+def test_observed_local_failure_survives_unavailable_archive(monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     candidate = Candidate(story("1", "Rust release"))
     calls = []
@@ -67,6 +69,7 @@ def test_original_network_failure_survives_unavailable_archive(monkeypatch):
     def fetch(url, **kwargs):
         calls.append(url)
         if len(calls) == 1:
+            observe_network_failure(OSError(errno.ENETDOWN, "Local network unavailable"))
             try:
                 raise ArticleFetchError("No capture", error_code="wayback_no_capture")
             except ArticleFetchError as exc:
@@ -118,7 +121,7 @@ def test_resume_current_item_preserves_completed_summary():
     def fetch(url, **kwargs):
         calls.append(url)
         if url.endswith("/2") and calls.count(url) == 1:
-            raise TimeoutError("Connection timeout")
+            raise OSError(errno.ENETUNREACH, "Local route unavailable")
         return "Useful source body."
 
     with NetworkRecovery(sleeper=slept.append, max_pauses=1):
@@ -136,7 +139,7 @@ def test_candidates_share_pause_allowance():
 
     def fetch(url, **kwargs):
         calls.append(url)
-        raise TimeoutError("Connection timeout")
+        raise OSError(errno.ENETDOWN, "Local network unavailable")
 
     with NetworkRecovery(sleeper=slept.append, max_pauses=1) as recovery:
         summarize(candidates, fetch)
@@ -158,7 +161,7 @@ def test_network_failed_search_is_observed_before_fallback_audit(monkeypatch):
 
         def find(self, candidate):
             searched.append(candidate.story.hn_item_id)
-            raise SameArticleFinderError("Search disconnected", error_code="provider_request_failed") from TimeoutError()
+            raise SameArticleFinderError("Search disconnected", error_code="provider_request_failed") from OSError(errno.ENETDOWN, "Local network unavailable")
 
     def fetch(url, **kwargs):
         fetched.append(url)
@@ -203,7 +206,7 @@ def test_empty_discussion_with_failed_comment_requests_is_retried():
         if len(calls) == 1:
             # The real per-comment HTTP boundary observes before the bounded
             # sampler turns three failed child requests into an empty sample.
-            observe_network_failure(TimeoutError())
+            observe_network_failure(TimeoutError(), critical=True)
             return HNDiscussionResult("", 0, 0, 4, 3)
         return HNDiscussionResult("Recovered discussion.", 1, 21, 2, 0)
 

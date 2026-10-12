@@ -105,10 +105,15 @@ this package that owns it.
    their normal ordering; a successful fallback avoids a long pause. Ordinary
    selected items first collect all available webpage, post, and comment material
    with long waits suspended. Any usable text proceeds to the summary model.
-   Only when no material is available and an actual transient network failure
+   Only when no material is available and an eligible network failure
    was observed does the task use a shared pause and retry this item's missing
    acquisitions. Completed items remain in memory. Classification and
    comment-led roundups can pause at their required acquisition directly.
+   Article and recovery hosts are optional: their HTTP 5xx, timeouts and refused
+   connections never spend the shared allowance. Materials require a typed local
+   resolver/route signal (`EAI_AGAIN`, `ENETDOWN`, `ENETUNREACH`) to pause; HN
+   requests retain the critical-service policy. A single broken article can
+   therefore be skipped without preventing publication of other content.
    Each source-material retry starts a new 120-second/24-request scope; the
    long pause happens outside that scope. The shared run allowance bounds these
    retries across candidates and stages. Without an active recovery scope,

@@ -359,7 +359,7 @@ def prepare_hn_discussion_material(
         if not isinstance(result, HNDiscussionResult):
             raise TypeError("discussion fetcher returned an invalid result")
     except Exception as exc:
-        observe_network_failure(exc)
+        observe_network_failure(exc, critical=True)
         candidate.discussion_retrieval = DiscussionRetrieval(
             status="failed",
             error_type=type(exc).__name__,

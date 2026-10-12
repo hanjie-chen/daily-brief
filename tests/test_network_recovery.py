@@ -6,7 +6,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from daily_brief.network_recovery import (
-    NetworkFailures, NetworkRecovery, is_transient_network_error,
+    NetworkFailures, NetworkRecovery, is_transient_network_error, is_local_network_error,
     observe_network_failure, recoverable_network, suspend_network_recovery,
 )
 
@@ -20,6 +20,45 @@ from daily_brief.network_recovery import (
 ])
 def test_transient_network_failures(error):
     assert is_transient_network_error(error)
+
+
+@pytest.mark.parametrize("error", [
+    TimeoutError(), ConnectionRefusedError(), ConnectionResetError(),
+    URLError("offline"), ssl.SSLEOFError(),
+    HTTPError("https://article.example", 503, "unavailable", {}, None),
+    HTTPError("https://article.example", 408, "timeout", {}, None),
+])
+def test_same_error_has_different_scope_for_optional_material_and_critical_service(error):
+    with NetworkFailures() as material_failure:
+        observe_network_failure(error)
+    with NetworkFailures() as service_failure:
+        observe_network_failure(error, critical=True)
+    assert not material_failure.transient
+    assert service_failure.transient
+
+
+@pytest.mark.parametrize("cause", [
+    socket.gaierror(socket.EAI_AGAIN, "temporary DNS failure"),
+    OSError(errno.ENETDOWN, "interface down"),
+    OSError(errno.ENETUNREACH, "route unavailable"),
+])
+def test_local_network_signals_survive_wrappers(cause):
+    from daily_brief.article_fetcher import ArticleFetchError
+    error = ArticleFetchError("URL validation failed", error_code="unsafe_url")
+    error.__cause__ = URLError(cause)
+    assert is_local_network_error(error)
+    with NetworkFailures() as failures:
+        observe_network_failure(error)
+    assert failures.transient
+
+
+def test_generic_fallback_reason_does_not_establish_local_outage():
+    from daily_brief.article_fetcher import ArticleFetchError
+    error = ArticleFetchError("archive failed", error_code="wayback_no_capture", fallback_reason="request_failed")
+    assert not is_local_network_error(error)
+    with NetworkFailures() as failures:
+        observe_network_failure(error)
+    assert not failures.transient
 
 
 def test_origin_failure_survives_a_definitively_unavailable_fallback():

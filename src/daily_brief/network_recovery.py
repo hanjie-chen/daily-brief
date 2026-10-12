@@ -78,6 +78,33 @@ def _transient_http_code(code) -> bool:
     return status == 408 or 500 <= status <= 599
 
 
+def is_local_network_error(error: BaseException) -> bool:
+    """Material hosts are optional; only explicit local resolver/route faults pause.
+
+    A timeout, refused connection or HTTP 5xx can belong to one remote host.
+    Generic error codes and fallback reasons cannot establish a local fault.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (HTTPError, ssl.SSLError)):
+            return False
+        if isinstance(current, socket.gaierror):
+            return current.errno == socket.EAI_AGAIN
+        if isinstance(current, OSError) and current.errno in {errno.ENETDOWN, errno.ENETUNREACH}:
+            return True
+        if isinstance(current, URLError) and isinstance(current.reason, BaseException):
+            current = current.reason
+        elif current.__cause__ is not None:
+            current = current.__cause__
+        elif getattr(current, "error_code", "") == "retrieval_budget_exhausted":
+            current = current.__context__
+        else:
+            return False
+    return False
+
+
 class NetworkRecovery:
     """One shared allowance across collection, materials, models and publishing."""
 
@@ -132,7 +159,7 @@ def suspend_network_recovery() -> Iterator[None]:
 
 
 class NetworkFailures:
-    """Observe transient faults even when a material fallback catches them."""
+    """Observe faults eligible for a shared pause, even across material fallbacks."""
 
     def __init__(self) -> None:
         self.transient = False
@@ -145,8 +172,9 @@ class NetworkFailures:
         _FAILURES.reset(self._token)
 
 
-def observe_network_failure(error: BaseException) -> None:
-    if is_transient_network_error(error):
+def observe_network_failure(error: BaseException, *, critical: bool = False) -> None:
+    eligible = is_transient_network_error(error) if critical else is_local_network_error(error)
+    if eligible:
         for failures in _FAILURES.get():
             failures.transient = True
 
@@ -162,7 +190,7 @@ def recoverable_network(operation: str):
                 except Exception as exc:
                     if not is_transient_network_error(exc):
                         raise
-                    observe_network_failure(exc)
+                    observe_network_failure(exc, critical=True)
                     if not wait_for_network(operation):
                         raise
         return wrapped

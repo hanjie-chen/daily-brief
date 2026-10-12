@@ -3,6 +3,7 @@
 from email.message import Message
 from functools import partial
 from io import BytesIO
+import errno
 from urllib.error import HTTPError
 
 import pytest
@@ -35,7 +36,7 @@ class Response:
 
     def read(self, size):
         if self.read_timeout:
-            raise TimeoutError("Reader connection interrupted")
+            raise OSError(errno.ENETDOWN, "Local network unavailable")
         return self.payload[:size]
 
 
@@ -56,7 +57,7 @@ def test_jina_network_failure_survives_missing_archive_and_resumes_current_item(
             raise HTTPError(url, 403, "Forbidden", {}, BytesIO())
         if url.startswith("https://r.jina.ai/"):
             if failure_stage == "open":
-                raise TimeoutError("Reader connection interrupted")
+                raise OSError(errno.ENETDOWN, "Local network unavailable")
             return Response(url, b"", "application/json", read_timeout=True)
         if url.startswith("https://web.archive.org/cdx/search/cdx?"):
             return Response(url, b"[]", "application/json")

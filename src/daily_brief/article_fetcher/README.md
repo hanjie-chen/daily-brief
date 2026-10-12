@@ -117,7 +117,10 @@ paths must not run when the active policy disables them.
 
 Within a scheduled `daily-brief run`, opener and bounded-response-read failures
 are also observed by the run's network recovery scope before a fallback can
-replace the final error. Observation does not sleep or alter retrieval routing:
+replace the final error. Only typed local resolver/route failures (`EAI_AGAIN`,
+`ENETDOWN`, `ENETUNREACH`) qualify for a shared pause here. Remote HTTP errors,
+timeouts, refused/reset connections and generic fallback reasons do not.
+Observation does not sleep or alter retrieval routing:
 generation first tries the existing material alternatives, then decides whether
 to pause. Each resumed material attempt gets a new retrieval budget after the
 long pause, while successful material is retained.
