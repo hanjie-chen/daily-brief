@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from ..models import Candidate
+from ..network_recovery import is_transient_network_error, recoverable_network
 from .gemini_api import (
     MAX_RESPONSE_BYTES,
     GeminiAPIError,
@@ -383,6 +384,7 @@ class GeminiBackend:
         log_usage(task, model, response.get("usage"))
         return output
 
+    @recoverable_network("gemini")
     def _post_json(self, payload: dict, *, model: str) -> dict:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         for attempt in range(self.max_retries + 1):
@@ -426,13 +428,14 @@ class GeminiBackend:
                     f"Gemini API request failed after {attempt + 1} attempts",
                     error_code="timeout",
                 ) from exc
-            except URLError as exc:
-                if attempt < self.max_retries:
+            except (URLError, ConnectionError, OSError) as exc:
+                transient = is_transient_network_error(exc)
+                if transient and attempt < self.max_retries:
                     self.sleeper(self._retry_delay(attempt, None))
                     continue
                 raise GeminiAPIError(
                     f"Gemini API request failed after {attempt + 1} attempts",
-                    error_code="network_error",
+                    error_code="network_error" if transient else "permanent_network_error",
                 ) from exc
 
             if len(response_body) > MAX_RESPONSE_BYTES:

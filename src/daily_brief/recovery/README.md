@@ -153,6 +153,13 @@ only new HTTP fetches. `provider=same_article` means reuse succeeded before a ne
 finder was called; otherwise it names the active finder. Reused bodies are not
 persisted in diagnostics.
 
+When a generation attempt observes network failures, finder failures are also
+reported to its internal observer before returning the existing failure audit.
+Candidate fetch failures are observed by the generation-owned article client.
+The routes themselves never perform long waits: generation decides whether to
+pause only after available fallback routes and material sources are assessed.
+No additional network diagnostics enter public output.
+
 ## Invariants
 
 - Identity evidence remains untrusted publisher testimony, not independent

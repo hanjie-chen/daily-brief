@@ -5,6 +5,7 @@ import logging
 from datetime import date
 from pathlib import Path
 
+from .daily_run import DailyRunError, run_daily
 from .generation import RetryError, SourceCollectionError, run_generate, run_retry
 from .llm import (
     create_model_backend,
@@ -24,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="generate",
-        choices=["generate", "publish", "evaluate-model", "retry"],
+        choices=["run", "generate", "publish", "evaluate-model", "retry"],
         help="Command to run.",
     )
     parser.add_argument("--output-dir", default="briefs")
@@ -47,7 +48,19 @@ def main(argv: list[str] | None = None) -> int:
     _validate_command_arguments(parser, args)
     if args.dry_run:
         return 0
-    if args.command == "generate":
+    if args.command == "run":
+        try:
+            result = run_daily(
+                output_dir=args.output_dir,
+                data_dir=args.data_dir,
+                model_backend=_model_backend(),
+                capture_model_inputs=args.capture_model_inputs,
+            )
+        except (DailyRunError, SourceCollectionError, PublishError, ValueError) as exc:
+            LOGGER.error("component=daily_run status=failed message=%s", exc)
+            return 1
+        LOGGER.info("component=daily_run status=completed published=%d skipped=%d", result.published, result.skipped)
+    elif args.command == "generate":
         try:
             backend = _model_backend()
         except ValueError as exc:
@@ -125,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _validate_command_arguments(parser: argparse.ArgumentParser, args) -> None:
+    if args.command == "run" and (args.date or args.force):
+        parser.error("run uses today's date and normal idempotent publication")
     if args.item_ids and args.command != "retry":
         parser.error("--item is only supported by retry")
     if args.capture_model_inputs and args.command == "retry":

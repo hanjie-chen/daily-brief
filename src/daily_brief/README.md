@@ -13,6 +13,9 @@ points, see [the architecture guide](../../docs/architecture.md).
 - `__main__.py` runs the primary CLI through `python -m daily_brief`.
 - `cli.py` parses the `daily-brief` commands for generation, publishing, and
   model evaluation and dispatches them. It contains no pipeline logic.
+- `daily_run.py` runs scheduled generation and publication in one process through
+  `daily-brief run`, with one shared `network_recovery.py` allowance. Standalone
+  commands retain their existing short retries.
 - `generation/` implements generation and targeted retry of saved selected items. Start at its
   [guide](generation/README.md) for changes to stage order, selection, material
   retrieval, recovery, or summary fallback.
@@ -49,6 +52,8 @@ Each package with its own guide lists its files there.
 | `__init__.py` | Package marker; the project version is declared in `pyproject.toml` |
 | `__main__.py` | `python -m daily_brief` entry point |
 | `cli.py` | Command-line parsing and command dispatch |
+| `daily_run.py` | Scheduled generation and publication with a fixed date and shared recovery scope |
+| `network_recovery.py` | In-memory temporary-network classification, bounded pauses and material-failure observation |
 | `config.py` | Timezone, topic vocabulary, quotas, thresholds, and scoring limits |
 | `models.py` | Shared story, candidate, retrieval, and model-diagnostic structures |
 | `time_window.py` | Daily collection window |
@@ -70,17 +75,19 @@ Each package with its own guide lists its files there.
 ## Package Dependencies
 
 ```text
-cli             -> generation, llm, output
+cli             -> daily_run, generation, llm, output
+daily_run       -> generation, output, network_recovery
 generation      -> candidates, llm, recovery, article_fetcher, output
 recovery        -> article_fetcher
 llm             -> article_fetcher (model evaluation's extracted-text limit only)
 article_fetcher -> pdf_workers
 every package   -> config / models / time_window as needed
+network clients -> network_recovery (standard-library-only leaf)
 ```
 
-Dependencies point one way. Only `cli.py` imports `generation/`, nothing imports
-`cli.py`, and `candidates/`, `output/`, and `pdf_workers/` import no other
-package. Keep new code on the same side of these arrows; a package that needs
+Dependencies point one way. `cli.py` and `daily_run.py` import `generation/`; nothing imports
+`cli.py`; `candidates/` and `output/` may use the shared network recovery module,
+and `pdf_workers/` remains independent. Keep new code on the same side of these arrows; a package that needs
 something from a package above it usually means the code belongs in
 `generation/`.
 
@@ -114,6 +121,14 @@ listed only in that package's guide.
 - Candidate collection is run-scoped: either required source failing aborts the
   run. After collection succeeds, classifier, article-retrieval, and summarizer
   failures are item-scoped and retain distinct reader-facing and audit states.
+- Scheduled `run` shares six ten-minute pauses across all stages. A temporary
+  network failure resumes the current operation without restarting successful
+  work or resetting model costs. Material fallbacks are tried before long waits;
+  every new material attempt retains its own retrieval limits. Exhausted recovery
+  makes the run unsuccessful and prevents automatic publication; an empty
+  selection after exhaustion cannot become a normal no-content marker. Progress
+  is held in memory only. See the architecture guide for the supported failures
+  and command boundaries.
 - Public JSON retains the compatibility section keys `ai` and `non_ai_hot`.
   Local Markdown labels the core section `Tech picks`, while the website displays
   it as 技术精选. Changing either display label is not a schema migration.

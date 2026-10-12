@@ -12,6 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ..models import Candidate
+from ..network_recovery import is_transient_network_error, recoverable_network
 from .gemini_api import GeminiResponseError, MAX_RESPONSE_BYTES
 from .gemini_output import (
     classification_schema, classifier_labels, summary_schema,
@@ -205,6 +206,7 @@ class OpenRouterBackend:
         except GeminiResponseError:
             raise OpenRouterResponseError("OpenRouter summarizer returned an invalid decision") from None
 
+    @recoverable_network("openrouter")
     def _interact(self, task, model, system, prompt, schema, output_limit):
         input_price, output_price = self._prices[task]
         payload = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
@@ -255,9 +257,13 @@ class OpenRouterBackend:
                     continue
                 raise OpenRouterAPIError(f"OpenRouter API HTTP {code}", error_code=_status_code(code), http_status=code) from None
             except (TimeoutError, URLError, ConnectionError, OSError) as exc:
-                code = "timeout" if isinstance(exc, TimeoutError) else "network_error"
+                transient = is_transient_network_error(exc)
+                code = (
+                    "timeout" if isinstance(exc, TimeoutError)
+                    else "network_error" if transient else "permanent_network_error"
+                )
                 record["status"] = code
-                if attempt < self.max_retries:
+                if transient and attempt < self.max_retries:
                     self.sleeper(self._retry_delay(attempt))
                     continue
                 raise OpenRouterAPIError("OpenRouter request failed", error_code=code) from None

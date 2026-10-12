@@ -19,6 +19,7 @@ from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
 from .contracts import ArticleFetchError
+from ..network_recovery import observe_network_failure
 
 DEFAULT_RETRIEVAL_TIMEOUT_SECONDS = 120
 DEFAULT_RETRIEVAL_MAX_REQUESTS = 24
@@ -128,7 +129,8 @@ class _BudgetedOpener:
             kwargs["timeout"] = remaining if timeout is None else min(timeout, remaining)
         try:
             response = self.opener(*args, **kwargs)
-        except Exception:
+        except Exception as exc:
+            observe_network_failure(exc)
             check_budget()
             raise
         # The caller owns and validates a completed response, even if the

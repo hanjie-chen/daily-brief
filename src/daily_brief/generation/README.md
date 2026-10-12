@@ -100,6 +100,19 @@ this package that owns it.
    urllib redirect hops are bounded separately and do not count as additional
    shared requests. HN discussion acquisition and model calls retain their own
    bounds outside this source-retrieval scope.
+   Under an active run-level network-recovery scope, unavailable materials are
+   observed before being recorded as failures. Source routes and searches keep
+   their normal ordering; a successful fallback avoids a long pause. Ordinary
+   selected items first collect all available webpage, post, and comment material
+   with long waits suspended. Any usable text proceeds to the summary model.
+   Only when no material is available and an actual transient network failure
+   was observed does the task use a shared pause and retry this item's missing
+   acquisitions. Completed items remain in memory. Classification and
+   comment-led roundups can pause at their required acquisition directly.
+   Each source-material retry starts a new 120-second/24-request scope; the
+   long pause happens outside that scope. The shared run allowance bounds these
+   retries across candidates and stages. Without an active recovery scope,
+   material acquisition keeps its existing item-level failure behavior.
 7. `summaries.py`: Ordinary items make one summary call after material preparation.
    `llm/summarizer.py` presents webpage metadata, extracted webpage material, HN
    self-post text, and the discussion sample as separately labeled inputs. It

@@ -12,6 +12,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from ..models import Story
+from ..network_recovery import recoverable_network
 from ..time_window import TimeWindow
 
 ALGOLIA_URL = "https://hn.algolia.com/api/v1/search_by_date"
@@ -285,6 +286,7 @@ def _hn_html_to_text(value) -> str:
     return parser.text()
 
 
+@recoverable_network("hn_discussion")
 def _get_discussion_item(url: str):
     request = Request(url, headers={"User-Agent": "daily-brief/0.1"})
     with urlopen(request, timeout=DISCUSSION_REQUEST_TIMEOUT_SECONDS) as response:
@@ -396,6 +398,7 @@ def _source_name(url: str) -> str:
     return "algolia" if urlparse(url).hostname == "hn.algolia.com" else "hn_official"
 
 
+@recoverable_network("hn_candidates")
 def _get_json(
     url: str,
     *,

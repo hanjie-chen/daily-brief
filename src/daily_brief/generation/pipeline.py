@@ -30,6 +30,7 @@ from ..output import (
 )
 from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow, daily_window
+from ..network_recovery import network_recovery_exhausted
 from ..output.artifacts import atomic_write_text as _atomic_write_text
 from .classification import SelectionResult, classify_and_select_candidates
 from .summaries import summarize_selected_candidates
@@ -221,6 +222,8 @@ def _persist_generation(
 ) -> GenerateResult:
     ai_items = selection.ai_items
     selected_hot_items = selection.selected_hot_items
+    if not ai_items and not selected_hot_items and network_recovery_exhausted():
+        raise SourceCollectionError("network recovery exhausted; empty selection is inconclusive")
     output_path = Path(output_dir) / f"{label}.md"
     public_json_path = Path(output_dir) / f"{label}.json"
     no_content_marker_path = Path(output_dir) / f"{label}.no-content"

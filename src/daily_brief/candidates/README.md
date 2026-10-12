@@ -1,5 +1,13 @@
 # Candidates
 
+During `daily-brief run`, each candidate JSON request (including individual
+pages and HN items) can pause after its existing short retries using the shared
+network recovery allowance. Each HN discussion request uses the same scope.
+Recovery repeats the failed request while retaining previously collected pages,
+items and comments. Standalone calls keep their existing behavior. Optional
+summary-material acquisition defers long waits until all material sources have
+been tried.
+
 This package holds the rule-based half of story selection: it collects Hacker
 News stories, matches keywords, scores, deduplicates, remembers recent
 recommendations, and fills the two sections. None of it calls a model. The

@@ -227,6 +227,35 @@ def test_publish_retries_network_and_server_failures(tmp_path):
     assert sleeps == [1, 2]
 
 
+def test_scheduled_publish_resumes_identical_payload_and_saves_hash_only_on_success(tmp_path):
+    from daily_brief.network_recovery import NetworkRecovery
+
+    brief_dir = tmp_path / "briefs"
+    path = _write_brief(brief_dir)
+    original = path.read_bytes()
+    data_dir = tmp_path / "data"
+    payloads, waits, short_waits = [], [], []
+
+    def opener(request, timeout):
+        payloads.append(request.data)
+        assert not (data_dir / "publish-state.json").exists()
+        if len(payloads) <= 3:
+            raise URLError("offline")
+        return FakeResponse()
+
+    with NetworkRecovery(sleeper=waits.append, max_pauses=1):
+        result = publish_brief(
+            brief_dir, data_dir, "2026-07-25", endpoint="https://example.com",
+            token="test", opener=opener, sleeper=short_waits.append,
+        )
+    assert result.published == 1
+    assert payloads == [original] * 4
+    assert path.read_bytes() == original
+    assert waits == [600]
+    assert short_waits == [1, 2]
+    assert json.loads((data_dir / "publish-state.json").read_text())["published"]["2026-07-25"] == hashlib.sha256(original).hexdigest()
+
+
 def test_publish_does_not_retry_client_error_or_record_state(tmp_path):
     brief_dir = tmp_path / "briefs"
     data_dir = tmp_path / "data"

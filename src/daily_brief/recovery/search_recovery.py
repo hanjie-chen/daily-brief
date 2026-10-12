@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
 from ..article_fetcher import ArticleFetchResult
+from ..network_recovery import observe_network_failure
 from ..models import (
     AlternateReportingRecovery,
     Candidate,
@@ -72,6 +73,7 @@ def attempt_same_article_recovery(
     try:
         discovered = active_finder.find(candidate)
     except Exception as exc:
+        observe_network_failure(exc)
         audit.error_code = _finder_error_code(exc, SameArticleFinderError)
         audit.status = "not_configured" if audit.error_code == "not_configured" else "finder_failed"
         LOGGER.info(
@@ -360,6 +362,7 @@ def _discover(
     try:
         discovered = finder.find(candidate)
     except Exception as exc:
+        observe_network_failure(exc)
         error_code = _finder_error_code(exc, error_type)
         LOGGER.warning(
             "component=%s item_id=%s provider=%s status=finder_failed code=%s",

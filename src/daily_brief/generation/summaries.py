@@ -14,7 +14,8 @@ from ..llm import (
     normalize_summary_text,
     route_summary_mode,
 )
-from ..models import Candidate, SummaryGeneration, material_summary_basis
+from ..models import Candidate, DiscussionRetrieval, SummaryGeneration, material_summary_basis
+from ..network_recovery import NetworkFailures, suspend_network_recovery, wait_for_network
 from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow
 from .material import (
@@ -53,18 +54,12 @@ def summarize_selected_candidates(
         if candidate.content_kind == "community_roundup":
             # Already assessed before selection; reuse the successful overview.
             continue
-        if candidate.article_retrieval.status == "not_attempted":
-            prepare_candidate_material(
-                candidate,
-                article_fetcher,
-                syndicated_finder,
-                alternate_reporting_finder,
-                window,
-                retrieval_mode=RETRIEVAL_MODE_SUMMARY,
-                same_article_finder=same_article_finder,
-            )
         candidate.summary_input_mode = "materials"
-        prepare_hn_discussion_material(candidate, hn_discussion_fetcher)
+        _prepare_selected_materials(
+            candidate, article_fetcher, hn_discussion_fetcher,
+            syndicated_finder, alternate_reporting_finder, window,
+            same_article_finder,
+        )
         if not any((
             candidate.story.fetched_text.strip(),
             candidate.story.story_text.strip(),
@@ -87,6 +82,42 @@ def summarize_selected_candidates(
         generate_candidate_summary(candidate, summary_client)
 
     return summarization_inputs
+
+
+def _prepare_selected_materials(
+    candidate, article_fetcher, hn_discussion_fetcher,
+    syndicated_finder, alternate_reporting_finder, window, same_article_finder,
+):
+    """Prefer usable source, post or comments before spending a shared pause."""
+    retry_missing_source = False
+    while True:
+        with NetworkFailures() as failures, suspend_network_recovery():
+            if candidate.article_retrieval.status == "not_attempted" or (
+                retry_missing_source and candidate.article_retrieval.status == "failed"
+            ):
+                prepare_candidate_material(
+                    candidate, article_fetcher, syndicated_finder,
+                    alternate_reporting_finder, window,
+                    retrieval_mode=RETRIEVAL_MODE_SUMMARY,
+                    same_article_finder=same_article_finder,
+                )
+            prepare_hn_discussion_material(candidate, hn_discussion_fetcher)
+        if any((
+            candidate.story.fetched_text.strip(),
+            candidate.story.story_text.strip(),
+            candidate.discussion_text.strip(),
+        )) or not failures.transient:
+            return
+        if not wait_for_network(f"summary_material:{candidate.story.hn_item_id}"):
+            return
+        retry_missing_source = True
+        # Only unavailable comments need another acquisition. Successful source
+        # material would already have ended this loop and is never fetched twice.
+        if candidate.discussion_retrieval.status == "failed" or (
+            not candidate.discussion_text.strip()
+            and candidate.discussion_retrieval.failed_items > 0
+        ):
+            candidate.discussion_retrieval = DiscussionRetrieval()
 
 
 def _unavailable_material_summary(candidate: Candidate) -> str:

@@ -16,6 +16,11 @@ from ..article_fetcher import (
 from ..article_fetcher.budget import check_budget, with_retrieval_budget
 from ..candidates import HNDiscussionFetchError, HNDiscussionResult, fetch_hn_discussion
 from ..llm import article_fetch_failure_summary
+from ..network_recovery import (
+    NetworkFailures,
+    observe_network_failure,
+    wait_for_network,
+)
 from ..models import (
     AlternateReportingRecovery,
     ArticleRetrieval,
@@ -46,8 +51,35 @@ MIN_DISCUSSION_COMMENTS = 3
 MIN_DISCUSSION_CHARS = 500
 
 
-@with_retrieval_budget
 def prepare_candidate_material(
+    candidate: Candidate,
+    article_fetcher_fn,
+    syndicated_finder: SyndicatedCopyFinder | None,
+    alternate_reporting_finder: AlternateReportingFinder | None,
+    window,
+    *,
+    retrieval_mode: str = RETRIEVAL_MODE_SUMMARY,
+    same_article_finder: SameArticleFinder | None = None,
+) -> bool:
+    """Exhaust available source routes before pausing for a network recovery."""
+    while True:
+        with NetworkFailures() as failures:
+            available = _prepare_candidate_material_once(
+                candidate, article_fetcher_fn, syndicated_finder,
+                alternate_reporting_finder, window,
+                retrieval_mode=retrieval_mode,
+                same_article_finder=same_article_finder,
+            )
+        if available or not failures.transient:
+            return available
+        # A new attempt gets its own bounded retrieval scope. The long pause is
+        # outside that scope and never consumes its 120-second deadline.
+        if not wait_for_network(f"article_material:{candidate.story.hn_item_id}"):
+            return False
+
+
+@with_retrieval_budget
+def _prepare_candidate_material_once(
     candidate: Candidate,
     article_fetcher_fn,
     syndicated_finder: SyndicatedCopyFinder | None,
@@ -125,18 +157,28 @@ class _SearchRecovery:
 def _article_client(article_fetcher_fn, retrieval_mode: str, candidate: Candidate, window):
     active_fetcher = article_fetcher_fn if article_fetcher_fn is not None else fetch_article
     if retrieval_mode == RETRIEVAL_MODE_CLASSIFICATION:
-        return partial(
+        fetch = partial(
             active_fetcher,
             timeout_seconds=CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
             pdf_parse_timeout_seconds=CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS,
             policy=CLASSIFICATION_FETCH_POLICY,
         )
-    return partial(
-        active_fetcher,
-        policy=SUMMARY_FETCH_POLICY,
-        wayback_not_before=_wayback_not_before(candidate.story.created_at, window.start),
-        wayback_not_after=window.end,
-    )
+    else:
+        fetch = partial(
+            active_fetcher,
+            policy=SUMMARY_FETCH_POLICY,
+            wayback_not_before=_wayback_not_before(candidate.story.created_at, window.start),
+            wayback_not_after=window.end,
+        )
+
+    def observed_fetch(url):
+        try:
+            return fetch(url)
+        except Exception as exc:
+            observe_network_failure(exc)
+            raise
+
+    return observed_fetch
 
 
 def _attempt_search_recovery(
@@ -317,6 +359,7 @@ def prepare_hn_discussion_material(
         if not isinstance(result, HNDiscussionResult):
             raise TypeError("discussion fetcher returned an invalid result")
     except Exception as exc:
+        observe_network_failure(exc)
         candidate.discussion_retrieval = DiscussionRetrieval(
             status="failed",
             error_type=type(exc).__name__,

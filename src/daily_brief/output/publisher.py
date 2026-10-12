@@ -12,6 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .public_schema import PublicBriefValidationError, validate_public_brief
+from ..network_recovery import recoverable_network
 
 LOGGER = logging.getLogger(__name__)
 PUBLISH_URL_ENV = "PUBLISH_URL"
@@ -104,6 +105,7 @@ def _validate_local_payload(path: Path, payload_bytes: bytes) -> None:
         raise PublishError(f"brief date does not match filename: {path}")
 
 
+@recoverable_network("publish")
 def _post_with_retry(url, token, payload_bytes, opener, sleeper) -> None:
     request = Request(
         url,

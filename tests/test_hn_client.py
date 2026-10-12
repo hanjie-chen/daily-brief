@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -97,6 +98,31 @@ def test_get_json_raises_after_exactly_three_attempts(caplog):
     assert isinstance(raised.value.__cause__, TimeoutError)
     assert str(raised.value.__cause__) == "failure 3"
     assert "source=algolia attempt=3/3 status=failed" in caplog.text
+
+
+def test_scheduled_collection_recovers_current_page_without_reloading_previous(monkeypatch):
+    from datetime import datetime
+    from daily_brief.candidates import hn_client
+    from daily_brief.network_recovery import NetworkRecovery
+    from daily_brief.time_window import daily_window
+    from urllib.parse import parse_qs, urlparse
+
+    pages, waits, short_waits = [], [], []
+    get_json = hn_client._get_json
+
+    def opener(request, timeout):
+        page = int(parse_qs(urlparse(request.full_url).query)["page"][0])
+        pages.append(page)
+        if page == 1 and pages.count(1) <= 3:
+            raise TimeoutError()
+        return FakeResponse(json.dumps({"hits": [], "nbPages": 2}).encode())
+
+    monkeypatch.setattr(hn_client, "_get_json", lambda url: get_json(url, opener=opener, sleep=short_waits.append))
+    with NetworkRecovery(sleeper=waits.append, max_pauses=1):
+        assert hn_client.fetch_algolia_stories(daily_window(datetime(2026, 10, 12, 8))) == []
+    assert pages == [0, 1, 1, 1, 1]
+    assert short_waits == [10, 20]
+    assert waits == [600]
 
 
 def test_parse_algolia_hit_to_story():

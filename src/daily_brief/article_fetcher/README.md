@@ -115,6 +115,13 @@ paths must not run when the active policy disables them.
 
 ## Shared Retrieval Budget
 
+Within a scheduled `daily-brief run`, opener and bounded-response-read failures
+are also observed by the run's network recovery scope before a fallback can
+replace the final error. Observation does not sleep or alter retrieval routing:
+generation first tries the existing material alternatives, then decides whether
+to pause. Each resumed material attempt gets a new retrieval budget after the
+long pause, while successful material is retained.
+
 `budget.py` gives each selected item's source-material preparation a shared
 120-second cooperative deadline and a maximum of 24 opener calls. Direct
 requests, retries, Reader, Wayback discovery/replay, Tavily searches, and fetched

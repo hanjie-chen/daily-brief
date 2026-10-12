@@ -176,6 +176,16 @@ non-stop completion and insufficient material do not trigger retries or model
 switching. Embedded errors in successful HTTP responses follow the same policy.
 Untrusted provider error bodies and credentials are not logged.
 
+Within the scheduled `run` command's shared network-recovery scope, exhausted
+short retries pause and retry the current provider operation. OpenRouter wraps
+the interaction and Gemini wraps the HTTP operation before summary model
+fallback. Completed calls are retained; the same backend keeps its accumulated
+cost reservations, request records, and summary attempt counts. The shared scope
+allows at most six ten-minute pauses across generation and publishing. HTTP 408,
+5xx and temporary transport failures qualify; quota responses, certificate errors,
+permanent DNS failures and invalid model output do not. Calls outside that scope
+keep the bounded short-retry behavior.
+
 A backend instance reserves a conservative input/output cost before every attempt,
 using UTF-8 input bytes plus framing allowance and configured per-million price
 caps. Luna reserves at least its cache-write input rate. Valid response cost

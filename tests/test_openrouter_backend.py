@@ -1,6 +1,7 @@
 import io
 from dataclasses import replace
 import json
+import ssl
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -11,6 +12,7 @@ from daily_brief.llm.openrouter_backend import (
 )
 from daily_brief.llm.summarizer import InsufficientSummaryMaterial
 from daily_brief.models import Candidate
+from daily_brief.network_recovery import NetworkRecovery
 from fakes import story
 
 
@@ -58,6 +60,54 @@ def output(**overrides):
 def backend(opener, **kwargs):
     return OpenRouterBackend(api_key='secret-key', opener=opener,
                              min_request_interval_seconds=0, sleeper=lambda _: None, **kwargs)
+
+
+def test_network_pause_preserves_completed_requests_cost_and_attempts():
+    transport = Opener(
+        completion({'decisions': [{'id': '1', 'label': 'core_non_ai'}]}),
+        URLError('offline'), URLError('offline'), completion(output()),
+    )
+    client = backend(transport, max_retries=1)
+    pauses = []
+    with NetworkRecovery(sleeper=pauses.append, max_pauses=1):
+        assert client.classify([material()]) == {'1': 'core_non_ai'}
+        assert client.summarize(material()) == '一个本地备份工具。'
+    assert pauses == [600]
+    assert [record['task'] for record in client.request_records] == [
+        'classify', 'summarize', 'summarize', 'summarize',
+    ]
+    assert client.last_summary_attempts == 3
+    failed_reservations = sum(record['reserved_usd'] for record in client.request_records[1:3])
+    assert client.accounted_cost_usd == pytest.approx(.00008 + failed_reservations)
+
+
+def test_network_pause_does_not_reset_cost_budget():
+    transport = Opener(TimeoutError('offline'))
+    client = backend(transport, max_retries=0, max_run_cost_usd=.006)
+    pauses = []
+    with NetworkRecovery(sleeper=pauses.append, max_pauses=1):
+        with pytest.raises(OpenRouterAPIError) as caught:
+            client.summarize(material())
+    assert caught.value.error_code == 'budget_exceeded'
+    assert pauses == [600]
+    assert len(transport.requests) == 1
+    assert client.last_summary_attempts == 1
+    assert client.accounted_cost_usd > 0
+
+
+@pytest.mark.parametrize('failure', [
+    URLError(ssl.SSLCertVerificationError('invalid certificate')),
+    HTTPError(CHAT_COMPLETIONS_URL, 401, 'unauthorized', {}, io.BytesIO()),
+    HTTPError(CHAT_COMPLETIONS_URL, 429, 'quota', {}, io.BytesIO()),
+])
+def test_permanent_and_quota_failures_do_not_pause(failure):
+    transport = Opener(failure)
+    pauses = []
+    with NetworkRecovery(sleeper=pauses.append, max_pauses=1):
+        with pytest.raises(OpenRouterAPIError):
+            backend(transport, max_retries=0).summarize(material())
+    assert pauses == []
+    assert len(transport.requests) == 1
 
 
 def test_classifier_contract_and_no_thinking():

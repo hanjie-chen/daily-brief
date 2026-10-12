@@ -14,6 +14,7 @@ from urllib.request import (
 )
 
 from .contracts import ArticleFetchError
+from ..network_recovery import observe_network_failure
 
 
 class _SafeRedirectHandler(HTTPRedirectHandler):
@@ -134,7 +135,11 @@ def _validate_public_http_url(url: str, resolver) -> None:
 
 
 def _read_bounded(response, max_bytes: int) -> bytes:
-    payload = response.read(max_bytes + 1)
+    try:
+        payload = response.read(max_bytes + 1)
+    except Exception as exc:
+        observe_network_failure(exc)
+        raise
     if len(payload) > max_bytes:
         raise ArticleFetchError(
             "article response is too large",

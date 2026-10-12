@@ -1,5 +1,6 @@
 import io
 import json
+import ssl
 from datetime import UTC, datetime
 from email.message import Message
 from urllib.error import HTTPError, URLError
@@ -14,6 +15,7 @@ from daily_brief.llm.gemini_backend import (
 )
 from daily_brief.llm.summarizer import InsufficientSummaryMaterial
 from daily_brief.models import Candidate, Story
+from daily_brief.network_recovery import NetworkRecovery
 
 
 class FakeResponse:
@@ -187,6 +189,34 @@ def test_network_failures_switch_to_the_next_model_after_bounded_retries(failure
 
     assert backend.summarize(item()) == "3.7 works"
     assert called_models(opener) == ["gemini-3.6-flash", "gemini-3.7-flash"]
+
+
+def test_network_pause_retries_current_model_and_preserves_attempts():
+    opener = RecordingOpener(
+        sufficient('first complete'),
+        URLError('offline'), URLError('still offline'), sufficient('recovered'),
+    )
+    backend = models(opener, max_retries=1, sleeper=lambda _: None)
+    pauses = []
+    with NetworkRecovery(sleeper=pauses.append, max_pauses=1):
+        assert backend.summarize(item()) == 'first complete'
+        assert backend.summarize(item()) == 'recovered'
+    assert pauses == [600]
+    assert called_models(opener) == ['gemini-3.6-flash'] * 4
+    assert backend.last_summary_attempts == 3
+    assert backend.last_summary_model == 'gemini-3.6-flash'
+
+
+def test_certificate_error_does_not_pause_or_switch_models():
+    opener = RecordingOpener(URLError(ssl.SSLCertVerificationError('invalid certificate')))
+    backend = models(opener, sleeper=lambda _: None)
+    pauses = []
+    with NetworkRecovery(sleeper=pauses.append, max_pauses=1):
+        with pytest.raises(GeminiAPIError) as caught:
+            backend.summarize(item())
+    assert caught.value.error_code == 'permanent_network_error'
+    assert pauses == []
+    assert called_models(opener) == ['gemini-3.6-flash']
 
 
 def test_insufficient_material_is_a_completed_decision_and_never_switches():
