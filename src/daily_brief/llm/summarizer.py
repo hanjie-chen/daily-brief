@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from ..models import Candidate
 from .evidence_selection import select_evidence
@@ -47,6 +48,45 @@ SUMMARY_SCOPE_INSTRUCTION = """摘要范围要求：只介绍 HN 标题所指的
 它们属于同一个产品或包含共同关键词，就顺带介绍其他变化。原文没有支持的标题说法不能采纳，
 标题与原文冲突时以原文为准。没有相关实质事实时返回 insufficient，不用其他话题凑摘要。
 """
+
+SUMMARY_TIME_INSTRUCTION = """时间表述要求：以简报日期为叙述基准，不使用模型猜测的当前日期。
+HN 提交时间仅表示分享时间，不是原文发表日期或事件发生时间；评论也可能晚于帖子。
+网页发布日期属于实际取得的页面，转载或其他报道的日期不能代替原始文章日期。
+材料中的“今天、明年、即将”等按各自来源的时间语境解释，不能直接移植为简报的相对时间。
+优先使用有依据的明确日期；来源日期未知或存在歧义时，不用 HN 日期或简报日期猜补。
+区分计划、预告与已发生的事实：不能仅因预定日期已过就认定计划已实现；也不能仅因旧文
+使用“将于”就断言截至简报日期仍未发生。必要时写“此前宣布计划于……”，保留明确日期和归因。
+标题与材料的时态不同不一定是事实冲突。页面新旧表述并存时结合明确日期及状态证据判断；
+无法确认时不武断纠正标题，不编造后续，省略无依据的当前状态判断。
+历史简报重试取得的材料可能较新，不能把后来的状态写成简报日期当时已知的事实。
+参考日期只用于理解时间，不是事件已经发生的证据；无需在每条摘要中重复日期。
+"""
+
+
+def _temporal_date(value: str, *, reference: bool = False) -> str:
+    """Only render validated ISO dates, never arbitrary publisher metadata."""
+    if not isinstance(value, str) or not value or len(value) > 64:
+        return "unknown"
+    try:
+        if reference:
+            parsed = date.fromisoformat(value)
+            return value if parsed.isoformat() == value else "unknown"
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return date.fromisoformat(value).isoformat()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", value):
+            return "unknown"
+        return datetime.fromisoformat(value).isoformat()
+    except ValueError:
+        return "unknown"
+
+
+def _summary_time_context(candidate: Candidate) -> str:
+    return (
+        SUMMARY_TIME_INSTRUCTION
+        + f"\nBrief date (Asia/Singapore): {_temporal_date(candidate.summary_reference_date, reference=True)}"
+        + f"\nHN submitted at (not article publication): {_temporal_date(candidate.story.created_at)}"
+        + f"\nRetrieved webpage published at (publisher-declared): {_temporal_date(candidate.webpage_published_at)}\n"
+    )
 
 METADATA_ATTRIBUTION_INSTRUCTION = """页面 description / og:description 是网站自述。凡依据这些介绍作出的陈述，必须明确写
 “网站介绍称……”或“网站自述……”，包括整段摘要都来自介绍的情况；不能当作独立验证的事实。
@@ -652,7 +692,8 @@ def _find_results_heading(body: str, start: int = 0) -> re.Match[str] | None:
 
 def build_summary_prompt(candidate: Candidate) -> str:
     """Apply the same event scope to every summary route."""
-    return SUMMARY_SCOPE_INSTRUCTION + "\n" + _build_summary_route_prompt(candidate)
+    return (SUMMARY_SCOPE_INSTRUCTION + "\n" + _summary_time_context(candidate)
+            + "\n" + _build_summary_route_prompt(candidate))
 
 
 def _build_summary_route_prompt(candidate: Candidate) -> str:

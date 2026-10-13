@@ -182,6 +182,8 @@ class Candidate:
     source_material_reason: str = ""
     source_summary_generation: SummaryGeneration | None = None
     summary_generation: SummaryGeneration = field(default_factory=SummaryGeneration)
+    summary_reference_date: str = ""
+    webpage_published_at: str = ""
 
 
 def material_summary_basis(candidate: Candidate) -> str:

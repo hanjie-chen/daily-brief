@@ -143,6 +143,18 @@ other updates that only share a product or keywords. Source evidence overrides
 unsupported title claims. This is a generation instruction, not a post-generation
 quality gate; evidence selection and provider-call counts are unchanged.
 
+All summary routes also receive a brief reference date (Asia/Singapore), the HN
+submission timestamp, and the publisher-declared publication date of the retrieved
+webpage when available. ISO dates/timestamps are validated before rendering;
+missing, malformed, or unsupported dates appear as unknown. HN submission time is
+not article publication time, and a recovered page's date belongs to that page.
+Relative dates are interpreted in their source context, not automatically shifted
+to the brief date. Prompts distinguish announced plans from confirmed outcomes:
+elapsed time alone proves neither completion nor continued unavailability. Mixed
+old/new wording is resolved using dated status evidence; unsupported current-state
+claims are omitted or expressed as attributed plans with explicit dates. These are
+generation instructions, not semantic guarantees enforced by the JSON validator.
+
 ## Provider Selection and OpenRouter
 
 `create_model_backend()` reads `LLM_PROVIDER` (`gemini` when unset;
@@ -242,11 +254,14 @@ evaluate-model`. Both live in `model_evaluation.py`.
 Model comparison is intentionally separate from generation. A generation run can
 capture the exact classifier and summarizer inputs, and `evaluate-model` can
 replay that immutable input without fetching sources, rendering a brief, or
-modifying recommendation and publishing state. Capture schema 6 records
+modifying recommendation and publishing state. Capture schema 7 records exact
+`summary_reference_date` and `webpage_published_at` values (including unknowns), plus
 `summary_input_mode`: new ordinary candidates use `materials`, while historical
 captures retain their legacy mode. It preserves each material origin and retrieval
-method as well as the summary result and declared source usage. Schemas 3, 4, and 5
-remain readable. Replay records insufficient material separately from provider
+method as well as the summary result and declared source usage. Schemas 3–6
+remain readable; their summary reference date comes from the saved top-level brief
+date, and webpage publication time remains unknown. Replay never uses the wall
+clock as its summary reference date. Replay records insufficient material separately from provider
 failures and does not retrieve fallback material.
 
 ## Dependency Direction

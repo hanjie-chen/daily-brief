@@ -81,6 +81,7 @@ def test_single_retry_refetches_all_material_preserves_selection_and_does_not_sa
 
         def summarize(self, item):
             context = build_summary_context(item)
+            assert item.summary_reference_date == DAY
             assert all(text in context.text for text in ('Fresh HN post', 'Fresh webpage', 'Fresh comment'))
             assert item.story.title == 'AI release 1'
             item.summary_sources_used = ['web_body', 'hn_post']
@@ -101,6 +102,8 @@ def test_single_retry_refetches_all_material_preserves_selection_and_does_not_sa
     assert audit[1:] == before_audit[1:]
     assert audit[0]['score'] == before_audit[0]['score']
     assert audit[0]['last_retry']['status'] == 'updated'
+    assert audit[0]['summary_reference_date'] == DAY
+    assert audit[0]['last_retry']['summary_reference_date'] == DAY
     assert updated_item['generation_info']['generation']['reasoning_effort'] == 'medium'
     assert audit[0]['summary_generation']['reasoning_effort'] == 'medium'
     assert 'reasoning_effort' not in public['sections']['ai']['items'][1]['generation_info']['generation']

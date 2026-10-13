@@ -85,8 +85,24 @@ def test_community_roundup_keeps_strict_discussion_minimums():
     assert candidate.summary_basis == "fetched_article"
 
 
-def test_selected_exploration_article_reuses_classification_fetch(tmp_path):
+@pytest.mark.parametrize("published_at", ["2023-12-01", ""])
+def test_selected_exploration_article_reuses_classification_fetch(tmp_path, published_at):
+    from daily_brief.article_fetcher import SourceEvidence
+    from daily_brief.llm.summarizer import build_summary_prompt
+
     fetched_urls = []
+
+    class DateCheckingSummarizer(FakeSummarizer):
+        def summarize(self, candidate):
+            assert candidate.summary_reference_date == "2026-07-08"
+            assert candidate.webpage_published_at == published_at
+            assert f"published at (publisher-declared): {published_at or 'unknown'}" in build_summary_prompt(candidate)
+            return super().summarize(candidate)
+
+    def fetch(url, **kwargs):
+        fetched_urls.append(url)
+        return ArticleFetchResult("Outside evidence.", "direct",
+                                  source_evidence=SourceEvidence("Outside", published_at=published_at))
 
     result = run_generate(
         output_dir=tmp_path / "briefs",
@@ -95,12 +111,15 @@ def test_selected_exploration_article_reuses_classification_fetch(tmp_path):
         algolia_stories=[story("1", "Outside hot story", points=500, comments=20)],
         hot_stories=[],
         classifier=FakeClassifier(),
-        article_fetcher=lambda url, **kwargs: fetched_urls.append(url) or "Outside evidence.",
-        summarizer=FakeSummarizer(),
+        article_fetcher=fetch,
+        summarizer=DateCheckingSummarizer(),
     )
 
     assert fetched_urls == ["https://example.com/1"]
     assert result.public_json_path is not None
+    audit = json.loads(result.data_path.read_text())
+    assert audit[0]["webpage_published_at"] == published_at
+    assert "webpage_published_at" not in result.public_json_path.read_text()
 
 
 def test_default_classification_fetch_uses_bounded_policy(tmp_path, monkeypatch):

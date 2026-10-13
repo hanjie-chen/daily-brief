@@ -245,6 +245,10 @@ def _record_retrieval_success(
 ) -> None:
     recovery = recovery or _SearchRecovery()
     candidate.story = replace(candidate.story, fetched_text=material.text)
+    published_at = getattr(material.source_evidence, "published_at", "")
+    candidate.webpage_published_at = (
+        published_at if isinstance(published_at, str) and len(published_at) <= 64 else ""
+    )
     candidate.article_retrieval = ArticleRetrieval(
         status="success",
         method=material.method,

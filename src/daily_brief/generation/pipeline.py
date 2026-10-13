@@ -85,6 +85,8 @@ def run_generate(
         hot_stories,
         clock,
     )
+    for candidate in candidates:
+        candidate.summary_reference_date = label
     candidate_pool = _exclude_recent_candidates(candidates, data_dir, label)
 
     backend = model_backend

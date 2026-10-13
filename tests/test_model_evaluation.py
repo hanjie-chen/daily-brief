@@ -372,7 +372,7 @@ def test_load_accepts_version_three_and_keeps_its_unique_id_constraint(tmp_path)
     payload["schema_version"] = 3
     for item in payload["summary_candidates"]:
         del item["content_kind"]
-        for key in ("summary_input_mode", "material_origin", "retrieval_method"):
+        for key in ("summary_input_mode", "material_origin", "retrieval_method", "summary_reference_date", "webpage_published_at"):
             del item[key]
     input_path.write_text(json.dumps(payload))
     assert (
@@ -414,7 +414,7 @@ def test_schema_five_preserves_community_roundup_inputs_and_prompts(tmp_path):
     payload = json.loads(input_path.read_text())
     replayed = load_model_evaluation_input(input_path)
 
-    assert payload["schema_version"] == 6
+    assert payload["schema_version"] == 7
     assert payload["summary_candidates"][0]["content_kind"] == "community_roundup"
     assert (
         replayed.exploration_classification_batches[0][0].content_kind
@@ -438,7 +438,7 @@ def test_old_schemas_default_content_kind_to_article(tmp_path, schema_version):
     payload["schema_version"] = schema_version
     for item in payload["summary_candidates"]:
         del item["content_kind"]
-        for key in ("summary_input_mode", "material_origin", "retrieval_method"):
+        for key in ("summary_input_mode", "material_origin", "retrieval_method", "summary_reference_date", "webpage_published_at"):
             del item[key]
     input_path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -478,7 +478,7 @@ def test_legacy_schema_bounds_and_retries_are_preserved(tmp_path):
     payload["schema_version"] = 4
     for item in payload["summary_candidates"]:
         del item["content_kind"]
-        for key in ("summary_input_mode", "material_origin", "retrieval_method"):
+        for key in ("summary_input_mode", "material_origin", "retrieval_method", "summary_reference_date", "webpage_published_at"):
             del item[key]
     input_path.write_text(json.dumps(payload), encoding="utf-8")
     assert (
@@ -654,12 +654,13 @@ def test_schema_five_still_loads_legacy_roundup_and_article(tmp_path):
     payload = json.loads(input_path.read_text())
     payload["schema_version"] = 5
     for item in payload["summary_candidates"]:
-        for key in ("summary_input_mode", "material_origin", "retrieval_method"):
+        for key in ("summary_input_mode", "material_origin", "retrieval_method", "summary_reference_date", "webpage_published_at"):
             del item[key]
     input_path.write_text(json.dumps(payload))
 
     replay = load_model_evaluation_input(input_path).summary_candidates
     assert [item.summary_input_mode for item in replay] == ["legacy", "legacy"]
+    article.summary_reference_date = roundup.summary_reference_date = "2026-09-29"
     assert [build_summary_prompt(item) for item in replay] == [
         build_summary_prompt(article), build_summary_prompt(roundup),
     ]
@@ -700,3 +701,31 @@ def test_material_evaluation_reports_actual_sources_separately_from_input_basis(
     assert summary["summary_basis"] == "hn_comments"
     assert summary["input_summary_basis"] == "fetched_article"
     assert summary["summary_sources_used"] == ["hn_comments"]
+
+
+def test_temporal_context_survives_capture_and_replay_exactly(tmp_path):
+    item = candidate('1', 'Old announcement', fetched_text='We plan to ship next year.')
+    item.summary_reference_date = '2026-10-12'
+    item.webpage_published_at = '2023-12-01T10:00:00-05:00'
+    path = tmp_path / 'input.json'
+    capture_model_evaluation_input(path, '2026-10-12', [], [item])
+    replay = load_model_evaluation_input(path).summary_candidates[0]
+    assert build_summary_prompt(replay) == build_summary_prompt(item)
+    assert replay.webpage_published_at == item.webpage_published_at
+
+
+def test_schema_six_replay_uses_saved_brief_date_not_current_date(tmp_path):
+    path = tmp_path / 'input.json'
+    item = candidate('1', 'Old item')
+    item.summary_input_mode = 'materials'
+    capture_model_evaluation_input(path, '2025-12-31', [], [item])
+    payload = json.loads(path.read_text())
+    payload['schema_version'] = 6
+    for row in payload['summary_candidates']:
+        del row['summary_reference_date']
+        del row['webpage_published_at']
+    path.write_text(json.dumps(payload))
+    replay = load_model_evaluation_input(path).summary_candidates[0]
+    assert replay.summary_reference_date == '2025-12-31'
+    assert replay.webpage_published_at == ''
+    assert 'Brief date (Asia/Singapore): 2025-12-31' in build_summary_prompt(replay)

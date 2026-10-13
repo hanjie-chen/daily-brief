@@ -35,6 +35,7 @@ _DIAGNOSTICS = (
     "article_retrieval", "discussion_retrieval", "summary_mode", "summary_context",
     "summary_input_mode", "summary_sources_used", "summary_basis", "summary_status",
     "source_material", "summary_generation", "content_reason", "hn_post_retrieval",
+    "summary_reference_date", "webpage_published_at",
 )
 
 
@@ -111,6 +112,7 @@ def run_retry(
         section, old_item = selected[item_id]
         record = records[item_id]
         candidate = _candidate(old_item, record, section)
+        candidate.summary_reference_date = date_label
         post_retrieval = {"status": "success", "error_code": "", "error_message": ""}
         try:
             fresh_story = fetch_story(item_id)

@@ -21,7 +21,7 @@ from ..models import Candidate, Story, material_summary_basis
 from .model_backend import ModelBackend, ensure_topic_decisions
 from .summarizer import InsufficientSummaryMaterial, normalize_summary_text
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 MAX_SUMMARY_ITEMS = AI_MAX_ITEMS + NON_AI_MAX_ITEMS
 LEGACY_MAX_SUMMARY_CANDIDATES = 2 * MAX_SUMMARY_ITEMS
 MAX_SUMMARY_CANDIDATES = (
@@ -98,7 +98,7 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
         "summary_candidates",
     }
     schema_version = payload.get("schema_version")
-    if set(payload) != expected_keys or schema_version not in (3, 4, 5, SCHEMA_VERSION):
+    if set(payload) != expected_keys or schema_version not in (3, 4, 5, 6, SCHEMA_VERSION):
         raise ModelEvaluationInputError("unsupported evaluation input schema")
 
     date_label = payload["date"]
@@ -118,6 +118,10 @@ def load_model_evaluation_input(path: Path) -> ModelEvaluationInput:
         payload["summary_candidates"],
         schema_version=schema_version,
     )
+    if schema_version < 7:
+        # Historical captures already record their brief date at the top level.
+        for candidate in summary_candidates:
+            candidate.summary_reference_date = date_label
     return ModelEvaluationInput(
         date_label=date_label,
         exploration_classification_batches=classification_batches,
@@ -242,6 +246,8 @@ def _serialize_candidate(candidate: Candidate) -> dict:
         "source_url": story.source_url,
         "hn_discussion_url": story.hn_discussion_url,
         "created_at": story.created_at,
+        "summary_reference_date": candidate.summary_reference_date,
+        "webpage_published_at": candidate.webpage_published_at,
         "points": story.points,
         "comments": story.comments,
         "story_text": story.story_text,
@@ -405,6 +411,8 @@ def _parse_candidate(value, field_name: str, *, schema_version: int) -> Candidat
         expected_keys.add("content_kind")
     if schema_version >= 6:
         expected_keys.update({"summary_input_mode", "material_origin", "retrieval_method"})
+    if schema_version >= 7:
+        expected_keys.update({"summary_reference_date", "webpage_published_at"})
     if not isinstance(value, dict) or set(value) != expected_keys:
         raise ModelEvaluationInputError(f"invalid item in {field_name}")
 
@@ -422,6 +430,8 @@ def _parse_candidate(value, field_name: str, *, schema_version: int) -> Candidat
     }
     if schema_version >= 6:
         text_limits.update(summary_input_mode=32, material_origin=64, retrieval_method=64)
+    if schema_version >= 7:
+        text_limits.update(summary_reference_date=10, webpage_published_at=64)
     for key, maximum in text_limits.items():
         if not isinstance(value[key], str) or len(value[key]) > maximum:
             raise ModelEvaluationInputError(f"invalid {key} in {field_name}")
@@ -487,6 +497,8 @@ def _parse_candidate(value, field_name: str, *, schema_version: int) -> Candidat
         story=Story(**story_fields),
         summary_basis=value["summary_basis"],
         discussion_text=value["discussion_text"],
+        summary_reference_date=value.get("summary_reference_date", ""),
+        webpage_published_at=value.get("webpage_published_at", ""),
     )
     # Candidate gained this field in schema 5. Keeping the assignment here also
     # makes schema 3/4 replay explicitly default to ordinary article prompts.

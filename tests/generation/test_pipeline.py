@@ -418,7 +418,7 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
 
     assert result.model_input_path == data_dir / "model-eval-inputs/2026-07-20.json"
     payload = json.loads(result.model_input_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 6
+    assert payload["schema_version"] == 7
     assert [
         batch[0]["hn_item_id"]
         for batch in payload["exploration_classification_batches"]
@@ -432,3 +432,5 @@ def test_run_generate_can_capture_exact_model_inputs(tmp_path):
         "2",
     ]
     assert payload["summary_candidates"][0]["fetched_text"] == "Grounded article facts."
+    assert all(item["summary_reference_date"] == "2026-07-20"
+               for item in payload["summary_candidates"])

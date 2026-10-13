@@ -27,6 +27,11 @@ this package that owns it.
 
 1. `pipeline.py`: `time_window.py` calculates the daily collection window in the
    Asia/Singapore timezone.
+   The brief label is assigned to every candidate as its summary reference date
+   before classification, including preselection roundup summaries. Successful
+   retrieval preserves the retrieved page's declared publication date, including
+   when classification material is reused. Dates enter private audit and model
+   captures without changing the public brief schema.
 2. `pipeline.py`: `candidates/hn_client.py` collects recent Algolia stories and hot stories
    from the official Hacker News API. Both sources are required; failure of either
    source aborts the run before date-scoped artifacts are written or replaced.
@@ -163,7 +168,10 @@ attempt diagnostics are stored under `last_retry` in the candidate audit. This
 single record is replaced on the next retry, not appended indefinitely. HN post acquisition is recorded separately in the candidate audit and public
 `generation_info`, so a failed fresh story request cannot appear as an empty post.
 The public generation info remains paired with the saved summary when a retry
-fails. No raw page, post, comment text, or model-input capture is written. Explicit model
+fails. The summary reference date is the target brief date, not the retry execution
+date. Publication metadata comes from the newly retrieved page; unknown dates are
+not filled using old metadata. Prompts warn that fresh material does not establish
+what was known as of the historical brief date. No raw page, post, comment text, or model-input capture is written. Explicit model
 comparison captures remain a separate opt-in workflow.
 
 Writes use atomic file replacement and check for changes to the inputs made while

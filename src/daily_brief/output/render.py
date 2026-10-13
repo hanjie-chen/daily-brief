@@ -38,6 +38,8 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 "source_url": story.source_url,
                 "hn_discussion_url": story.hn_discussion_url,
                 "created_at": story.created_at,
+                "summary_reference_date": candidate.summary_reference_date,
+                "webpage_published_at": candidate.webpage_published_at,
                 "points": story.points,
                 "comments": story.comments,
                 "matched_keywords": [

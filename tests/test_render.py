@@ -88,6 +88,8 @@ def test_render_candidates_json_uses_snake_case_fields():
         "source_url",
         "hn_discussion_url",
         "created_at",
+        "summary_reference_date",
+        "webpage_published_at",
         "points",
         "comments",
         "matched_keywords",
