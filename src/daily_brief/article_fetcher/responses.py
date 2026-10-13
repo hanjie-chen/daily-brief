@@ -17,6 +17,7 @@ from ..pdf_workers.adobe_pdf_extractor import (
     credentials_status as adobe_credentials_status,
 )
 from .challenges import _challenge_from_headers, _is_challenge_page
+from .content import is_page_shell
 from .contracts import (
     DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
     ArticleFetchError,
@@ -244,6 +245,21 @@ def _extract_response_payload(
             extractor=extractor,
         )
     _enforce_extracted_limit(text, extracted_max_bytes, extractor=extractor)
+    if content_type == "text/html":
+        # Exclude our labeled publisher metadata from the body acceptance check.
+        body = text
+        title = ""
+        if text.startswith("Page metadata (publisher-provided context, not article body):\n"):
+            metadata, separator, extracted_body = text.partition("\n\nExtracted body:\n")
+            if separator:
+                body = extracted_body
+                title = next((line[7:] for line in metadata.splitlines() if line.startswith("title: ")), "")
+        if is_page_shell(body, title=title):
+            raise ArticleFetchError(
+                "article response contained only page notices or navigation",
+                error_code="empty_content",
+                extractor=extractor,
+            )
     return ArticleFetchResult(
         text=text,
         method=method,

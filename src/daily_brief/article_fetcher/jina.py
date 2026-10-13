@@ -8,6 +8,7 @@ from urllib.error import HTTPError
 from urllib.request import Request
 
 from .challenges import _is_challenge_page
+from .content import is_page_shell
 from .contracts import (
     ArticleFetchError,
     LOGGER,
@@ -220,6 +221,12 @@ def _fetch_jina_reader_once(
                 error_code="challenge_page",
             )
         _enforce_extracted_limit(text, max_bytes, extractor="jina")
+        title = data.get("title") if isinstance(data.get("title"), str) else ""
+        if is_page_shell(text, title=title):
+            raise ArticleFetchError(
+                "Jina Reader returned only page notices or navigation",
+                error_code="empty_content",
+            )
         return _JinaReaderResult(
             text=text,
             origin_url=origin_url,

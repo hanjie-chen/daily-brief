@@ -26,6 +26,18 @@ bounded flow:
    and body text. Metadata is bounded and deduplicated, and only supplements
    nonempty body text. Empty HTML extraction still raises `empty_content` and
    follows the policy-controlled Jina recovery path, even when metadata is present.
+   After enforcing the extraction size limit, HTML and Reader results share a
+   conservative shell check in `content.py`. A body containing only recognized
+   JavaScript-enable notices or common navigation/region/language controls is
+   rejected as `empty_content`; publisher metadata cannot make it usable. Markdown
+   link labels remain visible to the check, while image/link decoration is ignored.
+   Repeated site titles may be ignored alongside JS notices, but sentence-like or
+   numbered titles and unknown body text are retained. Unknown controls/headings
+   are also retained: this is a bounded set of shell patterns, not semantic
+   validation or a minimum body length. Accepted content is returned unchanged.
+   Wayback uses the same HTML check. A Reader shell proceeds to Wayback, and
+   exhausted summary retrieval remains eligible for search recovery. Classification
+   still obeys its policy that disables these recovery paths.
    Recognizable LessWrong post markup is normalized before extraction: the
    article's `commentOnSelection` wrapper must not cause it to be discarded as
    a discussion comment. A linkpost introduction is retained as page text;
@@ -162,6 +174,7 @@ budget does not replace per-response, per-route, or extraction limits.
 | `extract.py` | HTML body extraction and semantic-table preservation |
 | `http_safety.py` | Public-address validation and pinned connections |
 | `challenges.py` | Browser-challenge and network-failure detection |
+| `content.py` | Shared conservative detection of notice/navigation-only page shells |
 | `youtube_captions.py` | Bounded YouTube caption retrieval and normalization |
 | `source_evidence.py` | Bounded publisher-declared identity signals from page headers and video descriptions |
 
