@@ -23,7 +23,7 @@ BODY = "A field assignment escapes the bound.\n\n```rust\nlet value  = 1;\n```\n
 
 def issue_data(**changes):
     return {
-        "number": 42, "html_url": URL, "title": "A lifetime check is missing",
+        "number": 42, "url": API_URL, "html_url": URL, "title": "A lifetime check is missing",
         "body": BODY, "created_at": "2026-10-13T10:00:00Z",
         "comments": 7, "comments_url": API_URL + "/comments", **changes,
     }

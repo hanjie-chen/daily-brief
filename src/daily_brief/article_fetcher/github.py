@@ -82,8 +82,11 @@ def fetch_github_issue(
     api_url = f"{GITHUB_API_BASE_URL}/repos/{owner}/{repository}/issues/{number}"
     _validate_public_http_url(api_url, resolver)
     request = _github_api_request(api_url, accept="application/vnd.github+json")
+    request._redirect_validator = _validate_github_issue_api_url
     with opener(request, timeout=timeout_seconds) as response:
-        _validate_public_http_url(response.geturl(), resolver)
+        final_url = response.geturl()
+        _validate_public_http_url(final_url, resolver)
+        final_identity = _validate_github_issue_api_url(final_url)
         payload = _read_bounded(response, max_bytes)
         if response.headers.get_content_type().lower() not in {
             "application/json", "application/vnd.github+json",
@@ -99,15 +102,17 @@ def fetch_github_issue(
             "GitHub issue API returned invalid JSON",
             error_code="invalid_response", extractor="github_api",
         ) from exc
-    expected = (owner.casefold(), repository.casefold(), number)
     page_url = issue.get("html_url") if isinstance(issue, dict) else None
     identity = _github_issue(page_url) if isinstance(page_url, str) else None
+    api_identity = _github_issue_api_identity(issue.get("url")) if isinstance(issue, dict) else None
     if (
         not isinstance(issue, dict)
         or type(issue.get("number")) is not int
-        or str(issue["number"]) != number
+        or str(issue["number"]) != final_identity[-1]
         or identity is None
-        or (identity[0].casefold(), identity[1].casefold(), identity[2]) != expected
+        or api_identity != ("repos", identity[0].casefold(), identity[1].casefold(), identity[2])
+        or identity[2] != str(issue["number"])
+        or (final_identity[0] == "repos" and api_identity != final_identity)
         or "pull_request" in issue
         or not isinstance(issue.get("title"), str)
         or not issue["title"].strip()
@@ -137,6 +142,45 @@ def fetch_github_issue(
         retrieved_url=page_url,
         source_evidence=SourceEvidence(title=title, published_at=published_at),
     )
+
+
+def _github_issue_api_identity(url: object) -> tuple[str, ...] | None:
+    """Recognize named and numeric-repository issue endpoints on GitHub only."""
+    if not isinstance(url, str):
+        return None
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https" or parsed.netloc.casefold() != "api.github.com"
+        or parsed.params or parsed.query or parsed.fragment
+    ):
+        return None
+    parts = parsed.path.removesuffix("/").split("/")
+    if not re.fullmatch(r"[1-9][0-9]*", parts[-1]):
+        return None
+    if len(parts) == 6 and parts[:2] == ["", "repos"] and parts[4] == "issues":
+        owner, repository = parts[2:4]
+        if all(GITHUB_REPOSITORY_PART_PATTERN.fullmatch(part) and part not in {".", ".."}
+               for part in (owner, repository)):
+            return "repos", owner.casefold(), repository.casefold(), parts[-1]
+    if (
+        len(parts) == 5 and parts[:2] == ["", "repositories"] and parts[3] == "issues"
+        and re.fullmatch(r"[1-9][0-9]*", parts[2])
+    ):
+        return "repositories", parts[2], parts[-1]
+    return None
+
+
+def _validate_github_issue_api_url(url: str) -> tuple[str, ...]:
+    identity = _github_issue_api_identity(url)
+    if identity is None:
+        raise ArticleFetchError(
+            "GitHub issue API redirected to an unsupported endpoint",
+            error_code="invalid_response", extractor="github_api",
+        )
+    return identity
 
 
 def _github_issue(url: str) -> tuple[str, str, str] | None:

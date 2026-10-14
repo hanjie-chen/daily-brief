@@ -21,8 +21,19 @@ bounded flow:
 2. Route supported YouTube and GitHub URLs to their specialized transports;
    GitHub PDF blobs retain the same PDF extraction policy. Issue-page URLs use
    the public REST issue API in both classification and summary retrieval.
-   Validate the response's repository, issue number, and `html_url`; reject PRs
-   and malformed responses. Keep the API title as metadata and the nonempty
+   Follow official issue migrations, restricting every redirect hop to HTTPS,
+   exact `api.github.com`, and a named `/repos/{owner}/{repo}/issues/{number}`
+   or numeric `/repositories/{id}/issues/{number}` endpoint. Public-address
+   validation still applies at every hop. Validate the final endpoint against
+   the response's canonical `url`, `html_url`, and `number`; allow repository
+   and issue-number changes established by that trusted chain. For numeric
+   repository endpoints, the consistent canonical API/page URLs in GitHub's
+   response establish the repository name. Without a redirect, the requested
+   identity must still match. Reject off-site intermediaries, HTTP downgrades,
+   conflicting identities, PRs, and malformed responses. Preserve the original
+   story URL and record the canonical page as `retrieved_url`; a successful
+   migration is still direct API acquisition, not fallback.
+   Keep the API title as metadata and the nonempty
    Markdown `body` as webpage text, preserving code blocks without acquiring
    GitHub comments. `created_at` supplies the publication date, never `updated_at`.
    Query strings and fragments do not change which issue is fetched. Other
@@ -233,6 +244,9 @@ before every PDF, adding startup time and memory inside the worker's limits.
 
 Subsystem tests live in `tests/test_article_fetcher.py`. `tests/test_github_issue.py`
 covers API routing, Markdown evidence, identity checks, recovery, and bounds.
+`tests/test_github_issue_redirects.py` exercises repository renames, issue
+transfers, and redirect-chain restrictions through urllib's redirect handling;
+`tests/test_github_auth.py` covers optional credentials and their isolation.
 `tests/test_github_auth.py` covers optional authentication and credential isolation.
 YouTube captions and source evidence are covered by `tests/test_youtube_captions.py`,
 `tests/test_source_evidence.py`, and `tests/test_source_evidence_transport.py`.

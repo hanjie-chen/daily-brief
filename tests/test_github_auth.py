@@ -53,7 +53,8 @@ def test_optional_token_authenticates_issue_and_readme(url, token, monkeypatch, 
     "https://raw.githubusercontent.com/example/compiler/main/README.md",
     "https://other.example/page", "http://api.github.com/repos/example/compiler/issues/42",
 ])
-def test_redirects_never_forward_token(destination, monkeypatch):
+@pytest.mark.parametrize("url", [URL, README_URL])
+def test_redirects_never_forward_token(destination, url, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
 
     def opener(request, timeout):
@@ -62,9 +63,14 @@ def test_redirects_never_forward_token(destination, monkeypatch):
             request, None, 302, "Found", Message(), destination,
         )
         assert redirected.get_header("Authorization") is None
-        return response()
+        return api_response(API_URL if url == URL else README_API)
 
-    fetch_article(URL, opener=opener, resolver=resolver_for({}))
+    if url == URL and not destination.startswith("https://api.github.com/"):
+        with pytest.raises(ArticleFetchError) as caught:
+            fetch_article(url, opener=opener, resolver=resolver_for({}))
+        assert caught.value.error_code == "invalid_response"
+    else:
+        fetch_article(url, opener=opener, resolver=resolver_for({}))
 
 
 def test_issue_recovery_does_not_pass_github_token_to_reader(monkeypatch):

@@ -95,6 +95,8 @@ OpenRouter 请求使用严格 JSON schema，并限制供应商单价、输出量
 
 GitHub issue 在分类和摘要阶段均优先请求 `/repos/{owner}/{repo}/issues/{number}`，读取并核对返回的仓库、issue 编号及页面地址。标题单独作为元信息，非空 Markdown `body` 作为正文，保留代码块；不获取 issue 评论，不把 PR、issue 列表或其他 GitHub 页面当成 issue。发布时间使用 API 的 `created_at`，不用更新时间。查询参数和页面锚点不改变目标 issue。
 
+仓库改名或 issue 转移时，允许跟随 GitHub API 的重定向，直接使用新资源的正文。每一跳仍须通过公网地址校验，并限定为 HTTPS、精确的 `api.github.com` 主机及 issue API 路径；支持 `/repos/{owner}/{repo}/issues/{number}` 和 `/repositories/{id}/issues/{number}`。校验依据是最终 API 地址、响应的 `url`、`html_url` 和 `number`：允许仓库和编号随官方重定向变化，数字仓库路径的名称由可信响应中相互一致的 API／网页地址确定。未重定向时仍按原资源核对；外域中转、HTTP 降级及身份冲突均拒绝。原 `source_url` 保留，`retrieved_url` 记录新网页地址；正常迁移仍是 API 直接获取成功，不记为 fallback。
+
 issue API 与普通网页共用短重试、大小限制及获取预算。摘要阶段遇到空正文或可恢复的网络错误时，针对原 issue 页面地址尝试 Jina、Wayback 及既有搜索恢复；API 的 404/410 直接转存档，不再用普通 HTML 提取器重复读取已知容易漏正文的页面。分类阶段仍不启用这些备用渠道。API 的 403 权限或限流错误、其他终止类 HTTP 错误、无效响应或身份不符、非公网地址及大小限制不会转入恢复。私有诊断记录 `method=github_issue`、`extractor=github_api`；公开详情将该方式映射为既有的 `direct`，表示直接请求原站 API，不增加网站 schema 枚举。
 
 GitHub README、具体文件和 YouTube 使用各自的读取方式，失败后仍不会进入 Jina 和 Wayback 的恢复流程。

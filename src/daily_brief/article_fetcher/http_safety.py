@@ -24,7 +24,16 @@ class _SafeRedirectHandler(HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         _validate_public_http_url(newurl, self.resolver)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        # A structured source may restrict its entire redirect chain further
+        # than the ordinary public-address check. Keep that restriction on every
+        # hop; checking only the final host would trust an off-site round trip.
+        validator = getattr(req, "_redirect_validator", None)
+        if validator is not None:
+            validator(newurl)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and validator is not None:
+            redirected._redirect_validator = validator
+        return redirected
 
 
 class _PinnedHTTPConnection(HTTPConnection):
