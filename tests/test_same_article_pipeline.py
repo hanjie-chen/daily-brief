@@ -208,6 +208,7 @@ def test_provider_failure_is_audited_without_exposing_exception_text():
 @pytest.mark.parametrize("reason", [
     "http_403", "http_404", "http_410", "http_500", "empty_content",
     "network_timeout", "request_failed", "tls_issuer_unavailable",
+    "github_api_rate_limited",
 ])
 def test_exhausted_ordinary_retrieval_tries_same_article_before_other_reporting(reason):
     item = candidate()
@@ -241,6 +242,12 @@ def test_exhausted_ordinary_retrieval_tries_same_article_before_other_reporting(
     ("http_429", "wayback", "wayback_no_capture", True),
     ("http_451", "wayback", "wayback_no_capture", True),
     ("rate_limited", "wayback", "rate_limited", True),
+    ("github_api_rate_limited", "wayback", "rate_limited", True),
+    ("github_api_rate_limited", "wayback", "http_429", True),
+    ("github_api_rate_limited", "wayback", "retrieval_budget_exhausted", True),
+    ("github_api_rate_limited", "wayback", "unsafe_url", True),
+    ("github_api_rate_limited", "github_issue", "rate_limited", False),
+    ("github_api_rate_limited", "wayback", "wayback_no_capture", False),
     ("http_403", "wayback", "retrieval_budget_exhausted", True),
     ("http_403", "wayback", "unsafe_url", True),
     ("url_trailing_backslash", "direct", "http_404", True),

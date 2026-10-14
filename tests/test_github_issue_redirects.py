@@ -3,6 +3,7 @@
 import json
 from email.message import Message
 from io import BytesIO
+from urllib.error import HTTPError
 from urllib.request import BaseHandler, ProxyHandler, build_opener
 from urllib.response import addinfourl
 
@@ -14,7 +15,7 @@ from daily_brief.article_fetcher import (
 from daily_brief.article_fetcher.budget import retrieval_budget
 from daily_brief.article_fetcher.http_safety import _SafeRedirectHandler
 from daily_brief.llm.summarizer import split_page_material
-from test_article_fetcher import FakeResponse, resolver_for
+from test_article_fetcher import FakeResponse, http_error, make_jina_payload, resolver_for
 from test_github_issue import API_URL, BODY, URL, issue_data
 
 
@@ -31,6 +32,8 @@ def transport(routes, requests):
             requests.append(request)
             assert request.full_url in routes, "Unexpected transport call"
             value = routes[request.full_url]
+            if isinstance(value, HTTPError):
+                raise value
             headers = Message()
             if isinstance(value, tuple):
                 status, location = value
@@ -74,8 +77,8 @@ def test_official_rename_or_transfer_preserves_issue_body(destinations, policy, 
         # urllib redirect hops keep the existing separately bounded behavior.
         assert budget.requests == 1
     assert [request.full_url for request in requests] == chain
-    assert requests[0].get_header("Authorization") == "Bearer synthetic-token"
-    assert all(request.get_header("Authorization") is None for request in requests[1:])
+    assert all(request.get_header("Authorization") == "Bearer synthetic-token" for request in requests)
+    assert all("Authorization" not in request.headers for request in requests)
     assert all(request.timeout == 5 for request in requests)
     assert result.method == "github_issue"
     assert result.retrieved_url == canonical_page
@@ -138,7 +141,10 @@ def test_named_endpoint_cannot_return_a_different_repository(destination):
     "https://api.github.com/repositories/1234/issues/71#comment",
 ])
 @pytest.mark.parametrize("after_valid_hop", [False, True])
-def test_every_redirect_hop_must_stay_on_a_github_issue_api_endpoint(bad_url, after_valid_hop):
+def test_every_redirect_hop_must_stay_on_a_github_issue_api_endpoint(
+    bad_url, after_valid_hop, monkeypatch, caplog,
+):
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
     requests = []
     routes = {API_URL: (301, NEW_API_URL if after_valid_hop else bad_url)}
     if after_valid_hop:
@@ -151,6 +157,8 @@ def test_every_redirect_hop_must_stay_on_a_github_issue_api_endpoint(bad_url, af
     assert caught.value.error_code == "invalid_response"
     assert not caught.value.fallback_attempted
     assert [request.full_url for request in requests] == ([API_URL, NEW_API_URL] if after_valid_hop else [API_URL])
+    assert all(request.get_header("Authorization") == "Bearer synthetic-token" for request in requests)
+    assert "synthetic-token" not in str(caught.value) + caplog.text
 
 
 @pytest.mark.parametrize("final_url", [
@@ -187,3 +195,30 @@ def test_redirect_to_nonpublic_api_address_is_rejected():
     with pytest.raises(ArticleFetchError) as caught:
         fetch_article(URL, opener=open_response, resolver=resolver)
     assert caught.value.error_code == "unsafe_url"
+
+
+@pytest.mark.parametrize("authenticated", [False, True])
+@pytest.mark.parametrize(("status", "headers"), [
+    (403, {"X_RateLimit_Remaining": "0"}),
+    (403, {"Retry_After": "60"}), (429, {}),
+])
+def test_redirected_api_rate_limit_recovers_original_page(authenticated, status, headers, monkeypatch):
+    if authenticated:
+        monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
+    requests = []
+    reader_url = "https://r.jina.ai/" + URL
+    routes = {
+        API_URL: (301, NEW_API_URL), NEW_API_URL: (302, NUMERIC_API_URL),
+        NUMERIC_API_URL: http_error(NUMERIC_API_URL, status, **headers),
+        reader_url: json.loads(make_jina_payload(content=BODY, url=URL)),
+    }
+    result = fetch_article(URL, opener=transport(routes, requests), resolver=resolver_for({}),
+                           sleeper=lambda delay: pytest.fail("Must not retry a limited API"))
+    assert [request.full_url for request in requests] == [API_URL, NEW_API_URL, NUMERIC_API_URL, reader_url]
+    expected = "Bearer synthetic-token" if authenticated else None
+    assert all(request.get_header("Authorization") == expected for request in requests[:-1])
+    assert requests[-1].get_header("Authorization") is None
+    assert result.method == "jina"
+    assert result.fallback_reason == "github_api_rate_limited"
+    assert result.attempts == 2
+    assert BODY in result.text

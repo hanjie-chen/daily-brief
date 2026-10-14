@@ -496,6 +496,7 @@ def _is_search_recovery_eligible(failure: RetrievalFailure) -> bool:
     reason = failure.fallback_reason
     if is_origin_block_reason(reason) or reason in {
         "empty_content", "network_timeout", "request_failed", "tls_issuer_unavailable",
+        "github_api_rate_limited",
     }:
         return True
     if reason.startswith("http_") and len(reason) == 8 and reason[5:].isdigit():

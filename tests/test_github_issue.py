@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from urllib.error import URLError
 
 import pytest
@@ -13,7 +14,7 @@ from daily_brief.article_fetcher.budget import retrieval_budget
 from daily_brief.llm.summarizer import build_summary_material_context, split_page_material
 from daily_brief.models import Candidate
 from fakes import story
-from test_article_fetcher import FakeResponse, http_error, make_jina_payload, resolver_for
+from test_article_fetcher import FakeResponse, http_error, make_jina_payload, make_wayback_payload, resolver_for
 
 
 URL = "https://github.com/example/compiler/issues/42"
@@ -162,11 +163,9 @@ def test_issue_transient_failure_retries_api_then_recovers_original_page(failure
 
 @pytest.mark.parametrize(("status", "headers", "code"), [
     (401, {}, "http_401"), (403, {}, "http_403"),
-    (403, {"X_RateLimit_Remaining": "0"}, "rate_limited"),
-    (403, {"Retry_After": "60"}, "rate_limited"),
-    (429, {"Retry_After": "60"}, "http_429"),
+    (403, {"X_RateLimit_Remaining": "1"}, "http_403"),
 ])
-def test_issue_permissions_and_long_rate_limits_do_not_start_recovery(status, headers, code):
+def test_issue_permissions_do_not_start_recovery(status, headers, code):
     requests = []
 
     def opener(request, timeout):
@@ -215,3 +214,97 @@ def test_issue_api_redirect_to_private_address_is_rejected():
     with pytest.raises(ArticleFetchError) as caught:
         fetch_article(URL, opener=opener, resolver=resolver_for({"127.0.0.1": "127.0.0.1"}))
     assert caught.value.error_code == "unsafe_url"
+
+
+@pytest.mark.parametrize(("status", "headers"), [
+    (403, {"X_RateLimit_Remaining": "0"}),
+    (403, {"Retry_After": "60"}),
+    (429, {}), (429, {"Retry_After": "1"}), (429, {"Retry_After": "3600"}),
+])
+@pytest.mark.parametrize("authenticated", [False, True])
+@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
+def test_api_rate_limit_stops_api_and_recovers_only_for_summary(
+    status, headers, authenticated, policy, monkeypatch,
+):
+    if authenticated:
+        monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
+    requests, sleeps = [], []
+
+    def opener(request, timeout):
+        requests.append(request.full_url)
+        if request.full_url == API_URL:
+            expected = "Bearer synthetic-token" if authenticated else None
+            assert request.get_header("Authorization") == expected
+            raise http_error(API_URL, status, **headers)
+        assert request.full_url == "https://r.jina.ai/" + URL
+        assert request.get_header("Authorization") is None
+        return FakeResponse(make_jina_payload(content=BODY, url=URL), content_type="application/json")
+
+    if policy == CLASSIFICATION_FETCH_POLICY:
+        with pytest.raises(ArticleFetchError) as caught:
+            fetch_article(URL, opener=opener, resolver=resolver_for({}),
+                          policy=policy, sleeper=sleeps.append)
+        assert caught.value.error_code == "github_api_rate_limited"
+        assert caught.value.method == "github_issue"
+        assert not caught.value.fallback_attempted
+        assert caught.value.attempts == 1
+        assert requests == [API_URL]
+    else:
+        result = fetch_article(URL, opener=opener, resolver=resolver_for({}),
+                               policy=policy, sleeper=sleeps.append)
+        assert result.method == "jina"
+        assert result.fallback_reason == "github_api_rate_limited"
+        assert result.attempts == 2
+        assert BODY in result.text
+        assert requests == [API_URL, "https://r.jina.ai/" + URL]
+    assert sleeps == []
+
+
+def test_rate_limited_api_recovery_respects_shared_budget():
+    requests = []
+
+    def opener(request, timeout):
+        requests.append(request.full_url)
+        raise http_error(API_URL, 429)
+
+    with retrieval_budget(max_requests=1):
+        with pytest.raises(ArticleFetchError) as caught:
+            fetch_article(URL, opener=opener, resolver=resolver_for({}))
+    assert caught.value.error_code == "retrieval_budget_exhausted"
+    assert requests == [API_URL]
+
+
+
+def test_api_limit_then_reader_failure_recovers_archive_without_credentials(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
+    requests = []
+    timestamp = "20261012060000"
+    replay_url = f"https://web.archive.org/web/{timestamp}id_/{URL}"
+    fact = "A field assignment bypasses the compiler lifetime check and allows an invalid reference."
+
+    def opener(request, timeout):
+        requests.append(request.full_url)
+        if request.full_url == API_URL:
+            raise http_error(API_URL, 403, X_RateLimit_Remaining="0")
+        assert request.get_header("Authorization") is None
+        if request.full_url == "https://r.jina.ai/" + URL:
+            raise http_error(request.full_url, 404)
+        if request.full_url.startswith("https://web.archive.org/cdx/"):
+            return FakeResponse(
+                make_wayback_payload([timestamp, URL, "text/html", "200", "HASH", "512"]),
+                content_type="application/json", final_url=request.full_url,
+            )
+        assert request.full_url == replay_url
+        return FakeResponse(f"<html><body><article><p>{fact}</p></article></body></html>".encode(),
+                            final_url=replay_url)
+
+    result = fetch_article(
+        URL, opener=opener, resolver=resolver_for({}),
+        wayback_not_before=datetime(2026, 10, 12, tzinfo=UTC),
+        wayback_not_after=datetime(2026, 10, 13, tzinfo=UTC),
+    )
+    assert result.method == "wayback"
+    assert result.fallback_reason == "github_api_rate_limited"
+    assert result.material_origin == "archived_copy"
+    assert result.attempts == len(requests) == 4
+    assert fact in result.text

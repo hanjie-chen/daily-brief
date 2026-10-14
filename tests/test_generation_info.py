@@ -60,6 +60,27 @@ def test_recovered_page_retains_origin_failure_without_marking_final_fetch_faile
     }
 
 
+@pytest.mark.parametrize('origin', ['original', 'same_article'])
+def test_github_api_limit_uses_existing_public_reason_after_recovery(origin):
+    from daily_brief.output.render import render_candidates_json
+
+    item = candidate()
+    reason = 'github_api_rate_limited'
+    item.article_retrieval.method = 'jina' if origin == 'original' else 'direct'
+    item.article_retrieval.material_origin = origin
+    if origin == 'same_article':
+        item.article_retrieval.origin_failure = RetrievalFailure(fallback_reason=reason)
+    else:
+        item.article_retrieval.fallback_reason = reason
+    data = payload(item)
+    public = data['sections']['ai']['items'][0]
+    assert public['generation_info']['materials']['webpage']['reason'] == 'rate_limited'
+    assert public['provenance']['fallback_reason'] == 'unknown'
+    assert reason not in json.dumps(data)
+    assert reason in render_candidates_json([item])
+    validate_public_brief(data)
+
+
 @pytest.mark.parametrize('recovered', [False, True])
 def test_connection_failure_has_existing_public_network_reason(recovered):
     item = candidate()

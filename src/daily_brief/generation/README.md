@@ -89,6 +89,10 @@ this package that owns it.
    extraction, timeouts or interrupted connections, and missing TLS issuer
    information after Jina/Wayback failure. It does not require a known challenge
    vendor; Reuters syndicated recovery likewise has no DataDome requirement.
+   Explicit GitHub issue API limits carry `github_api_rate_limited` through
+   webpage recovery; exhausted Reader/Wayback recovery with that origin reason
+   can also initiate search. A rate limit from Reader/Wayback itself still stops
+   search, as do ordinary webpage rate limits.
    Ordinary HTTP 400/401/407/422/429/451, unsafe URLs, failed URL correction, and
    budget exhaustion do not initiate search. Ordinary HTTP 429 honors a bounded
    direct retry, including `Retry-After`, and then leaves the source unavailable.

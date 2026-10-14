@@ -247,17 +247,25 @@ def fetch_article(
             else:
                 result = fetch_direct(direct_request)
         except HTTPError as exc:
-            # API 403 can mean permissions or a rate limit, not a webpage block.
-            if github_issue and exc.code == 403:
-                limited = bool(exc.headers) and (
+            # API quota exhaustion does not imply the issue page is limited.
+            # Stop API requests; recovery reads the original webpage instead.
+            if github_issue and exc.code in {403, 429}:
+                limited = exc.code == 429 or bool(exc.headers) and (
                     exc.headers.get("X-RateLimit-Remaining") == "0"
                     or bool(exc.headers.get("Retry-After"))
                 )
                 exc.close()
+                if limited:
+                    return _recover_direct_failure(
+                        fallback_context,
+                        fallback_reason="github_api_rate_limited",
+                        direct_attempts=attempt,
+                        cause=exc,
+                        extractor="github_api",
+                    )
                 raise ArticleFetchError(
-                    "GitHub issue API request was rate limited" if limited
-                    else "GitHub issue API request was forbidden",
-                    error_code="rate_limited" if limited else "http_403",
+                    "GitHub issue API request was forbidden",
+                    error_code="http_403",
                     method=direct_method, attempts=attempt,
                 ) from exc
             if (

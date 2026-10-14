@@ -42,15 +42,22 @@ bounded flow:
    bodies and eligible transport failures enter the existing Jina/Wayback flow
    against the original issue page, without retrying generic HTML extraction;
    404/410 skip Reader for archives. Classification still disables recovery.
-   API 403 permission/rate-limit errors are terminal, as are malformed or
+   API quota exhaustion (429, or 403 with `X-RateLimit-Remaining: 0` or
+   `Retry-After`) stops API retries and enters webpage recovery immediately
+   during summary retrieval. The private cause is `github_api_rate_limited`;
+   Reader, Wayback, and eligible search recovery use the original issue page.
+   Classification reports the API failure without recovery. API 403 without
+   rate-limit evidence remains terminal, as do malformed or
    mismatched responses, unsafe URLs, size violations, and existing terminal
    HTTP cases. README/blob transport failure behavior is unchanged.
    Issue and README API requests read optional `GITHUB_TOKEN` from the process
    environment. A nonblank token adds Bearer authentication to the initial
    `https://api.github.com/repos/...` request; absent or blank values keep
-   anonymous access. Credentials use an unredirected header: redirected requests,
-   raw file downloads, ordinary pages, and recovery channels receive no GitHub
-   token. Authentication does not change retry or recovery eligibility. Invalid
+   anonymous access. Credentials use an unredirected header; only issue API
+   redirects explicitly reattach it after every destination passes the public
+   address and issue-endpoint checks. README redirects, raw file downloads,
+   ordinary pages, and recovery channels receive no GitHub token. Authentication
+   does not change retry or recovery eligibility. Invalid
    header characters fail locally without including the token in diagnostics.
 3. Otherwise perform the direct request, validate redirects and the final URL,
    and extract bounded HTML, text, or PDF content. HTML extraction includes
@@ -247,7 +254,6 @@ covers API routing, Markdown evidence, identity checks, recovery, and bounds.
 `tests/test_github_issue_redirects.py` exercises repository renames, issue
 transfers, and redirect-chain restrictions through urllib's redirect handling;
 `tests/test_github_auth.py` covers optional credentials and their isolation.
-`tests/test_github_auth.py` covers optional authentication and credential isolation.
 YouTube captions and source evidence are covered by `tests/test_youtube_captions.py`,
 `tests/test_source_evidence.py`, and `tests/test_source_evidence_transport.py`.
 `tests/test_retrieval_budget.py` covers shared counts, deadline checks, nested

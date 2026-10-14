@@ -1,4 +1,4 @@
-"""Optional GitHub credentials stay on their initial API requests."""
+"""Optional GitHub credentials stay within approved API requests."""
 
 import logging
 from email.message import Message
@@ -54,7 +54,7 @@ def test_optional_token_authenticates_issue_and_readme(url, token, monkeypatch, 
     "https://other.example/page", "http://api.github.com/repos/example/compiler/issues/42",
 ])
 @pytest.mark.parametrize("url", [URL, README_URL])
-def test_redirects_never_forward_token(destination, url, monkeypatch):
+def test_only_validated_issue_redirects_keep_token(destination, url, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
 
     def opener(request, timeout):
@@ -62,7 +62,9 @@ def test_redirects_never_forward_token(destination, url, monkeypatch):
         redirected = _SafeRedirectHandler(resolver_for({})).redirect_request(
             request, None, 302, "Found", Message(), destination,
         )
-        assert redirected.get_header("Authorization") is None
+        expected = f"Bearer {TOKEN}" if url == URL else None
+        assert redirected.get_header("Authorization") == expected
+        assert "Authorization" not in redirected.headers
         return api_response(API_URL if url == URL else README_API)
 
     if url == URL and not destination.startswith("https://api.github.com/"):

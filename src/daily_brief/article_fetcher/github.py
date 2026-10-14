@@ -62,7 +62,8 @@ def _github_api_request(url: str, *, accept: str) -> Request:
                 error_code="invalid_configuration",
             )
         # urllib drops unredirected headers on redirects, including to raw file
-        # hosts. Never send this token to Reader, archives, or article sites.
+        # hosts. Only the validated issue redirect chain opts in to reattaching
+        # it. Never send this token to Reader, archives, or article sites.
         request.add_unredirected_header("Authorization", f"Bearer {token}")
     return request
 
@@ -83,6 +84,7 @@ def fetch_github_issue(
     _validate_public_http_url(api_url, resolver)
     request = _github_api_request(api_url, accept="application/vnd.github+json")
     request._redirect_validator = _validate_github_issue_api_url
+    request._preserve_validated_redirect_auth = True
     with opener(request, timeout=timeout_seconds) as response:
         final_url = response.geturl()
         _validate_public_http_url(final_url, resolver)

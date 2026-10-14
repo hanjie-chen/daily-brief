@@ -29,6 +29,7 @@ def _reason(code: str, http_status: int | None = None, *, model_service: bool = 
     aliases = {
         "timeout": "network_timeout", "quota_exceeded": "rate_limited",
         "daily_quota_exceeded": "rate_limited", "budget_exceeded": "rate_limited",
+        "github_api_rate_limited": "rate_limited",
         "insufficient_comments": "source_material_insufficient",
         "html_extraction_failed": "extraction_failed", "pdf_extraction_failed": "extraction_failed",
         "invalid_json": "invalid_response",

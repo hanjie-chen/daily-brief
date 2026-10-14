@@ -97,11 +97,11 @@ GitHub issue 在分类和摘要阶段均优先请求 `/repos/{owner}/{repo}/issu
 
 仓库改名或 issue 转移时，允许跟随 GitHub API 的重定向，直接使用新资源的正文。每一跳仍须通过公网地址校验，并限定为 HTTPS、精确的 `api.github.com` 主机及 issue API 路径；支持 `/repos/{owner}/{repo}/issues/{number}` 和 `/repositories/{id}/issues/{number}`。校验依据是最终 API 地址、响应的 `url`、`html_url` 和 `number`：允许仓库和编号随官方重定向变化，数字仓库路径的名称由可信响应中相互一致的 API／网页地址确定。未重定向时仍按原资源核对；外域中转、HTTP 降级及身份冲突均拒绝。原 `source_url` 保留，`retrieved_url` 记录新网页地址；正常迁移仍是 API 直接获取成功，不记为 fallback。
 
-issue API 与普通网页共用短重试、大小限制及获取预算。摘要阶段遇到空正文或可恢复的网络错误时，针对原 issue 页面地址尝试 Jina、Wayback 及既有搜索恢复；API 的 404/410 直接转存档，不再用普通 HTML 提取器重复读取已知容易漏正文的页面。分类阶段仍不启用这些备用渠道。API 的 403 权限或限流错误、其他终止类 HTTP 错误、无效响应或身份不符、非公网地址及大小限制不会转入恢复。私有诊断记录 `method=github_issue`、`extractor=github_api`；公开详情将该方式映射为既有的 `direct`，表示直接请求原站 API，不增加网站 schema 枚举。
+issue API 与普通网页共用短重试、大小限制及获取预算。摘要阶段遇到空正文或可恢复的网络错误时，针对原 issue 页面地址尝试 Jina、Wayback 及既有搜索恢复；API 的 404/410 直接转存档，不再用普通 HTML 提取器重复读取已知容易漏正文的页面。分类阶段仍不启用这些备用渠道。API 配额耗尽（429，或带 `X-RateLimit-Remaining: 0`／`Retry-After` 的 403）停止 API 重试，摘要阶段立即对原 issue 页面进入 Jina、Wayback 及适用的搜索恢复，私有原因记录为 `github_api_rate_limited`，公开 `generation_info` 映射为既有的 `rate_limited`。分类阶段只记录失败，不启动恢复。没有限流证据的 API 403 权限错误、其他终止类 HTTP 错误、无效响应或身份不符、非公网地址及大小限制不会转入恢复。私有诊断记录 `method=github_issue`、`extractor=github_api`；公开详情将该方式映射为既有的 `direct`，表示直接请求原站 API，不增加网站 schema 枚举。
 
 GitHub README、具体文件和 YouTube 使用各自的读取方式，失败后仍不会进入 Jina 和 Wayback 的恢复流程。
 
-GitHub issue 和 README 的 REST API 请求读取可选环境变量 `GITHUB_TOKEN`；未配置或留空时匿名请求，配置后在首次 `https://api.github.com/repos/...` 请求上添加 Bearer 认证。凭据使用不随重定向转发的请求头，后续重定向、raw 文件下载、普通网页及 Jina／存档等备用渠道均不携带此 token。认证不改变既有重试和恢复条件；token 中存在非法请求头字符时在本地失败，错误信息不包含凭据。
+GitHub issue 和 README 的 REST API 请求读取可选环境变量 `GITHUB_TOKEN`；未配置或留空时匿名请求，配置后在首次 `https://api.github.com/repos/...` 请求上添加 Bearer 认证。凭据使用不随重定向自动转发的请求头；仅 issue API 重定向在每一跳通过公网地址与 issue 接口校验后重新附加 token，使迁移后的请求继续使用认证配额。README 重定向、raw 文件下载、普通网页及 Jina／存档等备用渠道均不携带此 token。认证不改变既有重试和恢复条件；token 中存在非法请求头字符时在本地失败，错误信息不包含凭据。
 
 普通网页获取与后续搜索共用每条 120 秒、24 次传输请求的预算，包含直接重试、Jina 匿名/带 key 请求、存档索引与回放、Tavily 搜索及候选页面获取；嵌套调用不会重置预算。GitHub 候选的 HTTP 请求也计入。预算决定是否开始下一次请求或恢复阶段，socket timeout 不超过剩余时间；已经返回的结果继续通过正常内容校验，不因完成时超过 120 秒而丢弃。PDF 转换不受该期限中止，Adobe 在分类和摘要阶段均保留原有 300 秒转换上限；PDF 和 YouTube 的其他子进程限制也保持独立。urllib 内部重定向不逐跳计数，仍受既有重定向和公网校验限制。无可用结果且预算耗尽时停止追加获取并记录 `retrieval_budget_exhausted`，HN 材料和摘要调用仍可继续。
 
@@ -109,7 +109,7 @@ GitHub issue 和 README 的 REST API 请求读取可选环境变量 `GITHUB_TOKE
 
 ### 如何搜索其他来源
 
-已入选的普通网页在适用的 Jina、Wayback 路径耗尽后，系统会尝试搜索其他来源。触发原因包括普通 HTTP 错误、404/410、验证页、正文为空和网络故障；认证或请求错误、限流、不安全地址、URL 纠错终止、专用 transport 失败和预算耗尽不触发搜索。搜索使用 Tavily，需要配置 `TAVILY_API_KEY`。
+已入选的普通网页在适用的 Jina、Wayback 路径耗尽后，系统会尝试搜索其他来源。触发原因包括普通 HTTP 错误、404/410、验证页、正文为空、网络故障及 GitHub issue API 配额耗尽；认证或请求错误、普通网站限流、恢复渠道最终限流、不安全地址、URL 纠错终止、专用 transport 失败和预算耗尽不触发搜索。搜索使用 Tavily，需要配置 `TAVILY_API_KEY`。
 
 **先找同一篇文章的其他发布页面。**\
 系统用文章标题搜索，再实际打开候选页面。页面需要有标题、明确的转载说明和指向原文的链接，以及可用的正文，才会被接受。标题可以与 HN 标题不同；转载身份由明确指向原文的来源关系确认。仅仅搜索结果看起来相似，并不足以采用。

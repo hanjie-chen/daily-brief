@@ -163,6 +163,8 @@ listed only in that package's guide.
   GitHub issue API acquisition records `github_issue` in private diagnostics;
   both public provenance and generation info map it to the existing `direct`
   method, without extending the website's enum contract.
+  The private `github_api_rate_limited` recovery reason projects to the existing
+  `rate_limited` generation-info reason and `unknown` provenance fallback reason.
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never
   scans or catches up old dates implicitly.

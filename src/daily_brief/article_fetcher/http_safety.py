@@ -33,6 +33,13 @@ class _SafeRedirectHandler(HTTPRedirectHandler):
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         if redirected is not None and validator is not None:
             redirected._redirect_validator = validator
+            # Only explicitly opted-in, validated chains may retain credentials.
+            # Issue API redirects use this; README and ordinary redirects do not.
+            if getattr(req, "_preserve_validated_redirect_auth", False):
+                redirected._preserve_validated_redirect_auth = True
+                authorization = req.get_header("Authorization")
+                if authorization is not None:
+                    redirected.add_unredirected_header("Authorization", authorization)
         return redirected
 
 
