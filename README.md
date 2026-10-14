@@ -63,6 +63,7 @@
 - `JINA_API_KEY`：Jina Reader 优先匿名访问，遇到认证或限流错误时使用 key 重试。
 - `TAVILY_API_KEY`：原文获取失败时，搜索并核验同稿页面或同事件报道，补充摘要材料。
 - `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：同时填写后启用 Adobe PDF-to-Markdown；未配置或转换失败时使用本地 PDF 提取。
+- `GITHUB_TOKEN`：用于认证 GitHub API 请求，留空时匿名访问。
 
 各服务的额度说明见 [API 额度文档](./docs/api-quotas.md)。
 

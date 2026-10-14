@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 from urllib.error import HTTPError
@@ -26,18 +27,44 @@ from .http_safety import (
     _read_bounded,
     _validate_public_http_url,
 )
-from .source_evidence import SourceEvidence
 from .responses import (
     GITHUB_RAW_CONTENT_TYPE,
     _extract_response_payload,
     _fetch_bounded_text_response,
 )
+from .source_evidence import SourceEvidence
 
 
 GITHUB_API_BASE_URL = "https://api.github.com"
 GITHUB_RAW_BASE_URL = "https://raw.githubusercontent.com"
 GITHUB_API_VERSION = "2022-11-28"
 GITHUB_REPOSITORY_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _github_api_request(url: str, *, accept: str) -> Request:
+    """Attach optional credentials only to the initial GitHub API request."""
+    parsed = urlparse(url)
+    if (
+        parsed.scheme != "https" or parsed.netloc != "api.github.com"
+        or not parsed.path.startswith("/repos/")
+    ):
+        raise ArticleFetchError("invalid GitHub API endpoint", error_code="unsafe_url")
+    request = Request(url, headers={
+        "User-Agent": "daily-brief/0.1",
+        "Accept": accept,
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+    })
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        if not re.fullmatch(r"[!-~]+", token):
+            raise ArticleFetchError(
+                "GITHUB_TOKEN must contain only visible ASCII characters without spaces",
+                error_code="invalid_configuration",
+            )
+        # urllib drops unredirected headers on redirects, including to raw file
+        # hosts. Never send this token to Reader, archives, or article sites.
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
+    return request
 
 
 def fetch_github_issue(
@@ -54,11 +81,7 @@ def fetch_github_issue(
     """Read one issue's Markdown body; transport recovery belongs to fetch.py."""
     api_url = f"{GITHUB_API_BASE_URL}/repos/{owner}/{repository}/issues/{number}"
     _validate_public_http_url(api_url, resolver)
-    request = Request(api_url, headers={
-        "User-Agent": "daily-brief/0.1",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": GITHUB_API_VERSION,
-    })
+    request = _github_api_request(api_url, accept="application/vnd.github+json")
     with opener(request, timeout=timeout_seconds) as response:
         _validate_public_http_url(response.geturl(), resolver)
         payload = _read_bounded(response, max_bytes)
@@ -149,14 +172,7 @@ def fetch_github_readme_text(
     """Fetch the preferred README for one public GitHub repository."""
     api_url = f"{GITHUB_API_BASE_URL}/repos/{owner}/{repository}/readme"
     _validate_public_http_url(api_url, resolver)
-    request = Request(
-        api_url,
-        headers={
-            "User-Agent": "daily-brief/0.1",
-            "Accept": GITHUB_RAW_CONTENT_TYPE,
-            "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        },
-    )
+    request = _github_api_request(api_url, accept=GITHUB_RAW_CONTENT_TYPE)
     open_request = opener or _build_safe_opener(resolver).open
 
     try:

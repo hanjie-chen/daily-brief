@@ -93,11 +93,13 @@ OpenRouter 请求使用严格 JSON schema，并限制供应商单价、输出量
 4. **如果原站仍未取得正文，再搜索其他来源。**\
    系统会尝试寻找同一篇文章的其他发布页面；特定情况下，还会寻找 Reuters 的转载或其他媒体的同事件报道。这部分有单独的验证规则，下一段展开。
 
-GitHub issue 在分类和摘要阶段均优先请求 `/repos/{owner}/{repo}/issues/{number}`，匿名读取并核对返回的仓库、issue 编号及页面地址。标题单独作为元信息，非空 Markdown `body` 作为正文，保留代码块；不获取 issue 评论，不把 PR、issue 列表或其他 GitHub 页面当成 issue。发布时间使用 API 的 `created_at`，不用更新时间。查询参数和页面锚点不改变目标 issue。
+GitHub issue 在分类和摘要阶段均优先请求 `/repos/{owner}/{repo}/issues/{number}`，读取并核对返回的仓库、issue 编号及页面地址。标题单独作为元信息，非空 Markdown `body` 作为正文，保留代码块；不获取 issue 评论，不把 PR、issue 列表或其他 GitHub 页面当成 issue。发布时间使用 API 的 `created_at`，不用更新时间。查询参数和页面锚点不改变目标 issue。
 
 issue API 与普通网页共用短重试、大小限制及获取预算。摘要阶段遇到空正文或可恢复的网络错误时，针对原 issue 页面地址尝试 Jina、Wayback 及既有搜索恢复；API 的 404/410 直接转存档，不再用普通 HTML 提取器重复读取已知容易漏正文的页面。分类阶段仍不启用这些备用渠道。API 的 403 权限或限流错误、其他终止类 HTTP 错误、无效响应或身份不符、非公网地址及大小限制不会转入恢复。私有诊断记录 `method=github_issue`、`extractor=github_api`；公开详情将该方式映射为既有的 `direct`，表示直接请求原站 API，不增加网站 schema 枚举。
 
 GitHub README、具体文件和 YouTube 使用各自的读取方式，失败后仍不会进入 Jina 和 Wayback 的恢复流程。
+
+GitHub issue 和 README 的 REST API 请求读取可选环境变量 `GITHUB_TOKEN`；未配置或留空时匿名请求，配置后在首次 `https://api.github.com/repos/...` 请求上添加 Bearer 认证。凭据使用不随重定向转发的请求头，后续重定向、raw 文件下载、普通网页及 Jina／存档等备用渠道均不携带此 token。认证不改变既有重试和恢复条件；token 中存在非法请求头字符时在本地失败，错误信息不包含凭据。
 
 普通网页获取与后续搜索共用每条 120 秒、24 次传输请求的预算，包含直接重试、Jina 匿名/带 key 请求、存档索引与回放、Tavily 搜索及候选页面获取；嵌套调用不会重置预算。GitHub 候选的 HTTP 请求也计入。预算决定是否开始下一次请求或恢复阶段，socket timeout 不超过剩余时间；已经返回的结果继续通过正常内容校验，不因完成时超过 120 秒而丢弃。PDF 转换不受该期限中止，Adobe 在分类和摘要阶段均保留原有 300 秒转换上限；PDF 和 YouTube 的其他子进程限制也保持独立。urllib 内部重定向不逐跳计数，仍受既有重定向和公网校验限制。无可用结果且预算耗尽时停止追加获取并记录 `retrieval_budget_exhausted`，HN 材料和摘要调用仍可继续。
 

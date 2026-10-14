@@ -34,6 +34,13 @@ bounded flow:
    API 403 permission/rate-limit errors are terminal, as are malformed or
    mismatched responses, unsafe URLs, size violations, and existing terminal
    HTTP cases. README/blob transport failure behavior is unchanged.
+   Issue and README API requests read optional `GITHUB_TOKEN` from the process
+   environment. A nonblank token adds Bearer authentication to the initial
+   `https://api.github.com/repos/...` request; absent or blank values keep
+   anonymous access. Credentials use an unredirected header: redirected requests,
+   raw file downloads, ordinary pages, and recovery channels receive no GitHub
+   token. Authentication does not change retry or recovery eligibility. Invalid
+   header characters fail locally without including the token in diagnostics.
 3. Otherwise perform the direct request, validate redirects and the final URL,
    and extract bounded HTML, text, or PDF content. HTML extraction includes
    separately labeled publisher metadata (title, description, og:description)
@@ -226,6 +233,7 @@ before every PDF, adding startup time and memory inside the worker's limits.
 
 Subsystem tests live in `tests/test_article_fetcher.py`. `tests/test_github_issue.py`
 covers API routing, Markdown evidence, identity checks, recovery, and bounds.
+`tests/test_github_auth.py` covers optional authentication and credential isolation.
 YouTube captions and source evidence are covered by `tests/test_youtube_captions.py`,
 `tests/test_source_evidence.py`, and `tests/test_source_evidence_transport.py`.
 `tests/test_retrieval_budget.py` covers shared counts, deadline checks, nested

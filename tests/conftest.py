@@ -8,6 +8,12 @@ def clear_jina_api_key(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def clear_github_token(monkeypatch):
+    """GitHub authentication tests opt in using a synthetic credential."""
+    monkeypatch.delenv('GITHUB_TOKEN', raising=False)
+
+
+@pytest.fixture(autouse=True)
 def forbid_live_connectivity_check(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("Tests must inject the HN connectivity check or its transport")
