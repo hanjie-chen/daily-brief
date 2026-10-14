@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 from ..models import Candidate
 from .public_schema import PROVENANCE_VALUES, PUBLIC_BRIEF_SCHEMA_VERSION
-from .generation_info import public_generation_info
+from .generation_info import public_generation_info, public_retrieval_method
 
 
 def render_markdown(
@@ -353,7 +353,7 @@ def _public_provenance(candidate: Candidate) -> dict[str, str]:
         reason = "source_material_insufficient"
     values = {
         "summary_basis": basis,
-        "retrieval_method": retrieval.method if retrieval.method != "title" else "none",
+        "retrieval_method": public_retrieval_method(retrieval.method) if retrieval.method != "title" else "none",
         "retrieval_status": retrieval.status,
         "material_origin": retrieval.material_origin,
         "fallback_reason": reason or "none",

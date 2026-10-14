@@ -32,8 +32,10 @@ from .contracts import (
 )
 from .github import (
     _github_blob,
+    _github_issue,
     _github_repository,
     fetch_github_blob,
+    fetch_github_issue,
     fetch_github_readme_text,
 )
 from .http_safety import _build_safe_opener, _validate_public_http_url
@@ -193,6 +195,8 @@ def fetch_article(
         )
         return result
 
+    github_issue = _github_issue(url)
+    direct_method = "github_issue" if github_issue else "direct"
     direct_request = Request(
         url,
         headers={
@@ -215,6 +219,7 @@ def fetch_article(
         wayback_not_before=wayback_not_before,
         wayback_not_after=wayback_not_after,
         policy=policy,
+        method=direct_method,
     )
 
     fetch_direct = partial(
@@ -233,8 +238,28 @@ def fetch_article(
     )
     for attempt in range(1, policy.direct_max_attempts + 1):
         try:
-            result = fetch_direct(direct_request)
+            if github_issue:
+                result = fetch_github_issue(
+                    *github_issue, opener=open_request, resolver=resolver,
+                    timeout_seconds=timeout_seconds, max_bytes=html_max_bytes,
+                    extracted_max_bytes=extracted_max_bytes,
+                )
+            else:
+                result = fetch_direct(direct_request)
         except HTTPError as exc:
+            # API 403 can mean permissions or a rate limit, not a webpage block.
+            if github_issue and exc.code == 403:
+                limited = bool(exc.headers) and (
+                    exc.headers.get("X-RateLimit-Remaining") == "0"
+                    or bool(exc.headers.get("Retry-After"))
+                )
+                exc.close()
+                raise ArticleFetchError(
+                    "GitHub issue API request was rate limited" if limited
+                    else "GitHub issue API request was forbidden",
+                    error_code="rate_limited" if limited else "http_403",
+                    method=direct_method, attempts=attempt,
+                ) from exc
             if (
                 exc.code == 404
                 and exc.url == direct_request.full_url
@@ -266,8 +291,8 @@ def fetch_article(
                     exc.close()
                     budgeted_sleep(delay, sleeper)
                     LOGGER.warning(
-                        "component=article_fetch method=direct status=http_%d "
-                        "attempt=%d/%d retry_in=%ss", exc.code, attempt,
+                        "component=article_fetch method=%s status=http_%d "
+                        "attempt=%d/%d retry_in=%ss", direct_method, exc.code, attempt,
                         policy.direct_max_attempts, delay,
                     )
                     continue
@@ -284,7 +309,7 @@ def fetch_article(
             raise ArticleFetchError(
                 f"direct article request failed: {exc}",
                 error_code=f"http_{exc.code}",
-                method="direct",
+                method=direct_method,
                 attempts=attempt,
             ) from exc
         except ArticleFetchError as exc:
@@ -300,7 +325,7 @@ def fetch_article(
             raise ArticleFetchError(
                 f"direct article retrieval failed: {exc}",
                 error_code=exc.error_code,
-                method="direct",
+                method=direct_method,
                 extractor=exc.extractor,
                 fallback_attempted=exc.fallback_attempted,
                 fallback_reason=exc.fallback_reason,
@@ -317,8 +342,9 @@ def fetch_article(
             if _is_network_timeout(exc):
                 if attempt < policy.direct_max_attempts:
                     LOGGER.warning(
-                        "component=article_fetch method=direct status=network_timeout "
+                        "component=article_fetch method=%s status=network_timeout "
                         "attempt=%d/%d retry_in=%ss",
+                        direct_method,
                         attempt,
                         policy.direct_max_attempts,
                         DIRECT_RETRY_DELAY_SECONDS,
@@ -345,20 +371,21 @@ def fetch_article(
             raise ArticleFetchError(
                 f"direct article request failed: {exc}",
                 error_code="request_failed",
-                method="direct",
+                method=direct_method,
                 attempts=attempt,
             ) from exc
         except Exception as exc:
             raise ArticleFetchError(
                 f"direct article request failed: {exc}",
                 error_code="request_failed",
-                method="direct",
+                method=direct_method,
                 attempts=attempt,
             ) from exc
 
         LOGGER.info(
-            "component=article_fetch method=direct extractor=%s status=success "
+            "component=article_fetch method=%s extractor=%s status=success "
             "attempts=%d",
+            direct_method,
             result.extractor,
             attempt,
         )

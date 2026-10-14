@@ -77,6 +77,7 @@ class _JinaFallbackContext:
     wayback_not_before: datetime | None
     wayback_not_after: datetime | None
     policy: ArticleFetchPolicy
+    method: str = "direct"
 
 
 def _http_fallback_reason(exc: HTTPError) -> str:
@@ -97,7 +98,7 @@ def _http_fallback_reason(exc: HTTPError) -> str:
 def _article_error_fallback_reason(exc: ArticleFetchError) -> str:
     if exc.error_code in {"vercel_challenge", "challenge_page"}:
         return exc.error_code
-    if exc.error_code == "empty_content" and exc.extractor == "trafilatura":
+    if exc.error_code == "empty_content" and exc.extractor in {"trafilatura", "github_api"}:
         return "empty_content"
     return ""
 
@@ -116,6 +117,9 @@ def _recover_direct_failure(
         rule = _DirectFailureRule(direct_failure=fallback_reason)
     policy_failure = direct_failure or rule.policy_failure or rule.direct_failure
     direct_failure = direct_failure or rule.direct_failure
+    if context.method == "github_issue":
+        direct_failure = f"GitHub issue API {fallback_reason}"
+        policy_failure = direct_failure
     archive_only = fallback_reason in {"http_404", "http_410"}
     if not archive_only and not context.policy.jina_enabled:
         raise _direct_policy_failure(
@@ -123,12 +127,14 @@ def _recover_direct_failure(
             fallback_reason,
             direct_attempts,
             extractor=extractor,
+            method=context.method,
         ) from cause
 
     if archive_only:
         if not context.policy.wayback_enabled:
             raise _direct_policy_failure(
                 policy_failure, fallback_reason, direct_attempts, extractor=extractor,
+                method=context.method,
             ) from cause
         return _fetch_wayback_fallback(
             context.url,
@@ -151,22 +157,25 @@ def _recover_direct_failure(
 
     if rule.log_attempts:
         LOGGER.warning(
-            "component=article_fetch method=direct status=%s "
+            "component=article_fetch method=%s status=%s "
             "attempt=%d/%d fallback=jina",
+            context.method,
             fallback_reason,
             direct_attempts,
             context.policy.direct_max_attempts,
         )
     elif rule.log_extractor:
         LOGGER.warning(
-            "component=article_fetch method=direct extractor=%s "
+            "component=article_fetch method=%s extractor=%s "
             "status=%s fallback=jina",
-            rule.log_extractor,
+            context.method,
+            extractor or rule.log_extractor,
             fallback_reason,
         )
     else:
         LOGGER.warning(
-            "component=article_fetch method=direct status=%s fallback=jina",
+            "component=article_fetch method=%s status=%s fallback=jina",
+            context.method,
             fallback_reason,
         )
 
@@ -196,11 +205,12 @@ def _direct_policy_failure(
     attempts: int,
     *,
     extractor: str = "",
+    method: str = "direct",
 ) -> ArticleFetchError:
     return ArticleFetchError(
         f"direct article retrieval failed: {message}",
         error_code=error_code,
-        method="direct",
+        method=method,
         extractor=extractor,
         attempts=attempts,
     )

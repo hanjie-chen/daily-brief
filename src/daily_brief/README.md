@@ -160,6 +160,9 @@ listed only in that package's guide.
   Failed retries preserve the prior public summary and generation info together.
   Historical items omit either object and remain valid; no backfill is required.
   Deploy the accepting website before enabling generator output with new fields.
+  GitHub issue API acquisition records `github_issue` in private diagnostics;
+  both public provenance and generation info map it to the existing `direct`
+  method, without extending the website's enum contract.
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never
   scans or catches up old dates implicitly.

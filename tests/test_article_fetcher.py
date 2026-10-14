@@ -995,7 +995,7 @@ def test_github_readme_preserves_markdown_lists_and_code_blocks():
     "url",
     [
         "https://github.com/drumih",
-        "https://github.com/drumih/turbo-fieldfare/issues/1",
+        "https://github.com/drumih/turbo-fieldfare/issues",
         "https://gist.github.com/drumih/abc123",
         "https://github.com.evil.example/drumih/turbo-fieldfare",
         "https://github.com/drumih%2Fother/turbo-fieldfare",

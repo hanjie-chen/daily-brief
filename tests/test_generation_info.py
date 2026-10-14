@@ -38,6 +38,19 @@ def test_success_exports_declared_sources_and_actual_model_separately_from_acqui
     validate_public_brief(payload(item))
 
 
+def test_github_issue_transport_is_public_direct_and_private_diagnostic():
+    from daily_brief.output.render import render_candidates_json
+
+    item = candidate()
+    item.article_retrieval.method = 'github_issue'
+    data = payload(item)
+    public = data['sections']['ai']['items'][0]
+    assert public['provenance']['retrieval_method'] == 'direct'
+    assert public['generation_info']['materials']['webpage']['method'] == 'direct'
+    assert json.loads(render_candidates_json([item]))[0]['article_retrieval']['method'] == 'github_issue'
+    validate_public_brief(data)
+
+
 def test_recovered_page_retains_origin_failure_without_marking_final_fetch_failed():
     item = candidate()
     item.article_retrieval.material_origin = 'same_article'

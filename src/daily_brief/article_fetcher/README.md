@@ -19,7 +19,21 @@ bounded flow:
 
 1. Validate that the requested URL resolves to public HTTP(S) addresses.
 2. Route supported YouTube and GitHub URLs to their specialized transports;
-   GitHub PDF blobs retain the same PDF extraction policy.
+   GitHub PDF blobs retain the same PDF extraction policy. Issue-page URLs use
+   the public REST issue API in both classification and summary retrieval.
+   Validate the response's repository, issue number, and `html_url`; reject PRs
+   and malformed responses. Keep the API title as metadata and the nonempty
+   Markdown `body` as webpage text, preserving code blocks without acquiring
+   GitHub comments. `created_at` supplies the publication date, never `updated_at`.
+   Query strings and fragments do not change which issue is fetched. Other
+   GitHub URL types retain their existing routing.
+   Issue API requests share the direct retry loop and retrieval budget. Empty
+   bodies and eligible transport failures enter the existing Jina/Wayback flow
+   against the original issue page, without retrying generic HTML extraction;
+   404/410 skip Reader for archives. Classification still disables recovery.
+   API 403 permission/rate-limit errors are terminal, as are malformed or
+   mismatched responses, unsafe URLs, size violations, and existing terminal
+   HTTP cases. README/blob transport failure behavior is unchanged.
 3. Otherwise perform the direct request, validate redirects and the final URL,
    and extract bounded HTML, text, or PDF content. HTML extraction includes
    separately labeled publisher metadata (title, description, og:description)
@@ -170,7 +184,7 @@ budget does not replace per-response, per-route, or extraction limits.
 | `responses.py` | Response decoding and HTML/PDF extraction dispatch |
 | `wayback.py` | Capture discovery, identity checks, and replay retrieval |
 | `jina.py` | Jina Reader request and envelope validation |
-| `github.py` | Repository README and exact blob retrieval |
+| `github.py` | Repository README, exact blob, and structured issue-body retrieval |
 | `extract.py` | HTML body extraction and semantic-table preservation |
 | `http_safety.py` | Public-address validation and pinned connections |
 | `challenges.py` | Browser-challenge and network-failure detection |
@@ -210,8 +224,9 @@ before every PDF, adding startup time and memory inside the worker's limits.
 
 ## Tests
 
-Subsystem tests live in `tests/test_article_fetcher.py`, with YouTube captions
-and source evidence covered by `tests/test_youtube_captions.py`,
+Subsystem tests live in `tests/test_article_fetcher.py`. `tests/test_github_issue.py`
+covers API routing, Markdown evidence, identity checks, recovery, and bounds.
+YouTube captions and source evidence are covered by `tests/test_youtube_captions.py`,
 `tests/test_source_evidence.py`, and `tests/test_source_evidence_transport.py`.
 `tests/test_retrieval_budget.py` covers shared counts, deadline checks, nested
 scopes, bounded waits, and Tavily integration without real sleeping.

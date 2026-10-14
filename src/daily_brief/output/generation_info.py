@@ -37,6 +37,13 @@ def _reason(code: str, http_status: int | None = None, *, model_service: bool = 
     return aliases.get(code, "unknown")
 
 
+def public_retrieval_method(method: str) -> str:
+    """Project private transport details onto the existing public vocabulary."""
+    if method == "github_issue":
+        return "direct"
+    return method if method in PROVENANCE_VALUES["retrieval_method"] else "unknown"
+
+
 def public_generation_info(candidate: Candidate) -> dict:
     retrieval = candidate.article_retrieval
     page_status = retrieval.status if retrieval.status in MATERIAL_STATUSES else "unknown"
@@ -45,7 +52,7 @@ def public_generation_info(candidate: Candidate) -> dict:
     page_method = retrieval.method
     if page_method in {"story_text", "title"}:
         page_method = "none"
-    page_method = page_method if page_method in PROVENANCE_VALUES["retrieval_method"] else "unknown"
+    page_method = public_retrieval_method(page_method)
     origin = retrieval.material_origin
     origin = origin if origin in PROVENANCE_VALUES["material_origin"] else "unknown"
     origin_failure = retrieval.origin_failure
