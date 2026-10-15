@@ -532,10 +532,11 @@ def test_article_failure_does_not_prevent_brief_generation(tmp_path, caplog):
             capture_model_inputs=True,
         )
 
-    assert result.brief_path.exists()
-    markdown = result.brief_path.read_text(encoding="utf-8")
-    assert "原文抓取失败，未生成可靠摘要" in markdown
-    assert "- Content: Error — 原文抓取失败（http_403）。" in markdown
+    public = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    item = public["sections"]["ai"]["items"][0]
+    assert "原文抓取失败，未生成可靠摘要" in item["summary"]
+    assert item["content_status"] == "fetch_failed"
+    assert item["generation_info"]["materials"]["webpage"]["reason"] == "http_error"
     assert summarizer.titles == []
     assert (
         "component=article_fetch item_id=1 status=failed method=direct "
@@ -618,9 +619,10 @@ def test_origin_block_failure_uses_specific_reader_message(
         summarizer=FakeSummarizer(),
     )
 
-    markdown = result.brief_path.read_text(encoding="utf-8")
-    assert "来源网站阻止自动抓取，未生成可靠摘要" in markdown
-    assert "- Content: Error — 来源网站阻止自动抓取。" in markdown
+    public = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    item = public["sections"]["ai"]["items"][0]
+    assert "来源网站阻止自动抓取，未生成可靠摘要" in item["summary"]
+    assert item["content_status"] == "fetch_failed"
 
     candidate_payload = json.loads(result.data_path.read_text(encoding="utf-8"))
     retrieval = candidate_payload[0]["article_retrieval"]
@@ -668,6 +670,7 @@ def test_empty_content_jina_failure_skips_summary_and_persists_provenance(
     assert failed["summary_basis"] == "none"
     assert failed["summary_status"] == "skipped"
     assert summarizer.titles == []
-    assert "原文抓取失败，未生成可靠摘要" in result.brief_path.read_text(
-        encoding="utf-8"
-    )
+    public = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    item = public["sections"]["ai"]["items"][0]
+    assert "原文抓取失败，未生成可靠摘要" in item["summary"]
+    assert item["content_status"] == "fetch_failed"

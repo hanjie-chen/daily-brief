@@ -7,7 +7,7 @@ from daily_brief.candidates import HNDiscussionResult
 from daily_brief.generation import RetryError, run_retry
 from daily_brief.generation import retry
 from daily_brief.models import ArticleRetrieval, Candidate
-from daily_brief.output import render_candidates_json, render_markdown, render_public_brief_json
+from daily_brief.output import render_candidates_json, render_public_brief_json
 from fakes import FakeSummarizer, RaisingSummarizer, story
 
 DAY = '2026-09-29'
@@ -38,7 +38,6 @@ def seed(tmp_path, *, failed=False, roundup=False):
     briefs.mkdir()
     data.mkdir()
     (briefs / f'{DAY}.json').write_text(render_public_brief_json(DAY, STAMP, selected, [], ai_note='Keep this note'))
-    (briefs / f'{DAY}.md').write_text(render_markdown(DAY, selected, [], ai_note='Keep this note'))
     (data / f'{DAY}-hn-candidates.json').write_text(render_candidates_json([*selected, unselected]))
     (data / 'recommendation-history.json').write_text('history sentinel')
     (data / 'publish-state.json').write_text('publish sentinel')
@@ -107,7 +106,8 @@ def test_single_retry_refetches_all_material_preserves_selection_and_does_not_sa
     assert updated_item['generation_info']['generation']['reasoning_effort'] == 'medium'
     assert audit[0]['summary_generation']['reasoning_effort'] == 'medium'
     assert 'reasoning_effort' not in public['sections']['ai']['items'][1]['generation_info']['generation']
-    assert updated_item['summary'] in (briefs / f'{DAY}.md').read_text()
+    assert updated_item['summary'] == '根据 HN 发帖者介绍：视频按需生成，可编辑。'
+    assert not (briefs / f'{DAY}.md').exists()
     assert set(tmp_path.rglob('*')) == original_files
     assert (data / 'recommendation-history.json').read_text() == 'history sentinel'
     assert (data / 'publish-state.json').read_text() == 'publish sentinel'
@@ -148,7 +148,6 @@ def test_no_failures_is_noop_without_model_or_network(tmp_path, monkeypatch):
 def test_failed_retry_preserves_published_fields_and_updates_only_latest_diagnostics(tmp_path, old_failed):
     briefs, data = seed(tmp_path, failed=old_failed)
     old_public = (briefs / f'{DAY}.json').read_bytes()
-    old_markdown = (briefs / f'{DAY}.md').read_bytes()
     _, old_audit = read_outputs(briefs, data)
     class FailedBackend(RaisingSummarizer):
         last_summary_reasoning_effort = "medium"
@@ -159,7 +158,6 @@ def test_failed_retry_preserves_published_fields_and_updates_only_latest_diagnos
         assert result.failed == 1 and result.updated == 0
     _, audit = read_outputs(briefs, data)
     assert (briefs / f'{DAY}.json').read_bytes() == old_public
-    assert (briefs / f'{DAY}.md').read_bytes() == old_markdown
     assert audit[0]['last_retry']['summary_generation']['error_code'] == 'quota_exceeded'
     assert audit[0]['last_retry']['summary_generation']['reasoning_effort'] == 'medium'
     assert audit[0]['last_retry']['status'] == 'failed'
@@ -197,7 +195,7 @@ def test_roundup_uses_fresh_comment_summary_without_reclassification(tmp_path):
     assert result.updated == 1
     assert [c[0] for c in calls] == ['post', 'comments']
     assert public['sections']['ai']['items'][0]['summary'].startswith('社区分享两个工具。')
-    assert '\n  - Alpha' in (briefs / f'{DAY}.md').read_text()
+    assert '\n- Alpha：离线编辑器。\n- Beta：静态检查器。' in public['sections']['ai']['items'][0]['summary']
 
 
 @pytest.mark.parametrize('mode', ['nonselected', 'missing_audit', 'wrong_date', 'mismatch', 'extra_selected'])

@@ -15,9 +15,8 @@
 
 每个条目主要包括：标题、摘要、关于这一条摘要的生成详情。
 
-有内容时每次运行写出三类文件：
+有内容时每次运行写出两类文件：
 
-- `briefs/YYYY-MM-DD.md` — 用于阅读的 Markdown；
 - `briefs/YYYY-MM-DD.json` — 用于网站发布的 schema 结构化数据；
 - `data/YYYY-MM-DD-hn-candidates.json` — 全部候选及入选/落选原因、原文 transport、正文 extractor 与错误、摘要依据，以及包含 interaction 状态和 token usage 的摘要生成诊断，用于复盘和 debug。
 

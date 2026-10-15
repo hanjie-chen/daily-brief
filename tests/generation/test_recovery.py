@@ -391,7 +391,8 @@ def test_failed_syndicated_candidates_preserve_original_block_and_do_not_recurse
     assert retrieval["origin_failure"] is None
     assert retrieval["syndicated_recovery"]["status"] == "exhausted"
     assert retrieval["syndicated_recovery"]["rejection_reasons"] == ["fetch_failed"]
-    assert "来源网站阻止自动抓取" in result.brief_path.read_text(encoding="utf-8")
+    public = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    assert "来源网站阻止自动抓取" in public["sections"]["ai"]["items"][0]["summary"]
 
 
 def test_syndicated_recovery_deduplicates_candidates_before_fetch(tmp_path):
@@ -505,7 +506,7 @@ def test_syndicated_finder_failure_is_audited_without_failing_generation(tmp_pat
     ]["syndicated_recovery"]
     assert recovery["status"] == "finder_failed"
     assert recovery["error_code"] == "provider_request_failed"
-    assert result.brief_path.exists()
+    assert result.public_json_path.exists()
 
 
 def test_missing_tavily_key_fails_closed_without_live_search(tmp_path, monkeypatch):

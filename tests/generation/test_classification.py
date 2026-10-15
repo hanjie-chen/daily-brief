@@ -203,11 +203,9 @@ def test_run_generate_routes_approved_core_keyword_to_ai_schema_section(tmp_path
     assert by_id["1"]["selected"] is True
     assert by_id["1"]["section"] == "ai"
 
-    markdown = result.brief_path.read_text(encoding="utf-8")
-    ai_section = markdown.split("## Hacker News: Tech picks", 1)[1].split(
-        "## Hacker News: Beyond the Bubble", 1
-    )[0]
-    assert "SQLite release notes" in ai_section
+    public = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    ai_titles = [item["title"] for item in public["sections"]["ai"]["items"]]
+    assert "SQLite release notes" in ai_titles
 
 
 def test_run_generate_treats_weak_only_matches_as_non_ai_hot_candidates(tmp_path):
@@ -241,12 +239,10 @@ def test_run_generate_treats_weak_only_matches_as_non_ai_hot_candidates(tmp_path
     assert by_id["2"]["selected"] is True
     assert by_id["2"]["section"] == "non_ai_hot"
 
-    markdown = result.brief_path.read_text(encoding="utf-8")
-    ai_section = markdown.split("## Hacker News: Tech picks", 1)[1].split(
-        "## Hacker News: Beyond the Bubble", 1
-    )[0]
-    assert "Database model migration guide" not in ai_section
-    assert "New workflow engine reaches stable release" not in ai_section
+    public = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    ai_titles = [item["title"] for item in public["sections"]["ai"]["items"]]
+    assert "Database model migration guide" not in ai_titles
+    assert "New workflow engine reaches stable release" not in ai_titles
 
 
 def test_article_ai_enters_core_pool_with_article_evidence_bonus(tmp_path, caplog):
@@ -276,13 +272,14 @@ def test_article_ai_enters_core_pool_with_article_evidence_bonus(tmp_path, caplo
             clock=iter([10.0, 12.5]).__next__,
         )
 
-    markdown = result.brief_path.read_text(encoding="utf-8")
+    public = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    ai_titles = [item["title"] for item in public["sections"]["ai"]["items"]]
     records = {
         item["hn_item_id"]: item
         for item in json.loads(result.data_path.read_text(encoding="utf-8"))
     }
-    assert "Claude release" in markdown
-    assert "Everything I own, owned" in markdown
+    assert "Claude release" in ai_titles
+    assert "Everything I own, owned" in ai_titles
     assert classifier.seen_ids == ["2"]
     assert records["2"]["topic_route"] == "article_ai"
     assert records["2"]["selected"] is True
@@ -311,12 +308,10 @@ def test_classifier_failure_preserves_keyword_routing(tmp_path, caplog):
             summarizer=FakeSummarizer(),
         )
 
-    markdown = result.brief_path.read_text(encoding="utf-8")
-    ai_section = markdown.split("## Hacker News: Tech picks", 1)[1].split(
-        "## Hacker News: Beyond the Bubble", 1
-    )[0]
-    assert "Claude release" in ai_section
-    assert "Unseen Neural Product" not in ai_section
+    public = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    ai_titles = [item["title"] for item in public["sections"]["ai"]["items"]]
+    assert "Claude release" in ai_titles
+    assert "Unseen Neural Product" not in ai_titles
     assert "component=topic_classifier status=failed" in caplog.text
     records = {
         item["hn_item_id"]: item

@@ -63,7 +63,7 @@ Each package with its own guide lists its files there.
 | [`article_fetcher/`](article_fetcher/README.md) | Bounded public article retrieval, extraction, and Jina/Wayback fallbacks |
 | [`recovery/`](recovery/README.md) | Search-based recovery after the original source is blocked |
 | `output/__init__.py` | Stable facade for rendering, public payload validation, and publishing |
-| `output/render.py` | Markdown, public JSON, and private candidate-audit serialization |
+| `output/render.py` | Public JSON and private candidate-audit serialization |
 | `output/generation_info.py` | Safe projection of per-material acquisition, declared sources, and actual model diagnostics |
 | `output/public_schema.py` | Public payload contract shared by generation and publishing |
 | `output/publisher.py` | Website delivery, retry, and local success state |
@@ -137,8 +137,8 @@ listed only in that package's guide.
   bypasses the check; a healthy HN response keeps failures item-scoped. This
   checks a workflow dependency, not global network health.
 - Public JSON retains the compatibility section keys `ai` and `non_ai_hot`.
-  Local Markdown labels the core section `Tech picks`, while the website displays
-  it as 技术精选. Changing either display label is not a schema migration.
+  The website displays the core section as 技术精选; its display label is
+  independent of the schema keys.
 - Public JSON and private audit data have different trust and compatibility
   boundaries. Public output uses the strict schema in `output/public_schema.py` and never
   exposes raw provider diagnostics, recovery URLs, or private evaluation material.

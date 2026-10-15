@@ -10,10 +10,9 @@ from pathlib import Path
 from ..candidates import fetch_hn_story
 from ..config import RUN_HOUR, TIMEZONE
 from ..llm import create_model_backend
-from ..models import ArticleRetrieval, Candidate, Story, SummaryGeneration
+from ..models import Candidate, Story
 from ..output import (
     render_candidates_json,
-    render_markdown,
     render_public_brief_json,
     validate_public_brief,
 )
@@ -83,10 +82,8 @@ def run_retry(
         raise RetryError("retry item IDs must be positive integers")
 
     public_path = Path(output_dir) / f"{date_label}.json"
-    markdown_path = Path(output_dir) / f"{date_label}.md"
     audit_path = Path(data_dir) / f"{date_label}-hn-candidates.json"
     originals = {path: _read_text(path) for path in (public_path, audit_path)}
-    originals[markdown_path] = _read_text(markdown_path) if markdown_path.exists() else None
     try:
         public = json.loads(originals[public_path])
         audit = json.loads(originals[audit_path])
@@ -176,7 +173,6 @@ def run_retry(
         public["generated_at"] = datetime.now(TIMEZONE).isoformat(timespec="seconds")
         validate_public_brief(public)
         changes[public_path] = _json_text(public)
-        changes[markdown_path] = _render_saved_markdown(public, records)
     _persist_updates(changes, originals)
     return RetryResult(len(targets), updated, len(targets) - updated)
 
@@ -248,32 +244,6 @@ def _candidate(item: dict, record: dict, section: str) -> Candidate:
     )
 
 
-def _render_saved_markdown(public: dict, records: dict) -> str:
-    sections = {}
-    for section, contents in public["sections"].items():
-        sections[section] = []
-        for item in contents["items"]:
-            record = records[item["hn_item_id"]]
-            candidate = _candidate(item, record, section)
-            candidate.summary = item["summary"]
-            candidate.summary_status = record.get("summary_status", "success")
-            candidate.summary_basis = record.get("summary_basis", "unknown")
-            candidate.summary_input_mode = record.get("summary_input_mode", "legacy")
-            candidate.source_material_status = record.get("source_material", {}).get("status", "not_assessed")
-            retrieval = record.get("article_retrieval", {})
-            candidate.article_retrieval = ArticleRetrieval(
-                status=retrieval.get("status", "not_attempted"),
-                fallback_reason=retrieval.get("fallback_reason", ""),
-                error_code=retrieval.get("error_code", ""),
-            )
-            candidate.summary_generation = SummaryGeneration(
-                error_code=record.get("summary_generation", {}).get("error_code", "")
-            )
-            sections[section].append(candidate)
-    return render_markdown(public["date"], sections["ai"], sections["non_ai_hot"],
-                           public["sections"]["ai"]["note"], public["sections"]["non_ai_hot"]["note"])
-
-
 def _json_text(value) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
 
@@ -292,9 +262,5 @@ def _persist_updates(changes: dict, originals: dict) -> None:
             written.append(path)
     except OSError as exc:
         for path in reversed(written):
-            original = originals[path]
-            if original is None:
-                path.unlink(missing_ok=True)
-            else:
-                atomic_write_text(path, original)
+            atomic_write_text(path, originals[path])
         raise RetryError("could not save retry results") from exc

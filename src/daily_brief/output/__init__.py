@@ -6,7 +6,7 @@ from .public_schema import (
     validate_public_brief,
 )
 from .publisher import PublishError, PublishResult, publish_brief
-from .render import render_candidates_json, render_markdown, render_public_brief_json
+from .render import render_candidates_json, render_public_brief_json
 
 
 __all__ = [
@@ -16,7 +16,6 @@ __all__ = [
     "PublishResult",
     "publish_brief",
     "render_candidates_json",
-    "render_markdown",
     "render_public_brief_json",
     "validate_public_brief",
 ]

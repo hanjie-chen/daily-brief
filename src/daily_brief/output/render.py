@@ -8,21 +8,6 @@ from .public_schema import PROVENANCE_VALUES, PUBLIC_BRIEF_SCHEMA_VERSION
 from .generation_info import public_generation_info, public_retrieval_method
 
 
-def render_markdown(
-    date_label: str,
-    ai_items: list[Candidate],
-    hot_items: list[Candidate],
-    ai_note: str = "",
-    hot_note: str = "",
-) -> str:
-    lines = [f"# Daily Brief - {date_label}", ""]
-    if not ai_items and not hot_items:
-        lines.extend(["No publishable items selected today.", ""])
-    lines.extend(_render_section("Hacker News: Tech picks", ai_items, ai_note))
-    lines.extend(_render_section("Hacker News: Beyond the Bubble", hot_items, hot_note))
-    return "\n".join(lines).rstrip() + "\n"
-
-
 def render_candidates_json(candidates: list[Candidate]) -> str:
     payload = []
     for candidate in candidates:
@@ -188,69 +173,6 @@ def render_public_brief_json(
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
-def _render_section(title: str, items: list[Candidate], note: str = "") -> list[str]:
-    lines = [f"## {title}", ""]
-    if note:
-        lines.extend([f"Note: {_single_line_display_text(note)}", ""])
-    if not items:
-        lines.extend(["No items selected.", ""])
-        return lines
-
-    for item in items:
-        story = item.story
-        lines.extend(
-            [
-                f"### {_single_line_display_text(story.title)}",
-                "",
-                *_markdown_summary_lines(item),
-            ]
-        )
-        if item.article_retrieval.status == "failed":
-            if item.summary_input_mode == "materials" and item.summary_status == "success":
-                lines.append("- Content: 原文抓取失败；摘要依据其余可用材料。")
-            elif (
-                item.summary_basis == "hn_comments"
-                and item.summary_status == "success"
-            ):
-                lines.append(
-                    "- Content: Discussion fallback — 原文抓取失败；"
-                    "摘要依据 Hacker News 评论，不代表原文观点。"
-                )
-            elif item.article_retrieval.origin_blocked:
-                lines.append("- Content: Error — 来源网站阻止自动抓取。")
-            else:
-                error_code = item.article_retrieval.error_code or "fetch_failed"
-                lines.append(
-                    "- Content: Error — 原文抓取失败"
-                    f"（{_single_line_display_text(error_code)}）。"
-                )
-        elif item.source_material_status == "insufficient":
-            if item.summary_basis == "hn_comments" and item.summary_status == "success":
-                lines.append(
-                    "- Content: Discussion fallback — 页面材料不足；"
-                    "保留已有材料并补充 HN 讨论，评论观点另行标注。"
-                )
-            else:
-                label = "现有材料" if item.summary_input_mode == "materials" else "页面材料"
-                lines.append(f"- Content: {label}不足，未生成可靠摘要。")
-        elif item.summary_status == "failed":
-            error_code = item.summary_generation.error_code or "summary_failed"
-            lines.append(
-                "- Content: Error — 原文已抓取，但摘要生成失败"
-                f"（{_single_line_display_text(error_code)}）。"
-            )
-        lines.extend(
-            [
-                f"- Why: {_single_line_display_text(item.why)}",
-                f"- Source: {story.source_url}",
-                f"- Discussion: {story.hn_discussion_url}",
-                f"- Stats: {story.points} points / {story.comments} comments",
-                "",
-            ]
-        )
-    return lines
-
-
 def _single_line_display_text(value: str) -> str:
     return " ".join(value.split())
 
@@ -262,13 +184,6 @@ def _summary_display_text(candidate: Candidate) -> str:
             _single_line_display_text(line) for line in candidate.summary.strip().splitlines()
         )
     return _single_line_display_text(candidate.summary)
-
-
-def _markdown_summary_lines(candidate: Candidate) -> list[str]:
-    summary_lines = _summary_display_text(candidate).split("\n")
-    return [f"- Summary: {summary_lines[0]}", *(
-        "  " + line if line else "" for line in summary_lines[1:]
-    )]
 
 
 def _retrieval_failure_payload(failure):

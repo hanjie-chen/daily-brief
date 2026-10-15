@@ -1,7 +1,7 @@
 # Generation
 
 This package implements the pipeline behind `daily-brief generate`: it turns
-collected Hacker News stories into a rendered brief, a public payload, and a
+collected Hacker News stories into a public JSON payload and a
 private candidate audit. Its package-level facade is the only import used by
 the rest of the application:
 
@@ -143,8 +143,8 @@ this package that owns it.
    `community_roundup` remains the exception: its comment-led overview was
    assessed before selection and is reused. An external-source retrieval failure
    never becomes a title- or model-knowledge-based article summary.
-8. `pipeline.py`: `output/render.py` writes the readable Markdown, validated public JSON,
-   and private candidate audit. `candidates/history.py` then records selected item IDs. An
+8. `pipeline.py`: `output/render.py` serializes the validated public JSON
+   and private candidate audit for writing. `candidates/history.py` then records selected item IDs. An
    empty brief writes a `.no-content` marker instead of public JSON.
 
 ## Retry Existing Items
@@ -166,7 +166,7 @@ running topic classification or selection again. Historical retry dates determin
 the Wayback time window; fetched live pages and discussions reflect the retry time.
 
 A successful summary replaces only that item's public summary/provenance/status
-and generation diagnostics, then regenerates Markdown from the saved selection.
+and generation diagnostics in the public JSON and candidate audit.
 A failed attempt leaves its prior public result and base audit intact; its latest
 attempt diagnostics are stored under `last_retry` in the candidate audit. This
 single record is replaced on the next retry, not appended indefinitely. HN post acquisition is recorded separately in the candidate audit and public

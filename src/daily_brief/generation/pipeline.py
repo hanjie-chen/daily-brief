@@ -24,7 +24,6 @@ from ..models import Candidate, Story
 from ..output import (
     EmptyPublicBriefError,
     render_candidates_json,
-    render_markdown,
     render_public_brief_json,
     validate_public_brief,
 )
@@ -40,7 +39,6 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class GenerateResult:
-    brief_path: Path
     data_path: Path
     public_json_path: Path | None
     no_content_marker_path: Path | None = None
@@ -226,16 +224,11 @@ def _persist_generation(
     selected_hot_items = selection.selected_hot_items
     if not ai_items and not selected_hot_items and network_recovery_exhausted():
         raise SourceCollectionError("network recovery exhausted; empty selection is inconclusive")
-    output_path = Path(output_dir) / f"{label}.md"
     public_json_path = Path(output_dir) / f"{label}.json"
     no_content_marker_path = Path(output_dir) / f"{label}.no-content"
     data_path = Path(data_dir) / f"{label}-hn-candidates.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    public_json_path.parent.mkdir(parents=True, exist_ok=True)
     data_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        render_markdown(label, ai_items, selected_hot_items),
-        encoding="utf-8",
-    )
     public_json_text = render_public_brief_json(
         label,
         generated_at or datetime.now(TIMEZONE).isoformat(timespec="seconds"),
@@ -291,11 +284,10 @@ def _persist_generation(
         "status=completed ai_items=%d hot_items=%d brief=%s data=%s",
         len(ai_items),
         len(selected_hot_items),
-        output_path,
+        written_public_json_path or written_marker_path,
         data_path,
     )
     return GenerateResult(
-        brief_path=output_path,
         data_path=data_path,
         public_json_path=written_public_json_path,
         no_content_marker_path=written_marker_path,

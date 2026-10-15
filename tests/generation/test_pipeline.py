@@ -7,7 +7,7 @@ from daily_brief.generation import SourceCollectionError, pipeline, run_generate
 from fakes import FakeClassifier, FakeSummarizer, story
 
 
-def test_run_generate_writes_markdown_and_json(tmp_path):
+def test_run_generate_writes_public_json_and_audit_only(tmp_path):
     output_dir = tmp_path / "briefs"
     data_dir = tmp_path / "data"
     summarizer = FakeSummarizer()
@@ -46,20 +46,11 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
         generated_at="2026-07-08T08:04:00+08:00",
     )
 
-    assert result.brief_path == output_dir / "2026-07-08.md"
     assert result.data_path == data_dir / "2026-07-08-hn-candidates.json"
     assert result.public_json_path == output_dir / "2026-07-08.json"
-    assert result.brief_path.exists()
+    assert not list(output_dir.glob("*.md"))
     assert result.data_path.exists()
     assert result.public_json_path.exists()
-
-    markdown = result.brief_path.read_text(encoding="utf-8")
-    assert "# Daily Brief - 2026-07-08" in markdown
-    assert "AI coding agent with Claude" in markdown
-    assert "Summary for AI coding agent with Claude" in markdown
-    assert "SQLite release notes" in markdown
-    assert "Summary for SQLite release notes" in markdown
-    assert "OpenAI launches a model" in markdown
 
     candidate_data = json.loads(result.data_path.read_text(encoding="utf-8"))
     by_id = {item["hn_item_id"]: item for item in candidate_data}
@@ -98,6 +89,13 @@ def test_run_generate_writes_markdown_and_json(tmp_path):
     assert public_payload["date"] == "2026-07-08"
     assert public_payload["generated_at"] == "2026-07-08T08:04:00+08:00"
     assert [
+        (item["title"], item["summary"])
+        for item in public_payload["sections"]["ai"]["items"]
+    ] == [
+        (title, f"Summary for {title}")
+        for title in ("OpenAI launches a model", "SQLite release notes", "AI coding agent with Claude")
+    ]
+    assert [
         item["hn_item_id"] for item in public_payload["sections"]["ai"]["items"]
     ] == [
         "4",
@@ -126,9 +124,7 @@ def test_no_content_marker_and_public_json_replace_each_other_on_rerun(tmp_path)
     assert empty.no_content_marker_path == output_dir / "2026-07-08.no-content"
     assert empty.no_content_marker_path.read_bytes() == b""
     assert not (output_dir / "2026-07-08.json").exists()
-    assert "No publishable items selected today." in empty.brief_path.read_text(
-        encoding="utf-8"
-    )
+    assert not list(output_dir.glob("*.md"))
 
     populated = run_generate(
         output_dir=output_dir,
@@ -216,7 +212,6 @@ def test_source_failure_does_not_replace_existing_date_artifacts(
     output_dir.mkdir()
     data_dir.mkdir()
     existing_artifacts = {
-        output_dir / "2026-07-08.md": "existing markdown",
         output_dir / "2026-07-08.json": "existing public json",
         output_dir / "2026-07-08.no-content": "existing marker",
         data_dir / "2026-07-08-hn-candidates.json": "existing audit",
@@ -338,8 +333,10 @@ def test_run_generate_dedupes_hot_candidates_before_writing_json(tmp_path):
     assert duplicate_records[0]["selected"] is True
     assert duplicate_records[0]["section"] == "ai"
 
-    markdown = result.brief_path.read_text(encoding="utf-8")
-    assert duplicate_records[0]["title"] in markdown
+    payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    assert [item["title"] for item in payload["sections"]["ai"]["items"]] == [
+        duplicate_records[0]["title"]
+    ]
 
 
 def test_recently_selected_story_is_excluded_and_recorded_in_snapshot(tmp_path):
@@ -369,7 +366,8 @@ def test_recently_selected_story_is_excluded_and_recorded_in_snapshot(tmp_path):
     assert records["1"]["selected"] is False
     assert records["1"]["rejection_reason"] == "recently_selected"
     assert records["2"]["selected"] is True
-    assert "Claude yesterday" not in result.brief_path.read_text(encoding="utf-8")
+    payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    assert [item["hn_item_id"] for item in payload["sections"]["ai"]["items"]] == ["2"]
 
 
 def test_same_date_history_does_not_change_rerun_selection(tmp_path):
@@ -389,7 +387,8 @@ def test_same_date_history_does_not_change_rerun_selection(tmp_path):
         summarizer=FakeSummarizer(),
     )
 
-    assert "Claude release" in result.brief_path.read_text(encoding="utf-8")
+    payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
+    assert [item["title"] for item in payload["sections"]["ai"]["items"]] == ["Claude release"]
 
 
 def test_run_generate_can_capture_exact_model_inputs(tmp_path):

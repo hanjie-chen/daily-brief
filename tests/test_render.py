@@ -6,7 +6,6 @@ import pytest
 from daily_brief.models import ArticleRetrieval, Candidate, KeywordMatch, Story
 from daily_brief.output import (
     render_candidates_json,
-    render_markdown,
     render_public_brief_json,
 )
 
@@ -31,44 +30,6 @@ def candidate(section="ai", selected=True, title="AI coding agent"):
         why="keywords: AI coding",
     )
     return item
-
-
-def test_render_markdown_contains_required_fields():
-    markdown = render_markdown("2026-07-08", [candidate()], [])
-
-    assert "# Daily Brief - 2026-07-08" in markdown
-    assert "## Hacker News: Tech picks" in markdown
-    assert "### AI coding agent" in markdown
-    assert "Summary: 这是一个 AI coding agent 项目。" in markdown
-    assert "Why: keywords: AI coding" in markdown
-    assert "Source: https://example.com" in markdown
-    assert "Discussion: https://news.ycombinator.com/item?id=1" in markdown
-    assert "Stats: 30 points / 5 comments" in markdown
-    assert "## Hacker News: Beyond the Bubble" in markdown
-    assert "No items selected." in markdown
-    assert markdown.endswith("\n")
-
-
-def test_render_markdown_shows_empty_core_section():
-    markdown = render_markdown("2026-07-08", [], [candidate(section="non_ai_hot")])
-
-    assert "## Hacker News: Tech picks\n\nNo items selected." in markdown
-    assert "## Hacker News: Beyond the Bubble" in markdown
-
-
-def test_render_markdown_normalizes_multiline_display_text():
-    item = candidate(title="AI coding agent\n### Injected heading")
-    item.summary = "  First line\n\nSecond\tline  "
-    item.why = "  Keyword match\nspans lines  "
-
-    markdown = render_markdown("2026-07-08", [item], [])
-
-    assert "\n### Injected heading\n" not in markdown
-    assert "### AI coding agent ### Injected heading" in markdown
-    assert "- Summary: First line Second line" in markdown
-    assert "- Why: Keyword match spans lines" in markdown
-    assert "\nSecond\tline" not in markdown
-    assert "\nspans lines" not in markdown
 
 
 def test_render_candidates_json_uses_snake_case_fields():
@@ -338,7 +299,6 @@ def test_render_marks_article_fetch_failure_without_exposing_raw_error():
     item.summary_basis = "none"
     item.summary_status = "skipped"
 
-    markdown = render_markdown("2026-07-08", [item], [])
     public_payload = json.loads(
         render_public_brief_json(
             "2026-07-08",
@@ -348,8 +308,6 @@ def test_render_marks_article_fetch_failure_without_exposing_raw_error():
         )
     )
 
-    assert "- Content: Error — 原文抓取失败（http_403）。" in markdown
-    assert "secret upstream detail" not in markdown
     assert public_payload["sections"]["ai"]["items"][0]["content_status"] == (
         "fetch_failed"
     )
@@ -372,11 +330,11 @@ def test_render_labels_origin_block_without_exposing_terminal_fallback_error():
         error_message="secret Jina detail",
     )
 
-    markdown = render_markdown("2026-07-08", [item], [])
-
-    assert "- Content: Error — 来源网站阻止自动抓取。" in markdown
-    assert "http_403" not in markdown
-    assert "secret Jina detail" not in markdown
+    published = public_item(item)
+    assert published["summary"] == item.summary
+    assert published["content_status"] == "fetch_failed"
+    assert "http_403" not in json.dumps(published)
+    assert "secret Jina detail" not in json.dumps(published)
 
 
 def test_render_labels_hn_discussion_fallback_without_hiding_fetch_failure():
@@ -390,7 +348,6 @@ def test_render_labels_hn_discussion_fallback_without_hiding_fetch_failure():
     item.summary_basis = "hn_comments"
     item.summary_status = "success"
 
-    markdown = render_markdown("2026-07-08", [item], [])
     public_payload = json.loads(
         render_public_brief_json(
             "2026-07-08",
@@ -400,9 +357,6 @@ def test_render_labels_hn_discussion_fallback_without_hiding_fetch_failure():
         )
     )
 
-    assert "Content: Discussion fallback" in markdown
-    assert "原文抓取失败" in markdown
-    assert "摘要依据 Hacker News 评论，不代表原文观点" in markdown
     assert public_payload["sections"]["ai"]["items"][0]["content_status"] == (
         "fetch_failed"
     )
@@ -440,7 +394,6 @@ def test_render_marks_summary_failure_as_distinct_from_fetch_failure():
     item.summary_generation.error_code = "quota_exceeded"
     item.summary_generation.error_message = "secret provider detail"
 
-    markdown = render_markdown("2026-07-08", [item], [])
     public_payload = json.loads(
         render_public_brief_json(
             "2026-07-08",
@@ -450,12 +403,6 @@ def test_render_marks_summary_failure_as_distinct_from_fetch_failure():
         )
     )
 
-    assert "原文已抓取，但摘要生成失败；请查看原文或讨论。" in markdown
-    assert (
-        "- Content: Error — 原文已抓取，但摘要生成失败（quota_exceeded）。"
-        in markdown
-    )
-    assert "secret provider detail" not in markdown
     public_item = public_payload["sections"]["ai"]["items"][0]
     assert public_item["content_status"] == "summary_failed"
     assert "secret provider detail" not in json.dumps(
@@ -463,7 +410,7 @@ def test_render_marks_summary_failure_as_distinct_from_fetch_failure():
     )
 
 
-def test_roundup_list_survives_markdown_and_public_json_rendering():
+def test_roundup_list_survives_public_json_rendering():
     from daily_brief.output import validate_public_brief
 
     item = candidate(title="Ask HN: What are you working on?")
@@ -475,12 +422,6 @@ def test_roundup_list_survives_markdown_and_public_json_rendering():
         "- 法律工具：追踪法条修改，帮助查看不同版本。\n"
         "- 木工工具：根据尺寸生成制作方案，并比较板材成本。"
     )
-    markdown = render_markdown("2026-09-16", [item], [])
-    assert (
-        "- Summary: 根据 Hacker News 部分评论：这是一个分享近期项目的帖子。\n\n"
-        "  - 法律工具：追踪法条修改，帮助查看不同版本。\n"
-        "  - 木工工具：根据尺寸生成制作方案，并比较板材成本。\n- Why:"
-    ) in markdown
     payload = json.loads(render_public_brief_json(
         "2026-09-16", "2026-09-16T08:00:00+08:00", [item], []
     ))

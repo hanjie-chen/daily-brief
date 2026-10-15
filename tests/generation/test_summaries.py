@@ -40,12 +40,6 @@ def test_run_generate_records_summary_failure_diagnostics(tmp_path, caplog):
             summarizer=RaisingSummarizer(),
         )
 
-    markdown = result.brief_path.read_text(encoding="utf-8")
-    assert "原文已抓取，但摘要生成失败；请查看原文或讨论。" in markdown
-    assert (
-        "- Content: Error — 原文已抓取，但摘要生成失败"
-        "（quota_exceeded）。" in markdown
-    )
     assert (
         "component=summary_generation item_id=1 status=failed "
         "provider=test-provider model=test-summary-model attempts=4 "
@@ -74,7 +68,9 @@ def test_run_generate_records_summary_failure_diagnostics(tmp_path, caplog):
     public_item = json.loads(result.public_json_path.read_text(encoding="utf-8"))[
         "sections"
     ]["ai"]["items"][0]
+    assert public_item["summary"] == "原文已抓取，但摘要生成失败；请查看原文或讨论。"
     assert public_item["content_status"] == "summary_failed"
+    assert public_item["generation_info"]["generation"]["reason"] == "rate_limited"
     assert "summary_generation" not in public_item
 
 
@@ -89,7 +85,6 @@ def test_run_generate_normalizes_summary_before_writing_outputs(tmp_path):
     )
 
     expected = "Anthropic 发布 Claude 5 模型。"
-    assert expected in result.brief_path.read_text(encoding="utf-8")
     public_payload = json.loads(result.public_json_path.read_text(encoding="utf-8"))
     assert public_payload["sections"]["ai"]["items"][0]["summary"] == expected
 
@@ -326,9 +321,8 @@ def test_article_failure_uses_hn_comments_as_final_summary_fallback(tmp_path):
     assert candidate_payload["summary_context"]["strategy"] == "materials"
     assert public_item["summary"] == f"Summary for {public_item['title']}"
     assert public_item["content_status"] == "fetch_failed"
-    assert "原文抓取失败；摘要依据其余可用材料" in result.brief_path.read_text(
-        encoding="utf-8"
-    )
+    assert public_item["generation_info"]["materials"]["webpage"]["status"] == "failed"
+    assert public_item["generation_info"]["generation"]["status"] == "success"
     assert model_input["summary_candidates"][0]["summary_basis"] == "hn_comments"
     assert model_input["summary_candidates"][0]["discussion_text"] == discussion
 

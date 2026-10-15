@@ -88,7 +88,7 @@ introduction plus two or three substantive entries. The adapter formats the
 introduction and bullet list without a fixed source prefix; comments remain the
 sole substantive evidence and the question only provides context. The pipeline
 records `hn_comments` usage. `output/render.py` preserves those line breaks in
-Markdown and the existing public `summary` string.
+the public `summary` string.
 
 The backend returns text or raises `InsufficientSummaryMaterial`; the latter is
 a completed semantic decision, not a provider error. No character minimum is used
