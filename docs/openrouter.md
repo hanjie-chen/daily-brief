@@ -47,7 +47,3 @@ OPENROUTER_API_KEY=你的凭据
 2. 网络必须把 `openrouter.ai` 送到实际通过模型调用的出口。已有 OpenAI 域名规则并不自动涵盖 OpenRouter。Mihomo 可用独立 OPENROUTER 组和精确域名规则，公共 `/models` 健康检查只能判断连通性。
 3. 验证通过后合并 main，再修改日常 `.env` 的 provider；不要在旧 main 尚未支持 OpenRouter 时先切换配置。试运行不自动发布，生产 cron 的原定发布行为保持不变。
 4. 回退可将 provider 改回 `gemini`（需要仍有效的 Gemini key）；日常任务下次启动读取配置。不要删除仍被其他服务使用的代理组或 watchdog。
-
-## 维护文档同步建议
-
-根 README 和 API 额度文档由项目所有者维护，本次没有直接改写。建议后续将 README 的“生成简报需 GEMINI_API_KEY”更新为“根据 LLM_PROVIDER 配置 GEMINI_API_KEY 或 OPENROUTER_API_KEY”，发布配置改为 `PUBLISH_URL`、`PUBLISH_TOKEN`，并说明模板只列出常用配置；在额度文档增加 OpenRouter 的按 token 计费、单次运行保护以及月度预算需要独立核对的说明。

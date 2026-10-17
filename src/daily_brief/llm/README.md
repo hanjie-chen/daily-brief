@@ -218,8 +218,7 @@ Configuration and rollout notes are in [docs/openrouter.md](../../../docs/openro
 ## Summary Model Fallback and Quotas
 
 These rules live in `gemini_backend.py`, with daily-quota detection in
-`gemini_api.py`. Quota values and their operational meaning are listed in
-[the API quota guide](../../../docs/api-quotas.md) (Chinese).
+`gemini_api.py`.
 
 Production `GeminiBackend.from_environment()` enables ordered summary fallback
 from `gemini-3.6-flash` to `gemini-3.7-flash` and `gemini-3.8-flash`. A custom

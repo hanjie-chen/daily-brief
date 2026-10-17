@@ -64,8 +64,6 @@
 - `PDF_SERVICES_CLIENT_ID`、`PDF_SERVICES_CLIENT_SECRET`：同时填写后启用 Adobe PDF-to-Markdown；未配置或转换失败时使用本地 PDF 提取。
 - `GITHUB_TOKEN`：用于认证 GitHub API 请求，留空时匿名访问。
 
-各服务的额度说明见 [API 额度文档](./docs/api-quotas.md)。
-
 ### Load Config
 
 Daily Brief 只读取进程环境变量，不会自动加载 `.env`。手动运行前，在项目目录的同一个终端中执行：

@@ -6,7 +6,6 @@
 - Before planning content selection, summary, or retrieval/recovery changes, read `docs/product.md`.
 - For retrieval/recovery changes, read `docs/architecture.md` before editing.
 - Before non-trivial work under `src/daily_brief`, read `src/daily_brief/README.md` and the relevant code and tests.
-- Before running live-API batch experiments, read `docs/api-quotas.md`.
 
 ## Design Principles
 
@@ -16,7 +15,7 @@
 
 ## Documentation
 
-- `README.md`, `docs/product.md`, and `docs/api-quotas.md` are owner-maintained. Do not edit them unless asked; when a change affects or conflicts with them, say so and suggest wording.
+- `README.md` and `docs/product.md` are owner-maintained. Do not edit them unless asked; when a change affects or conflicts with them, say so and suggest wording.
 - Keep `docs/architecture.md` (Chinese) and `src/daily_brief/**/README.md` (English) in sync with the code in the same change. Describe how the system works; do not add product intent.
 
 ## Verification
