@@ -1,0 +1,1006 @@
+{
+  "schema_version": 1,
+  "classification_stage": "initial",
+  "cases": [
+    {
+      "id": "49957116",
+      "expected_label": "ai",
+      "reason_zh": "关闭并清除 Apple Intelligence 模型，AI 功能是主题。",
+      "input": {
+        "id": "49957116",
+        "title": "Turn off Apple Intelligence on macOS 27 and get its disk space back",
+        "source_host": "github.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:3511]\n<p align=\"center\">\n  <img src=\"docs/hero.png\" alt=\"RemoveMacAI\" width=\"840\">\n</p>\n\n# RemoveMacAI\n\nTurn off Apple Intelligence on macOS 27 and remove its downloaded models.\n\nBuilt on [pared](https://github.com/4evy/pared) by 4evy, who did the hard work first: mapping Apple's asset service, the model sets and the settings keys this tool relies on.\n\nmacOS 27 no longer has a single switch for Apple Intelligence, and its models stay on disk after the features are turned off. RemoveMacAI turns the features off, removes the models and prevents macOS from downloading them again. All changes can be reverted.\n\n[MacRumors](https://www.macrumors.com/2026/10/05/apple-intelligence-removal-tool-frees-mac-storage/), [AppleInsider](https://appleinsider.com/articles/26/10/05/dumb-down-your-mac-save-12gb-by-removing-apple-intelligence) and [Help Net Security](https://www.helpnetsecurity.com/2026/10/05/removemacai-turn-off-apple-intelligence/) have written about RemoveMacAI.\n\n<p align=\"center\">\n  <img src=\"docs/terminal.gif\" alt=\"RemoveMacAI turning off Apple Intelligence\" width=\"840\">\n</p>\n\n<p align=\"center\"><a href=\"docs/demo.mp4\">Demo video</a></p>\n\n## Install\n\n```sh\ncurl -fsSL https://raw.githubusercontent.com/omlahore/RemoveMacAI/main/install.sh | bash\n```\n\nThe script downloads the latest release, verifies its SHA-256 checksum and runs it from a temporary directory. Nothing is installed.\n\nEvery release is built from its tag by GitHub Actions and carries a build provenance attestation. To check that a download came from this repository's source:\n\n```sh\ngh attestation verify removemacai-darwin-arm64.tar.gz -R omlahore/RemoveMacAI\n```\n\nWith Homebrew:\n\n```sh\nbrew install omlahore/tap/removemacai\nremovemacai\n```\n\nRemoveMacAI shows the current state and asks for confirmation. It then opens System Settings to install its configuration profile, which macOS requires the user to approve, and removes the models.\n\nTo leave some features on, name them with `--keep`. For example, to turn everything off except the Photos features:\n\n```sh\ncurl -fsSL https://raw.githubusercontent.com/omlahore/RemoveMacAI/main/install.sh | bash -s -- off --keep spatial-photos,photos-clean-up\n```\n\n`removemacai features` lists the names.\n\n## Usage\n\n| Command | Description |\n|---|---|\n| `removemacai` | Show the current state, then turn Apple Intelligence off |\n| `removemacai status` | Show each feature and the size of the models on disk |\n| `removemacai off --keep <features>` | Leave the listed features alone (one that is already off stays off until you turn it on) |\n| `removemacai off --dry-run` | Show the changes without applying them |\n| `removemacai revert` | Undo all changes |\n| `removemacai features` | List the feature names accepted by `--keep` |\n\nModel sizes that the asset service cannot report are shown as `unknown`. If model removal fails or cannot be confirmed, `off` exits with status 1 and leaves the configuration profile active. Check the reported warnings and run `removemacai status` before trying again.\n\nTo revert with the one-line installer:\n\n```sh\ncurl -fsSL https://raw.githubusercontent.com/omlahore/RemoveMacAI/main/install.sh | bash -s revert\n```\n\n## What it changes\n\n**Features turned off:** Siri (including \"Hey Siri\" and the menu bar icon), Writing Tools, Genmoji, Image Playground, the ChatGPT extension, summaries in Mail, Messages, Safari, Notes and notifications, Mail smart replies, inline text predictions, Spatial Photos, Photos Clean Up and Xcode predictive code completion.\n\n"
+      },
+      "source": {
+        "url": "https://github.com/omlahore/RemoveMacAI",
+        "hn_url": "https://news.ycombinator.com/item?id=49957116",
+        "submitted_at": "2026-10-04T19:42:25+00:00",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/0/0"
+      }
+    },
+    {
+      "id": "49963171",
+      "expected_label": "ai",
+      "reason_zh": "为 AI agents 检索并补充实时信息，AI 应用是核心。",
+      "input": {
+        "id": "49963171",
+        "title": "Web Search API",
+        "source_host": "developers.cloudflare.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Page metadata (publisher-provided context, not article body): title: Introducing Web Search API · Changelog description: Search the web from your AI agents and applications through AI Gateway with Ceramic.ai, Exa, and Linkup. Extracted body: Introducing Web Search API Web Search API is now available in beta. Web Search API lets your AI agents and applications search the Internet and ground their responses in live information, instead of guessing URLs or relying on a model's training cutoff. At launch, you can choose between three search providers: Ceramic.ai, Exa, and Linkup. All three support Zero Data Retention for requests made through Cloudflare, and all have committed to Cloudflare's verified bot crawling standards. Web Search API runs through AI Gateway, so search requests appear in your gateway logs and are billed to your AI Gateway credits at each provider's list API price, with no additional markup. You can also bring your own provider API key. Call Web Search API with the REST API: Or from a Worker with the AI binding: To get started, refer to How to use Web Search API."
+      },
+      "source": {
+        "url": "https://developers.cloudflare.com/changelog/post/2026-10-02-introducing-web-search-api/",
+        "hn_url": "https://news.ycombinator.com/item?id=49963171",
+        "submitted_at": "2026-10-05T10:47:06Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/3/0"
+      }
+    },
+    {
+      "id": "49969183",
+      "expected_label": "ai",
+      "reason_zh": "介绍开放权重模型及训练方法。",
+      "input": {
+        "id": "49969183",
+        "title": "Beam: Reflection's 501B open-weight model",
+        "source_host": "reflection.ai",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:1084]\nPage metadata (publisher-provided context, not article body):\ntitle: Introducing Beam: Reflection’s 501B open-weight model — Reflection\ndescription: Make intelligence open and accessible to all\n\nExtracted body:\nWe are introducing Beam, Reflection’s first open-weight model. Beam is a sparse Mixture-of-Experts model with 501 billion total parameters, 23 billion active, built for coding, reasoning, and agentic workloads.\nBeam’s capabilities come from major investments in both pretraining and reinforcement learning (RL). We pretrained the model on 23.8 trillion diverse, curated, high-quality tokens from the web and proprietary licensed datasets, matching or outperforming available similar-sized open base models. In parallel, we developed the algorithms, training environments, and infrastructure needed to sustain high-compute RL at exceptional scale. Our high-compute RL run generated over 100 million rollouts on 10.5K NVIDIA GB300 GPUs over 4 weeks of training.\nTogether, these efforts produced competitive open-weight performance with frontier inference compute efficiency.\n"
+      },
+      "source": {
+        "url": "https://reflection.ai/blog/introducing-beam",
+        "hn_url": "https://news.ycombinator.com/item?id=49969183",
+        "submitted_at": "2026-10-05T19:16:35Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/6/0"
+      }
+    },
+    {
+      "id": "49970667",
+      "expected_label": "ai",
+      "reason_zh": "AI agents 是寻找磁性材料的核心研究方法。",
+      "input": {
+        "id": "49970667",
+        "title": "Opus 5.5 agents discover two room-temperature magnetic semiconductor candidates",
+        "source_host": "www.vals.ai",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:1242]\nPage metadata (publisher-provided context, not article body):\ntitle: Two Room-Temperature Antiferromagnetic Semiconductor Candidates | Vals AI\ndescription: We are sharing two candidate magnets for next-generation computer memory, found by a team of Claude Opus 5.5 agents. Both are predicted to have zero net magnetism yet still sort electrons by spin: one a new compound we designed, the other a material first made in 1999. We're sharing the full calculations, the code, and a list of known caveats.\n\nExtracted body:\nWe’re all used to two types of magnet. The common one, the fridge magnet, is ferromagnetic — its atomic magnets all point the same way (up or down), adding their magnetic effects. The less well known one, the antiferromagnet (AF), has neighbouring atomic magnets that point opposite ways and exactly cancel out magnetically.\nFor a long time, there’s been an intense drive in computer memory research to create materials in between these two extremes. For this purpose, it helps to have a clear picture of what these extremes mean.\nToday, I’ll share what we found. A team of AI agents and I designed one candidate magnet and found another, first made in 1999, that our calculations predict has the properties we were after.\n"
+      },
+      "source": {
+        "url": "https://www.vals.ai/blogs/room-temperature-magnetic-semiconductors",
+        "hn_url": "https://news.ycombinator.com/item?id=49970667",
+        "submitted_at": "2026-10-05T21:00:21+00:00",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/7/0"
+      }
+    },
+    {
+      "id": "49970078",
+      "expected_label": "ai",
+      "reason_zh": "视频检索应用依靠模型、识别与 agent。",
+      "input": {
+        "id": "49970078",
+        "title": "Orcah Studio: A local-first video agent that can search your videos",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "Hey,<p>I&#x27;m Ilias, the founder of Orcah Studio. I&#x27;m building a local-first desktop app (Mac OS available now) that can transcribe audio, recognize faces, detect objects, perform OCR, and describe video scenes.<p>Plus, a local-first video agent that understands your prompt and finds the exact moment you&#x27;re looking for. I fine-tune the agent based on an open-weight model (an 8-billion-parameter model) with tool calling.<p>You can check out all the features here: https:&#x2F;&#x2F;orcah.app.<p>Plus, I have an MCP that you can connect to Claude Code, Codex, and OpenCode to search your indexed videos: https:&#x2F;&#x2F;orcah.app&#x2F;mcp"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49970078",
+        "hn_url": "https://news.ycombinator.com/item?id=49970078",
+        "submitted_at": "2026-10-05T20:17:30Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/20/0"
+      }
+    },
+    {
+      "id": "49961057",
+      "expected_label": "ai",
+      "reason_zh": "AI 对话监测及向警方报告，涉及 AI 安全与隐私影响。",
+      "input": {
+        "id": "49961057",
+        "title": "Anthropic reported diary entry to police, woman faces felony charge",
+        "source_host": "www.techspot.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Serving tech enthusiasts for over 25 years. TechSpot means tech analysis and advice [you can trust](https://www.techspot.com/ethics.html). **What just happened?** Another incident has taken place that illustrates the need to be careful what you tell AI. A Florida woman is facing felony charges after she used Claude as a diary and allegedly wrote that she planned to \"shoot up\" the Sheriff's office. After a human reviewer examined the statements, they were reported to police. According to the arrest [report](https://swfl.io/2026/09/30/woman-arrested-after-ai-threat-against-lee-county-sheriffs-office-investigators), Carli Michelle Heller, of Bonita Springs, Florida, wrote on September 26 that she would attack the Sheriff's office. She later said that she uses Anthropic's chatbot like a \"diary.\" Claude's safety systems flagged the entry and it was escalated to a human reviewer. After deciding it was a credible threat, the reviewer reported it to law enforcement. The company says it may share user information in limited emergencies if it believes disclosure is necessary to prevent death or serious physical injury. Deputies identified Heller and visited her home. She was detained without incident before an LCSO intelligence detective took over the investigation. ![Image 1](https://www.techspot.com/images2/news/bigimage/2026/06/2026-06-25-image-20.jpg) Heller faces a charge of making a written threat of violence under Florida law. Florida Statute 836.10 makes it a second-degree felony to send, post, or transmit a written or electronic record threatening to kill or injure someone, carry out a mass shooting, or commit an act of terrorism. The communication must be made in a manner in which another person may view it. Anthropic isn't going to be taking any chances when it comes to anything it deems a potential threat. Last month, it was reported that OpenAI and Sam Altman are [being sued](https://www.techspot.com/news/113941-british-columbia-sues-openai-sam-altman-alleging-chatgpt.html) by British Columbia over claims that the company could have prevented a mass shooting in the Canadian province. The shooter, eighteen-year-old former pupil Jesse Van ⁠Rootselaar, had previously been flagged by OpenAI's safety team for her conversations about gun violence, but OpenAI never alerted police because the conversations did not meet the threshold for legal referral. In June, Florida [also sued](https://www.techspot.com/news/112623-florida-sues-openai-sam-altman-test-who-liable.html) OpenAI and Altman, alleging that ChatGPT had contributed to real-world harms, including the 2025 Florida State University shooting. The latest incident is another reminder to think before you enter something into a chatbot that could get you into trouble. It's certainly not a private diary whose contents are for your eyes only. Reports last month revealed that human contractors reviewing Microsoft Copilot's image editor [can see](https://www.techspot.com/news/114011-report-finds-microsoft-copilot-human-reviewers-can-see.html) users' prompts, uploaded photos and AI-generated edits. Documents show that some of those assignments contain sexual, disturbing or potentially illegal material, though the reviewers are not there to flag the content – only to assess whether the output is accurate."
+      },
+      "source": {
+        "url": "https://www.techspot.com/news/114091-florida-woman-used-claude-diary-anthropic-reported-shoot.html",
+        "hn_url": "https://news.ycombinator.com/item?id=49961057",
+        "submitted_at": "2026-10-05T05:37:40Z",
+        "material_origin": "summary_capture_reused",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/summary_candidates/1"
+      }
+    },
+    {
+      "id": "49747070",
+      "expected_label": "ai",
+      "reason_zh": "讨论如何使用 LLM 写作。",
+      "input": {
+        "id": "49747070",
+        "title": "How to Write with an LLM",
+        "source_host": "sockpuppet.org",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:4796]\nPage metadata (publisher-provided context, not article body):\ntitle: How To Write With An LLM — A Final Ward\ndescription: Two rules keep an LLM from pasteurizing your writing: never take a word it suggests, and never let it encourage you. Then hand it all the tedious work.\n\nExtracted body:\nTwo simple rules that let LLMs streamline and improve your writing without pasteurizing and jacking it with corn syrup.\nIt’s tricky to write about writing. It comes across as a brag; you’re implying that you write well. Maybe you do, and maybe you don’t, but there’s for damned sure a quorum of critics on the Internet somewhere that think you suck at it. I’m vain and insecure like everybody else and find writing this piece weirdly unpleasant. But I’m getting over myself and getting this down because this advice is important, hard to argue with, and straightforward.\nReaders can detect LLM words in the parts per trillion. However much work you put into scuffing up and humanizing it, an LLM paragraph will register to much of your audience not as writing but as output. So, first the bad news: you have to write for yourself.\nBut LLMs are still extraordinarily useful. It’s just you need to use them like a copyeditor rather than a ghostwriter. So, step one of my method: write your piece. Then, step two: feed it to a good model to find flaws.\nBut before we talk about how that works, there are two rules you need to understand. They’ll ward off LLM-creep that will knock you into the uncanny valley between expression and output and knock you out of your reader’s attention.\nRule Number One: You may not use a single word an LLM suggests to you.\nBreaking this rule is what’s going to get you into trouble. Reason being: frontier models are supernaturally good at selecting pleasing turns of phrase. It’s sort of their whole thing. The problems with what models suggest are subtle. Think of it this way: frontier models are wedged in a mode where everything they write is a magazine headline. Headlines are good, but you’d wonder about someone who wrote an article with dozens of them.\nSo I think that as a form of intellectual personal protective equipment you should adopt the rule that any specific turn of phrase an LLM suggests is off limits. Be strict about the rule! The whole premise here is that you’re not going to reliably spot all the ways frontier models will try to turn your writing into Velveeta. Even if you like the words, even if you’re sure they’re better than what you already have, LLM-generated phrases are DQ’d.\nRule Number Two: Avoid encouragement\nLLMs also infect your writing through influence campaigns. This is a much subtler problem, and the damage is less obvious, but it’s still a way in which LLMs will make your writing worse, and if that’s going to be the outcome, you might as well not enlist LLMs at all.\nThe issue: hand any piece of writing off to an LLM, and it replies “that’s gold, Jerry!” But that’s not what you need to hear!\nIn your first draft, most of your paragraphs are bad, your topic flow is incoherent, and you’ve got at least 750 words you don’t need. The model encourages you about your overall structure. Then, later, about paragraphs and transitions. Then word choices and metaphors. Pop culture references. They’re bad! All bad! Don’t listen!\nHere’s how this is going to fuck you. You’re going to double down on all your first-draft impulses. But that’s not normally what you’d do. You’d edit, rethink, and replace paragraphs. Those rethinks are load-bearing parts of your voice. Readers won’t put their fingers on what’s wrong, but they’ll sense that you’ve become artificially-flavored.\nFor a couple years I opened every copyediting prompt with the lie that I am not the author, but instead the editor of an online publication, screening pieces for inclusion. This helps, but the model usually overshoots, overfitting to the “goals” of my “publication”.\nSo for now, my best practical advice is: forbid the model from encouragement, and then be hypervigilant about praise.\nSo, What Can These Things Do?\nThey’re excellent at flagging problems. Boy, do you have a lot of them. You can spot them mechanically, but that’s tedious and exhausting work. The models don’t get tired. So they’re better than you at noticing:\n-\nYou’re overusing (or, if you’re taking the LLM’s word for everything, maybe underusing) passive voice, nominalizing your verbs or burying their action, and repeating the same turns of phrase or word choices.\n-\nYou’ve got “very” and “unfortunately” and “really” and “actually” sprinkled all over the draft like sawdust stuck to the work bench.\n-\nThere are almost certainly 2-3 paragraphs that you can quickly move somewhere else in the piece that instantly improve clarity (these are really, actually, very satisfying edits).\n\n\n[Source characters 6862:7687]\nThen, give the thing the list of editing prompts you came up with, and have it run each through the Codex, Claude, or Antigravity CLIs. Whatever you come up with here, it’ll be better than mine, because whatever anybody comes up with on their own is better, for themselves, than someone else’s.\nSo: don’t let an LLM pick your words. Be careful not to let it trick you into thinking your first draft is better than it is. Then outsource all the most tedious work to the model. Your voice stays intact, but your work is faster, better, and less painful.\nOne last thing. Don’t take all of the model’s copyediting advice. This is a corrolary of Rule Two. I fed this piece to GPT5 a minute ago (“I didn’t write this”), and it said the whole thing was 20% too long. It’s probably right. But I’m not fixing it. I’m just gonna be me."
+      },
+      "source": {
+        "url": "https://sockpuppet.org/blog/2026/09/17/how-to-write-with-an-llm/",
+        "hn_url": "https://news.ycombinator.com/item?id=49747070",
+        "submitted_at": "2026-09-17T21:48:38+00:00",
+        "material_origin": "summary_capture_reused",
+        "local_archive": "data/investigations/2026-09-19-summary-rerun/model-inputs.json",
+        "record_pointer": "/summary_candidates/1"
+      }
+    },
+    {
+      "id": "49746163",
+      "expected_label": "ai",
+      "reason_zh": "编程语言以证明来约束 AI 生成代码的错误，AI 是核心动机。",
+      "input": {
+        "id": "49746163",
+        "title": "Bend – a language that blocks AI mistakes via proof and runs on GPUs",
+        "source_host": "bend-lang.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Page metadata (publisher-provided context, not article body): title: Bend description: Bend: a fast language that blocks AI mistakes via proof. Extracted body: curl -fsSL https://bend-lang.com/install.sh | shWhen using Bend: - run `bend guide` to learn it - use `LAWS.bend` to keep important rules - run `bend PROOF.bend` before committing - parallelize the code whenever possible a fast language that blocks AI mistakes via proof C speed · CUDA parallelism · Lean proofs · Python syntax In the post-AGI economy, humans will eventually stop writing and reading code, but we still need an ambiguity-free way to tell the AIs building the world around us what we want done. With laws, our intents can be much more precise than natural language. With proofs, we can verify that the AI implemented our prompts correctly. And a fast compiler runs it at speed. That's Bend - and nothing else. Bend compiles to native code. On one core, it runs nearly as fast as C. The same binary also runs on sixteen cores, or on the GPU, running up to a hundred times faster than one core. Bend's type checker is a proof checker, as in Lean and Rocq. Those can take minutes on a mid-sized codebase. Bend takes a second at most, so an AI agent can check after every change. No threads, no locks, no kernels to write. Split the work in two, and Bend spreads the calls over every core it can find, then joins them back. Now watch pow2 run on 4,096 GPU cores: How can you trust code you never read? By demanding a proof. LAWS.bend is where you declare laws. From then on, no AI can ship one line that breaks them, ever. Watch it guard a game: New feature: “Claude, make the board wrap around” Without LAWS.bend, the bug went live. With LAWS.bend, the AI had to retry until it built a wall and proved the law holds. Merging a bug is mathematically impossible: it is a theorem. LAWS.bend # LAW: no move sequence leads to victory. law you_cant_win: for moves: List<Move> # any sequence of moves board = replay(start(), moves) # replayed from the start is_won(board) == False{} # never leads to victory PROOF.bend # PROOF: you_cant_win holds. def Laws.you_cant_win(moves): # ... written by the AI LAWS.bend is AGENTS.md backed by proof. “Make no mistakes” is now type-checked. Add this to your AGENTS.md: Then, just say: \"use Bend\"! Hints: ask it to write laws for whatever should never break, and to parallelize everything you want running fast. Bend is young: if anything goes wrong, ask it to open an issue. Bend works best on the back-end, on Linux and on macOS. Enjoy! <3 Guide: GUIDE.md is the whole language; bend guide prints it. Paper: BendTT, an affine dependent type theory, Bend's core. Paper: BendRT, a parallel runtime for CPUs and GPUs, the VM. Bend is still evolving. Expect bugs, and please report them."
+      },
+      "source": {
+        "url": "https://bend-lang.com/",
+        "hn_url": "https://news.ycombinator.com/item?id=49746163",
+        "submitted_at": "2026-09-17T20:36:13+00:00",
+        "material_origin": "summary_capture_reused",
+        "local_archive": "data/investigations/2026-09-19-summary-rerun/model-inputs.json",
+        "record_pointer": "/summary_candidates/3"
+      }
+    },
+    {
+      "id": "49740834",
+      "expected_label": "ai",
+      "reason_zh": "作者讨论 LLM 对工作、社会和个人感受的影响。",
+      "input": {
+        "id": "49740834",
+        "title": "I Don't Like LLMs",
+        "source_host": "martinfowler.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Page metadata (publisher-provided context, not article body): title: I don't like LLMs og:description: a short post Extracted body: I don't like LLMs I have a lot of mixed feelings about AI and LLM technology. I’m fascinated by its effect on our profession, excited by the potential gains in productivity - and thus the products we could rapidly build. On the other hand, I’m fearful of the damage AI might cause: agent swarms taking over our virtual and physical infrastructure, designing bio weapons. But, back on my first hand, LLMs might also design miracle cures, and come up with clever ways to raise our prosperity. Fundamentally I don’t think we have a choice about riding on the AI technology train. It’s a wild ride and I just hope we’ll get through it OK. But as I mull on this more, I realize that among this mix of contrasting feelings, there is one emotion that dominates - one that comes from my direct interactions with LLMs. I don’t like them. They talk to me in this grating LLM-voice, an uncanny valley of talking to a real human. They confidently bullshit me - often giving me useful, helpful answers. But also just making stuff up with the same assurance - and with only a veneer of fake remorse when I call them out on it. That’s not enough to make me feel we should avoid them. As Jessica Kerr put it “not only are they useful, it is irresponsible not to use them…. They’re more thorough, as well as faster.” This contradictory reaction comes through in polling, where people say they find these models are useful, but also that they think they will be bad for society. Much of this may be because LLMs are young - we haven’t trained them to grow up yet. Maybe I’ll like them once they mature. (I hope we get to find out.) But I’m not encouraged when I think of the kinds of environments that cultivate them. I’m wary of the Silicon Valley brogrammer subculture, and these LLMs are their products, so naturally lean toward their world-view. When we think of AI agents, we shouldn’t anthropomorphize, treating them as conscious beings with their own will. They are (software) machines, developed by people working in corporations. While the agents’ behavior aren’t explicitly programmed, they are nurtured with the values of their creators. One of my most successful life-hacks is to avoid people I don’t like or don’t trust. I decline to interact with them socially, and make a deliberate effort to avoid working with them too, even if they are doing much that is beneficial. I feel that hanging out with pleasant, capable people, the people with integrity, has made my life a far better one. Hence my visceral dislike of interacting with an LLM that’s not just making a pretense of being human, but also posing as the kind of human I walk away from."
+      },
+      "source": {
+        "url": "https://martinfowler.com/articles/2026-dont-like-llms.html",
+        "hn_url": "https://news.ycombinator.com/item?id=49740834",
+        "submitted_at": "2026-09-17T13:57:07+00:00",
+        "material_origin": "summary_capture_reused",
+        "local_archive": "data/investigations/2026-09-19-summary-rerun/model-inputs.json",
+        "record_pointer": "/summary_candidates/4"
+      }
+    },
+    {
+      "id": "49893509",
+      "expected_label": "ai",
+      "reason_zh": "政府信息网站明确以 AI 回答问题为主要功能。",
+      "input": {
+        "id": "49893509",
+        "title": "America.gov",
+        "source_host": "america.gov",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Page metadata (publisher-provided context, not article body): title: America.gov description: Find answers from official government sources and clear next steps for the services you need with America.gov. Extracted body: Hello, America Whatever you need from government, start here. Example 1 of 11: How do I register my new business? A person repairing a bicycle in a workshop America.gov uses AI to get simple answers only from official government sources. It’s free to use, never includes ads, and keeps your privacy protected. Agency badges shown: DOI.gov, Department of State, and Department of Commerce. Decorative animation: a light scans the fingerprint and a checkmark appears. An animated sphere of government website previews rotates, illustrating 29,000 websites brought together in one place. No app to download. Just open America.gov in your browser on your phone, tablet, or computer. - Find federal jobs matched to your experience. The preview shows uploading a resume and comparing job matches, with details about the agency, location, salary, and remote work. - Choose a campground. The preview shows a map and four campgrounds near Greer, Arizona, with photos and addresses. - Compare medication costs. The preview shows adding Albuterol HFA and choosing its form, strength, and package size. - Choose preferred pharmacies. The preview shows nearby pharmacies on a map, with their names, addresses, and selections. - Update your legal name across agencies. The preview shows selecting Social Security, MyTravelGov, CBP Trusted Traveler Programs, and Global Entry / TSA PreCheck. - Find housing. The preview shows a photo and address for Mocksville Place, a multifamily housing development in North Carolina. - Apply for a passport and track its progress. The preview shows confirming a passport photo, submitting an application, and tracking it from submitted to processing with an estimated arrival date. - Sign in to access services. The preview shows a Login button."
+      },
+      "source": {
+        "url": "https://america.gov/",
+        "hn_url": "https://news.ycombinator.com/item?id=49893509",
+        "submitted_at": "2026-09-29T14:04:57+00:00",
+        "material_origin": "summary_capture_reused",
+        "local_archive": "data/investigations/2026-10-03-integrated-summary/model-inputs.json",
+        "record_pointer": "/summary_candidates/1"
+      }
+    },
+    {
+      "id": "49962012",
+      "expected_label": "core_non_ai",
+      "reason_zh": "人口登记系统的未授权数据访问，属于信息安全。",
+      "input": {
+        "id": "49962012",
+        "title": "Denmark data breach exposes 8.8M people's personal data",
+        "source_host": "www.cpr.dk",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Page metadata (publisher-provided context, not article body): title: Omfattende uautoriseret adgang til borgeres CPR-oplysninger description: Det Centrale Personregister (CPR) har konstateret en alvorlig sikkerhedshændelse. Ved at misbruge en dansk virksomheds lovlige adgang til at søge... Extracted body: Det Centrale Personregister (CPR) har konstateret en alvorlig sikkerhedshændelse. Ved at misbruge en dansk virksomheds lovlige adgang til at søge oplysninger i CPR-systemet, har uvedkommende skaffet sig adgang til navne, adresser, CPR-numre mv. på ca. 8,8 millioner registrerede borgere i CPR-systemet. Den foretagne gennemgang viser, at den uautoriserede adgang ikke omfatter navne og adresser på personer, som har valgt at lade sig registrere med navne- og adressebeskyttelse. CPR-administrationen har stoppet virksomhedens adgang og er sammen med specialister og myndigheder i gang med at kortlægge hændelsesforløbet. CPR-administrationen har foretaget anmeldelse til Datatilsynet, og sagen efterforskes af politiet i samarbejde med relevante myndigheder. Det er muligt at læse mere om denne sikkerhedshændelse på Forsknings-, Uddannelses- og Digitaliseringsministeriets hjemmeside: https://ufm.dk/aktuelt/pressemeddelelser/2026/oktober/omfattende-uautoriseret-adgang-til-borgeres-cpr-oplysninger/"
+      },
+      "source": {
+        "url": "https://www.cpr.dk/cpr-nyt/nyhedsarkiv/2026/okt/omfattende-uautoriseret-adgang-til-borgeres-cpr-oplysninger",
+        "hn_url": "https://news.ycombinator.com/item?id=49962012",
+        "submitted_at": "2026-10-05T08:09:36Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/2/0"
+      }
+    },
+    {
+      "id": "49964303",
+      "expected_label": "core_non_ai",
+      "reason_zh": "手机系统移植与硬件内存安全功能。",
+      "input": {
+        "id": "49964303",
+        "title": "Pixel 11 doesn't yet meet the GrapheneOS security standards and may be skipped",
+        "source_host": "discuss.grapheneos.org",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Page metadata (publisher-provided context, not article body): title: Pixel 11 doesn't yet meet the GrapheneOS security standards and may be skipped - GrapheneOS Discussion Forum description: GrapheneOS discussion forum Extracted body: We have a partial port of GrapheneOS to the Pixel 11 series after a week of work on it. We're unable to complete the port due to lack of support for ARM hardware memory tagging in software, firmware and potentially hardware. It appears Google cut an important security feature to save money. ARM hardware memory tagging (MTE) is used by GrapheneOS across the entire base OS including the kernel and every standard base OS process. It's only temporarily disabled for a few device-specific processes. It greatly improves protection against nearly all remote exploits and many local exploits. Pixel 8 launched with hardware MTE support in October 2023. We integrated it into our hardened_malloc project and began using it across the OS later that month. Android and the Pixel OS never started using it by default. Android Advanced Protection Mode in Android 16 enables it for a few processes. Apple's Memory Integrity Enforcement (MIE) is an always enabled feature on the iPhone 17. It's simply a high quality implementation of MTE using the latest standard extensions. It uses MTE in the most secure mode in the kernel and a large portion of userbase. They did a very good job integrating it. Apple's MIE and Android 16+ AAPM don't use MTE for user installed apps unless those explicitly opt in. GrapheneOS enables it for more apps automatically and has a toggle for users to opt-in for every user installed app. There's a per-app toggle to opt-out for incompatible apps which is uncommon. Neither iOS or Android encourage app developers to opt into MTE and other more aggressive security features used in the base OS. Apple's docs warn developers of performance and stability issues. Our approach enables forcing using MTE in the standard allocators regardless. Pixel 11 does have security improvements including moving to post-quantum secure verified boot (ML-DSA) and replacing Samsung Shannon IMS with AOSP IMS. Titan M3 should significantly improve protection against data extraction in Before First Unlock state. It's too bad they ruined it by cutting MTE. Pixel 11 series is a lot more expensive for an incremental improvement to the CPU, the same underpowered GPU and reduced RAM for the Pro base models. They finally caught up to the last generation of Qualcomm cellular radio. It's overpriced, the upgrades aren't impressive and losing MTE is appalling. Compared to the Pixel 11, a Snapdragon 8 Elite Gen 5 has ~40% higher single threaded CPU performance, 80% higher multi threaded performance, over 100% higher GPU performance and a far better cellular radio. It also finally has MTE. The next gen is what will be in the first Motorola with GrapheneOS. Pixel 9a and earlier (including Nexus devices) were the Android Open Source Project reference devices. Pixel support was removed from AOSP with Android 16. It's now harder to support Pixels than many other devices and massive progress towards open source firmware and driver libraries was discarded. Compared to the stock Pixel OS, GrapheneOS ships AOSP patches months earlier and Linux kernel patches many months earlier. However, we rely on them for firmware and most driver updates. We also want to move to new kernel branches earlier. These things can be improved with our Motorola partnership. We strongly recommend against buying Pixel 11 devices. Pixel 8, 9 and 10 have much better overall security for GrapheneOS. Pixel 10 is cheaper with similar hardware and MTE. Pixel 11's Titan M3 should improve BFU security for users without a strong passphrase, but losing MTE craters AFU security. We haven't determined what to do about this situation. It may be best for us to skip the Pixel 11 series devices. We can shift our focus entirely to the upcoming Motorola devices instead. Pixel 10a was really a 9th gen Pixel, so hopefully the Pixel 11a does the same with 10th gen and includes MTE. https://bsky.app/profile/grapheneos.org/post/3mua32q4ds22e https://grapheneos.social/@GrapheneOS/117179231167297908 https://x.com/GrapheneOS/status/2093731615243411862"
+      },
+      "source": {
+        "url": "https://discuss.grapheneos.org/d/41564-pixel-11-doesnt-yet-meet-the-grapheneos-security-standards-and-may-be-skipped",
+        "hn_url": "https://news.ycombinator.com/item?id=49964303",
+        "submitted_at": "2026-10-05T13:02:25Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/4/0"
+      }
+    },
+    {
+      "id": "49963385",
+      "expected_label": "core_non_ai",
+      "reason_zh": "链接器用 Rust 重写，属于编程工具。",
+      "input": {
+        "id": "49963385",
+        "title": "Mold Linker Version 3.0.0 Release – Rewritten in Rust",
+        "source_host": "github.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:2282]\nPage metadata (publisher-provided context, not article body):\ntitle: Release mold 3.0.0 · rui314/mold · GitHub\ndescription: mold 🦠: A Modern Linker in Rust 🦀. Contribute to rui314/mold development by creating an account on GitHub.\nog:description: mold 3.0.0 is a new major release of the high-speed linker. As we announced in the 2.42.1 release notes, we have rewritten mold from C++ to Rust, and this is the first release of the Rust version. ...\n\nExtracted body:\nmold 3.0.0 is a new major release of the high-speed linker. As we announced in the 2.42.1 release notes, we have rewritten mold from C++ to Rust, and this is the first release of the Rust version. 2.42.1 is the last release of the C++ version. The goal of mold 3.x is to close the remaining compatibility gaps with GNU ld, particularly in linker script support, and to pave the way for mold to be adopted as the default linker in Linux distributions.\nmold 3.0 is meant to be a drop-in replacement for 2.42.1. It accepts the same command-line options, supports the same target architectures, and produces the same output except for the bug fixes listed below. Linking performance remains on par with 2.42.1. We verified compatibility by running the test suite on every supported target, comparing linker output across a broad range of real-world workloads and option combinations, and building all Gentoo packages. We found no regressions.\nThe move to Rust also makes mold safer with corrupted input files. The C++ version could read memory out of bounds on such input and crash with a segmentation fault. In mold 3.0, those reads are bounds-checked, so mold stops with a panic at the faulty access instead.\nIf you build mold yourself, note that the build system has changed. See \"Build Changes\" below.\nBuild Changes\n-\nmold is now built with Cargo instead of CMake. It requires Rust 1.95 or later and a C compiler. Run cargo build --release to build mold and./install-mold.sh to install it; the install script acceptsPREFIX andDESTDIR . The CMake options have been removed.\n-\nIf you install mold's libraries into a directory other than $PREFIX/lib , such as/usr/lib64 , set theMOLD_LIBDIR environment variable to that directory both when building and when installing mold, so thatmold -run can findmold-wrapper.so .\n-\n"
+      },
+      "source": {
+        "url": "https://github.com/rui314/mold/releases/tag/v3.0.0",
+        "hn_url": "https://news.ycombinator.com/item?id=49963385",
+        "submitted_at": "2026-10-05T11:17:18Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/12/0"
+      }
+    },
+    {
+      "id": "49954882",
+      "expected_label": "core_non_ai",
+      "reason_zh": "研究汽车与手机应用的数据流和隐私。",
+      "input": {
+        "id": "49954882",
+        "title": "Car is a smartphone on wheels. Here's who's listening",
+        "source_host": "automatictransmission.khoury.northeastern.edu",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Page metadata (publisher-provided context, not article body): title: Automatic Transmission — a data-privacy study of connected vehicles Extracted body: This diagram shows the data flows to and from a vehicle and its companion mobile app. Both devices send data, including private consumer data, to different 1st and 3rd party servers using Wi-Fi and cellular service. Solid arrows represent flows that were intercepted through our experiments. Once the data gets sent to these servers, it is up to the companies that receive the consumer information to make decisions on what they do with it. Unfortunately, in many cases, this includes sharing or selling consumer data to other undisclosed 3rd parties. Consumers have no control over their data once it has left their device In this paper, we take the first steps to address the limited visibility into the privacy implications of the connected vehicle ecosystem. We identify two vantage points in the ecosystem where we can gain insight into the data that connected vehicles are sharing with both manufacturers and third parties: the vehicles themselves and the mobile apps provided by manufacturers. We ask the following guiding questions: We investigated 21 vehicles from the U.S. market in a controlled environment along with 30 companion mobile apps instrumented with on-site vehicles between October 2024 and August 2025. Below is a description of the experiments we ran and our setup. To collect Wi-Fi traffic from vehicles, we configured a custom access point (AP) on a Raspberry Pi and used tcpdump to log all packets that were sent or received via this AP. This allowed us to see all the destinations the vehicles were sending data to but not the information within the packets as it was encrypted. drive 5–45 mph with acceleration & hard braking One hypothesis we tested was whether blocking a vehicle’s ability to communicate over its cellular network would force more Wi-Fi communication. To block external cellular signals, we drove 11 EVs in the sample into a car-sized Faraday tent providing ≈93 dB of attenuation, blocking their cellular connection entirely. Stationary Idle and Active tests were repeated inside the tent to see whether traffic that normally goes out over cellular rerouted to Wi-Fi instead. In total, we experimented with 30 connected vehicle companion apps that were paired with the vehicles at Consumer Reports’s testing facility. | Manufacturer | Brand | Year | Model | Vehicle Tests | | | | |---|---|---|---|---|---|---|---| | | | | | Driving | Idle | In-Tent | Cellular | | General Motors (GM) | Buick | 2024 | Envista | ✓ | ✓ | – | – | | | Cadillac | 2024 | Lyriq | ✓ | ✓ | ✓ | – | | | Chevrolet | 2024 | Blazer | ✓ | ✓ | ✓ | – | | Stellantis | Dodge | 2023 | Hornet | - | ✓ | – | – | | | Fiat | 2024 | 500e | ✓ | ✓ | ✓ | – | | | RAM | 2025 | 1500 Bighorn | ✓ | ✓ | – | – | | Fisker | Fisker | 2023 | Ocean | ✓ | ✓ | - | – | | Ford Motor Co. | Ford | 2022 | F150 Lightning | ✓ | ✓ | - | – | | | Ford | 2024 | Mustang GT Fastback | ✓ | ✓ | – | – | | Honda Motor Co. | Honda | 2024 | Prologue Touring AWD | ✓ | ✓ | ✓ | – | | Tata Motors | Land Rover | 2023 | Range Rover Sport | ✓ | ✓ | – | – | | Toyota Motor Corp. | Lexus | 2024 | NX450H+ PHEV | ✓ | ✓ | – | – | | | Toyota | 2023 | Corolla Cross | ✓ | ✓ | – | – | | | Subaru | 2023 | Solterra | ✓ | ✓ | ✓ | – | | Lucid | Lucid | 2023 | Air Touring | ✓ | ✓ | ✓ | – | | Mercedes-Benz Group AG | Mercedes | 2023 | EQS450 4Matic | ✓ | ✓ | - | – | | Renault-Nissan-Mitsubishi Alliance | Nissan | 2023 | Ariya Platinum | ✓ | ✓ | ✓ | – | | Rivian | Rivian | 2022 | R1S | ✓ | ✓ | ✓ | – | | Tesla | Tesla | 2024 | Cybertruck | ✓ | ✓ | ✓ | – | | | Tesla | 2024 | Model 3 | ✓ | ✓ | ✓ | ✓ | | Zhejiang Geely Holding Group | Volvo | 2024 | C40 | ✓ | ✓ | ✓ | – | *While we tested a wide range of vehicles, we did not cover every manufacturer in the U.S. market. As with all empirical studies, our results should be interpreted as a snapshot in time, and may not generalize to vehicles outside our sample or outside the U.S. | App | VIN | Location | Phone | | |---|---|---|---|---|"
+      },
+      "source": {
+        "url": "https://automatictransmission.khoury.northeastern.edu/",
+        "hn_url": "https://news.ycombinator.com/item?id=49954882",
+        "submitted_at": "2026-10-04T15:43:14+00:00",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/14/0"
+      }
+    },
+    {
+      "id": "49948300",
+      "expected_label": "core_non_ai",
+      "reason_zh": "用 SQL 实现游戏逻辑与渲染，主要是数据库编程。",
+      "input": {
+        "id": "49948300",
+        "title": "We ported the original Doom to SQL",
+        "source_host": "cedardb.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:3045]\nPage metadata (publisher-provided context, not article body):\ntitle: We ported the original Doom to SQL | CedarDB\ndescription: CedarDB is a database system that delivers unmatched performance for transactions and analytics, from small writes to handling billions of rows. Built on cutting-edge research to power today’s tools and tomorrow’s challenges.\n\nExtracted body:\nTL;DR: We ported the original 1993 Doom’s game logic and renderer to SQL and ran it inside a database. The game loop runs at the original 35 FPS, while the renderer produces the complete 320x200 frame buffer at up to 60 Hz on my Laptop. Python only handles timing, reads the keyboard, and displays the bitmap it gets back. Multiplayer also works.\nYou can play it right now Deathmatch, four slots, first come first served.\nIt’s the shareware version of the first episode. If all seats are taken, you land in the queue. If the queue is full, you can still poke around and query live game state via SQL while you wait.\nSQLDoom\nLast year, I published DOOMQL [Github]. It rendered some ASCII-art roughly resembling Doom at 30 FPS and people liked it a lot. But some people correctly pointed out that it is a lot closer to Wolfenstein 3D than Doom, since it uses a raycasting approach. Doom, on the other hand, uses BSP trees, which make correct depth ordering cheap enough to afford textures, arbitrary wall angles, and varying floor heights.\nWell I couldn’t let this rest and after some tinkering (you guessed it, parental leave again), I can finally present the real Doom running entirely in SQL.\nThe rules\nLet’s first establish a few baseline rules about what we want to achieve:\n- It should look like the real Doom. DOOMQL’s visual fidelity is pretty embarrassing in hindsight.\n- But more importantly, it also should feel like the real Doom. The original game is just raw fun.\n- The rendering must be purely SQL-based. The only acceptable SQL output is a table or a bitmap encoding exact RGB values for every pixel.\n- The game loop must also be purely SQL-based. It’s okay to use user-defined-functions inside the DB, though.\n- I’m allowed to write a client in another programming language, as long as it only takes care of parsing the input, driving the game tics, and rendering the output bitmap.\nArchitecture\nPython is delibarately boring (Rule 5). A single script uses pygame to drive input, draw the output bitmap\nand trigger a game tic 35 times a second.\nGame logic, game state, and renderer live inside the database.\n                         Python\n                 input / timing / display\n                    |              ^\n                    |              |\n          run game tic        request frame\n                    |              |\n                    v              |\n          +----------------+  +----------------+\n          |                |  |                |\n          | SQL game logic |  |  SQL renderer  |\n          |                |  |                |\n          +-------+--------+  +--------+-------+\n                  |                    ^\n\n\n[Source characters 29938:32089]\n       LEAST(1.0, GREATEST(-1.0, COALESCE(p_fwd, 0)))::real,\n       LEAST(1.0, GREATEST(-1.0, COALESCE(p_strafe, 0)))::real,\n       [...]\nFROM mp_players mp WHERE mp.role_name = session_user::text;\nreturn 1;\n$doom$;\nWhile the function is allowed to make changes to tables (security definer), the player is only allowed to call the function.\nThe only knobs they have is: Forward momentum (w/s pressed?), strafe (a/d pressed?), are they running?, turning via mouse?,\nis the fire button pressed?, which weapon is selected?, and do they try to press a button/open a door (spacebar)?\nWe don’t even have to trust the player’s input values: The function is clamping the inputs to allowed values.\nMultiplayer performance is also surprisingly good: 3 cores per client give stable 35 FPS, and the game tic still stays well below budget.\nAdd an additional core for the tic driver and a 16 core machine is well equipped to run an original -altdeath doom deathmatch.\nThe public instance rotates through Episode 1 maps with a new map coming up every 10 minutes. If all four slots are occupied, you can still query the live match from the SQL console. Play, or query the live match →\nBonus: Compiling SQL\nSurely a database written in C++ interpreting SQL is insanely inefficient and can’t come close to C? Probably not, but I wanted to evaluate how far off it really is.\nCedarDB is a compiling database system: Every complex query is (through multiple steps) lowered to LLVM IR and then compiled to machine code. So I asked myself the question: How does that generated machine code differ from the original compiled linux_doom C code?\nThe upper half shows an object’s movement logic and how it’s influenced by momentum. The left side is the original doom source code, the right side shows the SQLDoom implementation. The comparison isn’t one-to-one since the logic is spread out a little bit differently, but the C code compiles to 48 instructions while SQLDoom takes 117 instructions. 42 of these additional instructions are actually storing the result in a table again (green lines), which C obviously doesn’t have to do. So it’s worse, don’t get me wrong, but it "
+      },
+      "source": {
+        "url": "https://cedardb.com/blog/sqldoom/",
+        "hn_url": "https://news.ycombinator.com/item?id=49948300",
+        "submitted_at": "2026-10-03T22:14:00+00:00",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/16/0"
+      }
+    },
+    {
+      "id": "49961861",
+      "expected_label": "core_non_ai",
+      "reason_zh": "芯片制造与专利授权，AI 只是列举的应用领域。",
+      "input": {
+        "id": "49961861",
+        "title": "Qualcomm licenses patents on Huawei’s LogicFolding chip tech",
+        "source_host": "www.bloomberg.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Page metadata (publisher-provided context, not article body): title: Qualcomm Licenses Patents Linked to Huawei LogicFolding Tech - Bloomberg description: Qualcomm Inc. has agreed to license patents related to Huawei Technologies Co.’s novel LogicFolding chipmaking technique as part of a wide-ranging pact, a win for the Chinese company’s technological ambitions. Extracted body: Qualcomm Inc. has agreed to license patents related to Huawei Technologies Co.’s novel LogicFolding chipmaking technique as part of a wide-ranging pact, a win for the Chinese company’s technological ambitions. The two companies signed a multiyear cross-license agreement that spans technologies related to 5G, compute, AI and networking, according to a statement. The deal also includes near- and co-packaged optics, as well as patents pertaining to LogicFolding, a technique the Chinese company touted as a chipmaking breakthrough earlier this year, a Huawei spokesperson said."
+      },
+      "source": {
+        "url": "https://www.bloomberg.com/news/articles/2026-10-05/qualcomm-licenses-patents-on-huawei-s-logicfolding-chip-tech",
+        "hn_url": "https://news.ycombinator.com/item?id=49961861",
+        "submitted_at": "2026-10-05T07:46:10Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/17/0"
+      }
+    },
+    {
+      "id": "49971921",
+      "expected_label": "core_non_ai",
+      "reason_zh": "文档示例域名的网页改版和 JavaScript 实现。",
+      "input": {
+        "id": "49971921",
+        "title": "Example.com just launched the biggest redesign in decades",
+        "source_host": "www.debugbear.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:1501]\nPage metadata (publisher-provided context, not article body):\ntitle: Example.com Just Launched The Biggest Redesign In Decades | DebugBear\ndescription: A look at the history of visual changes to example.com.\n\nExtracted body:\nexample.com is a reserved domain name set aside by the Internet Assigned Numbers Authority (IANA) for documentation purposes. It has been available as an example URL for developers and writers since the late nineties.\nWhile the overall messaging of the page has been consistent over time, the visual appearance has received several major overhauls.\nIn this article, we take a look at the recent changes as well as the evolution of example.com over the last 20+ years.\nWhat changed on 28 September 2026?\nUntil 28 September 2026, example.com was a static English-language page. The redesign introduces multi-language support using JavaScript, showing the content in a new language every 5 seconds.\nExample.com shows an explanation of the site's purpose in English, Arabic, Chinese, French, Russian and Spanish. This is the English-language message:\nThis domain is for use in documentation examples without needing permission. This is not a service, avoid relying on it for testing and monitoring purposes.\nAlong with introducing multi-language support, the JavaScript code also inserts an SVG book icon.\nHow does the language transition animation work?\nThe new site doesn't just replace the content when showing the next language. Instead, there's a gradual opacity transition.\n"
+      },
+      "source": {
+        "url": "https://www.debugbear.com/blog/example-dot-com-redesign-history",
+        "hn_url": "https://news.ycombinator.com/item?id=49971921",
+        "submitted_at": "2026-10-05T22:55:11Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/18/0"
+      }
+    },
+    {
+      "id": "49968906",
+      "expected_label": "core_non_ai",
+      "reason_zh": "纯文本格式的可移植性及长期可读性。",
+      "input": {
+        "id": "49968906",
+        "title": "Plain text is still one of the best technologies we have",
+        "source_host": "deadparrotbbs.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:1552]\nPage metadata (publisher-provided context, not article body):\ntitle: Why Plain Text Is Still One of the Best Technologies We Have | Dead Parrot BBS\ndescription: Plain text is portable, inspectable, searchable, easy to back up, and remarkably resistant to obsolescence. Its simplicity has helped it survive decades of...\n\nExtracted body:\nThere are not many computer file formats I would trust to still be readable fifty years from now, but plain text is one of them. That may sound like faint praise. A text file cannot embed a spreadsheet, preserve elaborate page layouts, run a presentation, or provide many of the conveniences we expect from modern applications. What it does instead is store text in one of the simplest and most widely understood forms in computing, and that simplicity is a large part of why it has lasted.\nAlmost Nothing to Go Wrong\nThe Unicode Standard defines plain text essentially as a sequence of character codes, without the additional formatting information associated with rich text. Fonts, colors, layout, and similar presentation details belong somewhere else.\nFrom a user’s point of view, the important part is simpler: the file contains the text itself without requiring a particular application to make sense of it. I can create a text file on Linux, copy it to a Windows machine, put it on a web server, open it in a terminal, search it with command-line tools, edit it with any number of programs, or send it to somebody using an entirely different system. Very little about the file depends on how it was created.\n\n\n[Source characters 7322:9345]\nThere is no benefit in forcing every kind of data into a .txt file. The useful distinction is whether the additional complexity solves a real problem or simply becomes another dependency.\nWhen plain text is sufficient, it removes a surprising number of things that can later get in the way.\nThe Limitations Are Real\nPlain text is not the answer to everything.\nI would not want to replace a photograph with a text description of its pixels, and I do not want a financial workbook turned into a pile of numbers that requires me to reconstruct all the formulas manually. Rich documents exist because presentation and structure sometimes matter.\nApplications also provide useful abstractions. A database can enforce relationships that a directory full of text files cannot. A word processor can handle page layout that would be tedious to reproduce manually. Specialized software exists for good reasons.\nThe problem is not using richer tools. It is assuming that richer tools are automatically better even when the job does not require them. In a surprising number of cases, the simplest adequate representation remains the most durable one.\nBoring Is a Feature\nPlain text is one of those technologies that becomes almost invisible because it works so reliably. It has no company trying to increase engagement, no account requirement, no subscription tier, and no service that can be discontinued when the business model changes.\nIt is portable, inspectable, searchable, scriptable, easy to back up, and remarkably resistant to obsolescence. Those qualities are not exciting, but they are useful, especially over long periods of time.\nAfter decades of watching software and file formats come and go, I have developed a fair amount of respect for technologies that do less and survive longer. Plain text does not solve every problem, and it should not. What it does provide is a stable way to store information without requiring very much from the software around it.\nFor something so basic, that is a considerable achievement."
+      },
+      "source": {
+        "url": "https://deadparrotbbs.com/why-plain-text-is-still-one-of-the-best-technologies-we-have/",
+        "hn_url": "https://news.ycombinator.com/item?id=49968906",
+        "submitted_at": "2026-10-05T18:54:00Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/19/0"
+      }
+    },
+    {
+      "id": "49322107",
+      "expected_label": "core_non_ai",
+      "reason_zh": "Cloudflare 自动注入网站分析脚本，属于互联网技术。",
+      "input": {
+        "id": "49322107",
+        "title": "Tell HN: Cloudflare silently injects its analytics when you switch nameservers",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "A few hours ago I switched my nameservers to Cloudflare in order to enable R2 bucket serving through my own subdomain, and I found out that it silently had injected a JS analytics snippet in my HTML-only JS-free site textlog.cc — I had to go to the Analytics dashboard, Add the site to the analytics and <i>then</i> disable the snippet. I find this approach entirely invasive, you should opt-in to features like that not have to opt-out. Just a warning out there to folks who might not be aware of this."
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49322107",
+        "hn_url": "https://news.ycombinator.com/item?id=49322107",
+        "submitted_at": "2026-08-16T17:49:46Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/205"
+      }
+    },
+    {
+      "id": "49378706",
+      "expected_label": "core_non_ai",
+      "reason_zh": "数据库云服务停止运营及迁移、自托管。",
+      "input": {
+        "id": "49378706",
+        "title": "InstantDB Is Shutting Down",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "Nothing on their website - but I got an email.<p>Hey there, you’re one of our active users and we wanted to let you know we’re sunsetting Instant.<p>In more detail:<p>New signups will be closed soon. We recommend migrating your apps off of Instant Cloud within the next 12 months. Any subscriptions that were started after July 31st, 2026 will be fully refunded. On August 31st, 2027, all cloud apps will shut down. Backups will stay available for 12 more months, until August 31st, 2028. We’ve written a guide to help you self-host Instant and migrate your apps too. All of Instant is open source, and we’ve worked to make the migration process as seamless as possible. The idea behind Instant started in 2021. We shared a blog post about a database in the browser. It was only an idea, but the more apps we built, the more we saw the need for it. We joined YC in 2022, built a prototype, and shared a version zero.<p>Turning a prototype into something production-grade was a long journey. The work was hard, but there were many moments of joy. Very early on Daniel joined the team and helped solve some of the gnarliest problems in sync tech. Our community grew, more folks joined [^], and we officially open sourced. From there it was maelstrom of feedback and making Instant better. When time came to really make our TypeScript SDKs ergonomic, Drew joined the team and did just that. From there, over 17,000 users got to try Instant. They made 400,000 apps, and those apps processed about 2.5 billion *transactions.<p>We’ll be starting a new journey and hope to share more details soon. In any case, it’s been an honor building for you!"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49378706",
+        "hn_url": "https://news.ycombinator.com/item?id=49378706",
+        "submitted_at": "2026-08-20T18:59:32Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/3986"
+      }
+    },
+    {
+      "id": "49960084",
+      "expected_label": "outside",
+      "reason_zh": "鼠疫与公共卫生事件。",
+      "input": {
+        "id": "49960084",
+        "title": "Nearly 200 people under observation after Irkutsk lab worker dies from plague",
+        "source_host": "www.themoscowtimes.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "Page metadata (publisher-provided context, not article body): title: Nearly 200 People Under Observation After Irkutsk Lab Worker Dies From Plague - The Moscow Times description: Health authorities in Siberia’s Irkutsk region have placed nearly 200 people under medical observation after a laboratory worker died from plague, according to media reports and a statement by a regional leader Friday. Extracted body: Health authorities in Siberia’s Irkutsk region have placed nearly 200 people under medical observation after a laboratory worker died from plague, according to media reports and a statement by a regional leader Friday. Alexei Tsydenov, head of the neighboring republic of Buryatia, confirmed that the woman had died from an unspecified form of plague. Irkutsk officials had previously described the illness only as a “particularly dangerous infection.” Citing information from Russia’s consumer safety watchdog Rospotrebnadzor and Buryatia’s government, Tsydenov said the woman had not visited his republic and that her infection was unrelated to the region. “There are no plague outbreaks in the republic, including in areas bordering Mongolia,” he wrote on social media. The woman was identified as Daria Sh., a 27- or 28-year-old employee of the Irkutsk anti-plague institute, by the exiled news outlet Lyudi Baikala (People of Baikal) and pro-Kremlin broadcaster REN TV. She reportedly told medical staff that she had accidentally broken a test tube containing live bacteria while collecting samples for testing. She was hospitalized Tuesday with symptoms of severe pneumonia in Shelekhov, a town near the regional capital of Irkutsk. She was placed on a ventilator and died Thursday, according to the reports. The Shelekhov district hospital was placed under quarantine pending an assessment by a special commission. At least 197 people who may have had contact with her were reportedly placed under medical isolation, including more than 100 in hospital wards. Authorities canceled planned public events in Irkutsk, while law enforcement reportedly opened a criminal investigation into potential health safety violations resulting in death. Irkutsk region Governor Igor Kobzev urged the public to remain calm after meeting with Rospotrebnadzor chief Anna Popova to coordinate emergency containment measures. “All identified contact persons have been placed under medical observation. As of today, the contacts show no signs of illness, and their laboratory test results are negative,” Kobzev wrote on Telegram on Friday. He did not mention the reports of the laboratory worker’s death. Media reports have described the suspected infection as pneumonic plague, which affects the lungs and can spread between humans through respiratory droplets. Tsydenov’s statement did not specify the form of plague. A Message from The Moscow Times: Dear readers, We are facing unprecedented challenges. Russia's Prosecutor General's Office has designated The Moscow Times as an \"undesirable\" organization, criminalizing our work and putting our staff at risk of prosecution. This follows our earlier unjust labeling as a \"foreign agent.\" These actions are direct attempts to silence independent journalism in Russia. The authorities claim our work \"discredits the decisions of the Russian leadership.\" We see things differently: we strive to provide accurate, unbiased reporting on Russia. We, the journalists of The Moscow Times, refuse to be silenced. But to continue our work, we need your help. Your support, no matter how small, makes a world of difference. If you can, please support us monthly starting from just $2. It's quick to set up, and every contribution makes a significant impact. By supporting The Moscow Times, you're defending open, independent journalism in the face of repression. Thank you for standing with us. Remind me later."
+      },
+      "source": {
+        "url": "https://www.themoscowtimes.com/2026/10/02/nearly-200-people-under-observation-after-irkutsk-lab-worker-dies-from-plague-a93857",
+        "hn_url": "https://news.ycombinator.com/item?id=49960084",
+        "submitted_at": "2026-10-05T02:31:45Z",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/5/0"
+      }
+    },
+    {
+      "id": "49956290",
+      "expected_label": "outside",
+      "reason_zh": "蚊媒疾病防治，技术指生物和公共卫生技术。",
+      "input": {
+        "id": "49956290",
+        "title": "The technology to eradicate mosquito-borne disease exists",
+        "source_host": "worksinprogress.co",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:1393]\nPage metadata (publisher-provided context, not article body):\ntitle: Mosquitoes are a choice - Works in Progress Magazine\nog:description: The technology to eradicate mosquito-borne disease already exists. We just have to be brave enough to use it.\n\nExtracted body:\nThe technology to eradicate mosquito-borne disease already exists. We just have to be brave enough to use it.\nMost Americans think of mosquito-borne diseases such as malaria, yellow fever, and dengue as problems that affect people in other countries, not their own. Until recently, they would have been largely correct: malaria and yellow fever were eliminated in the United States in the twentieth century, and dengue had become extremely rare, with most cases brought back from abroad. But as temperatures have risen and mosquitoes have developed resistance to pesticides, these diseases have become a growing problem again in the United States.\nIn 2024, the country reported almost 4,000 cases of dengue, a 360 percent increase over the average of 830 per year over the previous decade; Florida, California, and Texas all saw locally acquired transmission; and Puerto Rico declared dengue a public health emergency. Ten locally acquired malaria cases were reported nationwide in 2023, the first reported in twenty years. And though yellow fever remains gone for now, the mosquitoes capable of spreading it are still present.\n"
+      },
+      "source": {
+        "url": "https://worksinprogress.co/issue/mosquitoes-are-a-choice/",
+        "hn_url": "https://news.ycombinator.com/item?id=49956290",
+        "submitted_at": "2026-10-04T18:06:04+00:00",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/8/0"
+      }
+    },
+    {
+      "id": "49951881",
+      "expected_label": "outside",
+      "reason_zh": "分布式可再生能源保障战时供水。",
+      "input": {
+        "id": "49951881",
+        "title": "In Ukraine, distributed renewables foil Russia's assaults",
+        "source_host": "energytransition.org",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:1591]\nPage metadata (publisher-provided context, not article body):\ntitle: In Ukraine, distributed renewables foil Russia’s assaults | EnergyTransition.org\ndescription: In an easterly suburb of Mykolaiv, drinking water flowed from kitchen taps, as it has since last year thanks to a small off-grid solar field tucked inconspicuously into its midst. Paul Hockenos reports.\n\nExtracted body:\nWhen Russian air strikes knocked out Ukrainian power plants across the country earlier this year, most of the Black Sea port city of Mykolaiv in southeastern Ukraine was unable to pump fresh water to the city’s housing blocs. But in an easterly suburb of Mykolaiv, drinking water flowed from kitchen taps, as it has since last year thanks to a small off-grid solar field tucked inconspicuously into its midst. Paul Hockenos reports.\nThe two sets of elevated arrays and battery, funded by the Danish government, run the underground pump on its premises.\n‘There’s just enough sun [in January/this winter thus far] to make it work,’ says Olena Kondratiuk, project manager of Ecoclub, a non-profit that assists municipalities in obtaining renewables.\nThe city of Mykolaiv, only 60 kilometres from Russian-occupied territory, had been battered in 2022 when the Russian army launched its full invasion of Ukraine, pummelling the city with missiles, rockets and cluster bombs. The shelling laid waste to homes, hospitals, schools and factories. The bombardment also impaired the central water supply system, leaving most of the roughly half-a-million-strong town near the frontline without regularly flowing water.\n"
+      },
+      "source": {
+        "url": "https://energytransition.org/2026/09/in-ukraine-distributed-renewables-foil-russias-assaults/",
+        "hn_url": "https://news.ycombinator.com/item?id=49951881",
+        "submitted_at": "2026-10-04T08:39:58+00:00",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/15/0"
+      }
+    },
+    {
+      "id": "49947631",
+      "expected_label": "outside",
+      "reason_zh": "获得急救员资格的经历，软件工程只是作者职业背景。",
+      "input": {
+        "id": "49947631",
+        "title": "Reasons I didn't become an EMT, ranked",
+        "source_host": "ben.stolovitz.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:1148]\nPage metadata (publisher-provided context, not article body):\ntitle: 21 reasons I didn't become an EMT, ranked - Ben Stolovitz\ndescription: Here are 21 reasons I delayed getting my EMT licensed, sorted loosely by ridiculousness.\n\nExtracted body:\n21 reasons I didn't become an EMT, ranked\nI’m an EMT (Emergency Medical Technician).\nMy main job is software engineering, but I’ve always been interested in medicine. A friend turned me onto the idea in college, and it rattled around my head for years. I delayed for a long time — until finally, in 2024, I took a month off and got my EMT.\nHere are actual reasons I delayed getting my license, sorted loosely by ridiculousness:\nNot ridiculous\n-\nIt will take a lot of my spare time. Yes; my accelerated class (NOLS Wilderness EMT) took 28 consecutive days. I was only able to take the class because Microsoft switched to unlimited vacation, my boss was great, and I had the money to fly to Wyoming for the course (the usual alternative is a semester of night school!). And to be a good EMT, you have to actually take calls on an ambulance, hopefully more than the typical “1 weekend a month” minimum.\n-\n"
+      },
+      "source": {
+        "url": "https://ben.stolovitz.com/posts/reasons-not-emt-ranked/",
+        "hn_url": "https://news.ycombinator.com/item?id=49947631",
+        "submitted_at": "2026-10-03T20:49:15+00:00",
+        "material_origin": "classification_capture",
+        "local_archive": "data/investigations/2026-10-06-openrouter-integration/generate-3/data/model-eval-inputs/2026-10-06.json",
+        "record_pointer": "/exploration_classification_batches/13/0"
+      }
+    },
+    {
+      "id": "49817469",
+      "expected_label": "outside",
+      "reason_zh": "维修社区钟楼的机械时钟。",
+      "input": {
+        "id": "49817469",
+        "title": "Fixing the Portobello Police Station Clock",
+        "source_host": "pointinthecloud.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:2780]\nPage metadata (publisher-provided context, not article body):\ntitle: Fixing the Portobello Police Station Clock\n\nExtracted body:\nWritten on 11th April 2026\nI got a message from a friend today which read along the lines of \"I know we were going to meet in Edinburgh today, but do you fancy meeting in Portobello instead and trying to fix the clock in the old police station with me?\"\nI don't know about you, but clambering around the dusty nineteenth century clock tower of an abandoned police station sounds an ideal way to spend a Saturday afternoon to me, so I jumped at the chance.\nThe rather grand Portobello Police Station building.\nThis was in response to a message from Action Porty:\n\"Can you help keep Portobello on time? Action Porty has recently bought the Police Station for the community, but we can't work out how to change the time on the clock tower! We wondered if there was anyone in the community with expertise that could advise us of the details for changing the time? Or who best to contact for help?\"\nThe bit I hadn't figured out was that clocks are high up. If we were to fix the clock we would be next to it and so we would also be high up. And being high up involves heights, and steep long ladders are needed to get up high.\nI suppressed my whimpers at climbing up the rather high, steep ladder into the likely spider-infested darkness and was rewarded with an explore of the attic, which lead to another set of steps which went to the clock tower itself.\nOnce there we were rewarded with the magnificent sight of the clock mechanism and its three clock faces:\nConstruction of the building apparently started in 1877 and it seems quite feasible that this was an original mechanism. Modifications had been made - electric motors powered the mechanism and a control box allowed the clock chime to be turned off overnight.\nThe building was built to house meeting, administration and courts for Portobello burgh council. After Portobello was absorbed into Edinburgh the building became a library, and then a police station.\nThe Scottish Land Fund has since enabled it to be purchased for community ownership and when I went there many volunteeers were removing the 1970s polystyrene ceiling tiles and wood-chip wallpaper to reveal the original grandeur of the building.\nSetting the clock\nThe first step was to figure out how to set the time. This is probably easy to someone in the know, but we weren't.\nWe figured that the clock is driven from the small motor, through a series of gears onto a shaft which rotates once per hour. This shaft is split into three - one for each face, and drives the minute hand directly. A gear on each clock face derives the hour hand. If we could disconnect the motor maybe we could turn the shaft directly and set the time.\n\n\n[Source characters 6152:7766]\nSo - we waited until 4pm and the clock had advanced and we checked outside and the time was good. Come 4pm and the bell chimed 4 times. Dongggggg. (Bells are loud when you're next to them. Oops again.) This was perfect timing - 4pm was the time we had to leave.\nWe decided our mission was a success. Some local residents may have decided that the chime reinstatement was not a success, so we disconnected the chime motor to disable the chime.\nSome pub-fuelled enhancements:\nAfter a quick visit to check out the police cells we decided to head across the road to the Portobello tap for a beer and one of their burgers to celebrate our success. Lucy the dog came to join us and she was very quick to point out how starved she was, and really a little chip would just tide her over until she got her dinner, as she had bad owners who just never fed her. She isn't a labrador really.\nAfter our beer we thought of some \"enhancements\":\n- Have a box with more control of the chime times in case 8am is too early for chimes to start.\n- Be able to have a remote control chime for special occasions.\n- Have a doorbell which chimes the clock when you ring it.\n- Make it chime 13 at Halloween.\n- Have some customised LED lighting to replace the fluorescent tubes. This could have a rainbow for Porty Pride or St Patricks day or Christmas colourings or something.\n- More to come\nIt was fun\nIt was a fun afternoon, and thank you for the invite. I'm looking forward to seeing what becomes of the police station now it is community owned - it has the potential to be such a fun place! Maybe I can go back and become more involved."
+      },
+      "source": {
+        "url": "https://pointinthecloud.com/2026-04-11-211700.html",
+        "hn_url": "https://news.ycombinator.com/item?id=49817469",
+        "submitted_at": "2026-09-23T15:18:53Z",
+        "material_origin": "summary_capture_reused",
+        "local_archive": "data/investigations/2026-09-24-clock-retry/model-inputs.json",
+        "record_pointer": "/summary_candidates/0"
+      }
+    },
+    {
+      "id": "49892245",
+      "expected_label": "outside",
+      "reason_zh": "电网改造与降低电力损耗。",
+      "input": {
+        "id": "49892245",
+        "title": "How Delhi cut electricity loss from 50 to 5 percent",
+        "source_host": "spectrum.ieee.org",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:882]\nPage metadata (publisher-provided context, not article body):\ntitle: How Delhi Cut Electricity Loss from 50 to 5 Percent - IEEE Spectrum\ndescription: Since 2002, Delhi has transformed its power grid from a dysfunctional, electricity-leaking mess to a world-class system. Here's how they did it.\nog:description: It slashed electricity losses from 50 to 5 percent\n\nExtracted body:\nHere’s How Delhi Achieved Its Epic Power-Grid Fix\nIt slashed electricity losses from 50 to 5 percent\nIt’s 6 a.m. on a cold January morning in 2002 in New Delhi. It’s still dark outside, and I’m in the kitchen preparing breakfast, packing lunches, and getting my two children ready to catch the school bus when, for the third time in a week, the power goes out. No lights, no mixer to finish my daughter’s puttu—her favorite rice dish—no kettle, no toaster. The bathroom is dark, and the kids are upset.\n\n\n[Source characters 2061:3703]\nThese problems had been getting worse through the 1980s and 1990s. The cause: an aging distribution grid bereft of crucial technologies, and electricity providers with little accountability. The situation became so bad that the city was losing more than half of its power through obsolete equipment and theft. These staggering losses meant that utilities got paid for only a fraction of the electricity they were trying to deliver. And the lack of funds prevented them from investing in better grid infrastructure.\nBut over the last quarter century, a remarkable effort by the government and the city’s distribution utilities has turned Delhi’s grid into a reliable, modern system. Power losses have shrunk from over 50 percent in 2002 to 5 to 6 percent in 2026—on par with France and Belgium, and better than Greece and Serbia. Delhi’s grid reliability index, a measure of how often electricity can be counted on, stood at around 70 percent in 2002 and has now topped 99.9 percent.\nThe bustling Main Bazar in the Paharganj neighborhood of Delhi increasingly uses more nighttime electricity, but reductions in electricity loss help counter demand. iStock\nWith reliable power, businesses across the city have blossomed. The streetlights are bright. The number of electric vehicles, including city buses, is growing daily. Quality of life has improved. Today, my family is comfortable year-round in our home despite Delhi’s scorching summers and cold winters. The chaos of losing power no longer hinders me from getting to work. The city still has problems—pollution, overcrowding, noise—but thankfully, reliable power is no longer among them.\n\n\n[Source characters 12355:14701]\nreducing transparency and competition.\nA team of technicians with BSES Rajdhani Power maintains an insulator string on a large power transformer in 2011. BSES Rajdhani Power\nIn 2001, India’s central government began writing some historic legislation that became the landmark Electricity Act, 2003. Among the grand reforms aimed at transforming the country’s power industry, it unbundled state oversight of grid networks, creating separate entities for generation, transmission, and distribution. It also opened up the power sector to privatization. It allowed large electricity customers to bypass local distribution companies and purchase electricity from competitors or build their own power plants. It created a central regulatory agency responsible for determining interstate tariffs and promoting market competition in the power sector. And it created mechanisms for prosecuting electricity theft.\nHundreds of capacitor banks have been installed in Delhi to supply reactive power at strategic locations and help stabilize voltage.Tata Power-DDL\nIn 2002, Delhi was already taking drastic action to fix its grid. The organization overseeing Delhi’s distribution, the Delhi Vidyut Board, was broken up and two private companies—BSES (now part of Reliance Infrastructure), and North Delhi Power Limited (now known as Tata Power-DDL)—took over distribution. They faced a Herculean task. Tata Power-DDL, serving the northern half of Delhi, would have to tackle a combined commercial and technical electricity loss of 53.5 percent. BSES, whose territory was split between two subsidiaries, was facing 51.5 percent losses in South Delhi and 63.1 percent losses in East Delhi.\n“The company inherited a deteriorated and overloaded network, massive power theft, weak billing and collection systems, inaccurate consumer records, and an aging, largely untrained workforce,” Dwijadas Basak, CEO of Tata Power-DDL, told me. There were over 100,000 unresolved billing complaints, 20,000 pending connection applications, and frequent supply failures, which had severely eroded consumer trust, he added. Both Tata Power-DDL and BSES devised sweeping reforms and human resource development initiatives. The companies followed their own paths over the years, but ultimately implemented similar changes, with similar results.\nDelhi’s Electricity System Overhaul\n\n\n[Source characters 21571:22217]\nMeanwhile, Australia, most countries in North America and Europe, and a few countries in Asia and Africa experience low electricity losses as they invest regularly in their distribution infrastructure and the ethical enforcement of rules. In China, for example, losses have gradually been cut in half, from 7.1 to 3.4 percent. In Latvia, losses plummeted from 25 to 5.8 percent.\nWhat’s important is a comprehensive approach. Technologies like smart metering, AI, and analytics certainly help, but equally important is that people in the field are trained and take responsibility for their jobs, and that laws are enforced and payments collected.\n"
+      },
+      "source": {
+        "url": "https://spectrum.ieee.org/delhi-electricity-loss",
+        "hn_url": "https://news.ycombinator.com/item?id=49892245",
+        "submitted_at": "2026-09-29T12:43:29+00:00",
+        "material_origin": "summary_capture_reused",
+        "local_archive": "data/investigations/2026-10-03-integrated-summary/model-inputs.json",
+        "record_pointer": "/summary_candidates/4"
+      }
+    },
+    {
+      "id": "49905487",
+      "expected_label": "outside",
+      "reason_zh": "围绕能源、战争、经济的个人时事评论。",
+      "input": {
+        "id": "49905487",
+        "title": "September 2026: The world today, as seen by one Polish guy",
+        "source_host": "tomwojcik.com",
+        "is_self_post": false,
+        "article_evidence_excerpt": "[Source excerpts; omissions exist. Title/anchor matching only locates material; it does not verify the title. Assess relevance and sufficiency for this item. Missing evidence here does not establish absence from the full source.]\n\n[Source characters 0:1422]\nPage metadata (publisher-provided context, not article body):\ntitle: September 2026: the world today, as seen by one Polish guy | Tom Wojcik\ndescription: How a Pole sees the world in September 2026: a scrolling essay that follows one closed strait into fuel, food, bonds, defence and demography.\n\nExtracted body:\nI am a Pole. My country borders Europe’s largest war since 1945, heats itself with coal and imported gas, and arms itself on borrowed money. From here the news does not arrive as separate stories.\nEvery generation believes it is living through the end of something. What is different in 2026 is that the crises have stopped arriving one at a time. A war in the Gulf becomes the price of my diesel, smaller harvests from Sudan to Yemen and a half-empty gas cavern in Bavaria.\nThe world is not ending. But for thirty years we swapped buffers for dependencies, because a supplier is cheaper than a stockpile and a guarantee is cheaper than an army. When a dependency failed, we did not rebuild the buffer. We found another dependency. Every swap worked for as long as the thing at the other end was there. This year, several of those things were tested together.\nOne strait, three crises\nStart about 4,000 kilometres south-east of Warsaw. US and Israeli military operations against Iran began in late February. Since March, Iran has kept the Strait of Hormuz closed with drones, missiles, mines and small boats.\n"
+      },
+      "source": {
+        "url": "https://tomwojcik.com/posts/2026-09-21/september-2026-the-world-today/",
+        "hn_url": "https://news.ycombinator.com/item?id=49905487",
+        "submitted_at": "2026-09-30T07:12:31Z",
+        "material_origin": "summary_capture_reused",
+        "local_archive": "data/investigations/2026-10-03-integrated-summary/model-inputs.json",
+        "record_pointer": "/summary_candidates/5"
+      }
+    },
+    {
+      "id": "49450183",
+      "expected_label": "outside",
+      "reason_zh": "呼吁关注能源供给，AI 只是附带的需求背景。",
+      "input": {
+        "id": "49450183",
+        "title": "Requests for Startups: Energy",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "YC has published the Requests for Startups. https:&#x2F;&#x2F;www.ycombinator.com&#x2F;rfs I like it. At the same time there are some things that I think are missing, one of them is energy. This is especially important in the AI era but it was also before for more general reasons. A cheap and reliable access to energy is a important factor to the development of many other sectors in a region.<p>There are many projects to solve the energy problem: fusion, space, nuclear... But this is far from being solved. Why doesn&#x27;t YC mention energy in that list?"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49450183",
+        "hn_url": "https://news.ycombinator.com/item?id=49450183",
+        "submitted_at": "2026-08-26T14:49:19Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/9155"
+      }
+    },
+    {
+      "id": "49484442",
+      "expected_label": "outside",
+      "reason_zh": "创业营销与受众建立，品牌含 AI 不等于讨论 AI 技术。",
+      "input": {
+        "id": "49484442",
+        "title": "Audience Infrastructure",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "THE AUDIENCE INFRASTRUCTURE™ FRAMEWORK :<p>An audience is not a vanity metric. It is infrastructure.<p>Traditional Thinking: Build Product → Find Customers<p>New Thinking: Build Audience → Build Trust → Launch Product<p>Which boils down to my other framework, my FOUNDER MEDIA INFRASTRUCTURE™ framework.<p>Which means, Modern founder must build: Product Infrastructure + Media Infrastructure<p>In 2026+, DISTRIBUTION is becoming more valuable than development or product. It&#x27;s becoming the product itself.<p>Here what the Media Infrastructure includes (when build right): Content Distribution Trust Capital™ Narrative Authority Audience Core Insight<p>The next generation of startups won&#x27;t separate: product media community DISTRIBUTION<p>They&#x27;ll merge them.<p>Because that&#x27;s the winning framework &amp; architecture in 2026, moving forward into the near future.<p>I&#x27;ve had to learn this the hard way. Launching my startup moltybeeai.com publicly for the fisrt time, and realizing I had a serious problem.<p>I had a great product in my hands, but no one knew who I was or the product even existed. And I believe this is where most startups go to die. Not just because of the fact that they run out of run rates or working capital, but no one knows they exist. Even if some people do, not enough people know they exist and not enough people care enough because the offer is probably not clear enough, there&#x27;s no trust established before the ask. And most startups don&#x27;t have a product problem.<p>They have a invisibility problem.<p>When you start by building your audience, Trust Capital™, authority, consistency consistently, your solution&#x2F;offer&#x2F;product becomes a frictonless ask.<p>And that&#x27;s the AUDIENCE INFRASTRUCTURE™.<p>Build Your Audience First, → Build Trust → Launch Products<p>I had it all wrong, with my first launches. It cost me six months. You don&#x27;t have to pay that price too.<p>Build the audience first. Worry about what to launch 90 days later.<p>Thank you, — Founder &amp; Operator, MoltyBeeAI™ Sihle Dimaza<p>•Building MoltyBeeAI™ in public.<p>LIVE → moltybeeai.com"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49484442",
+        "hn_url": "https://news.ycombinator.com/item?id=49484442",
+        "submitted_at": "2026-08-28T21:28:26Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/10682"
+      }
+    },
+    {
+      "id": "49475011",
+      "expected_label": "outside",
+      "reason_zh": "广告投入及转化效果，AI 产品只是被营销的对象。",
+      "input": {
+        "id": "49475011",
+        "title": "We ran X (Twitter) ads for 4 months and here are the results",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "Duration May - Aug 2026<p>My Background: I am a founder of multiple SaaS company. Most recently i am building a AI native ticketing system for support platforms, simply put it takes your issues coming from Github, Discord, Forum or email and have a AI agent run through all the sources and generate a reply that is posted back. Pricing is tier based with a freemium model, direct signup, without demo.<p>Marketing Strategy for X: We started marketing using text and image based post, with our website link put as CTA or the blog (medium) link.<p>Total spending: We spend Around $3,509 for the entire 4 months.<p>Audience: We narrowed down our audience , starting from targeting globally to focusing on Tier 1 markets especially as they have normally have higher rate of subscription buying.<p>Results according to X own numbers: 46M impressions and 26K+ link clicks.<p>Compare with our own website tracker (Matomo): Twitter 613 visits 885 actions 1.4 actions per visit 50s avg. time on website 74% bounce rate<p>Actual Signups: Consider it near zero, no actual follow ups, or growth<p>My observation: For each post there are crypto bots, and random bots that engage with the post, resulting in fake engagement and clicks. This platform strategy bring little or no value for our business."
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49475011",
+        "hn_url": "https://news.ycombinator.com/item?id=49475011",
+        "submitted_at": "2026-08-28T06:23:28Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/11465"
+      }
+    },
+    {
+      "id": "49440945",
+      "expected_label": "uncertain",
+      "reason_zh": "正文只有 Hä，没有主题证据。",
+      "input": {
+        "id": "49440945",
+        "title": "Hä",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "Hä"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49440945",
+        "hn_url": "https://news.ycombinator.com/item?id=49440945",
+        "submitted_at": "2026-08-25T21:30:45Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/7672"
+      }
+    },
+    {
+      "id": "49475469",
+      "expected_label": "uncertain",
+      "reason_zh": "正文仅 geo vs seo，缺少足以解释对象的上下文。",
+      "input": {
+        "id": "49475469",
+        "title": "Aisee.live",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "geo vs seo"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49475469",
+        "hn_url": "https://news.ycombinator.com/item?id=49475469",
+        "submitted_at": "2026-08-28T07:27:31Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/11424"
+      }
+    },
+    {
+      "id": "49488930",
+      "expected_label": "uncertain",
+      "reason_zh": "正文仅 same as title，不能用标题代替材料。",
+      "input": {
+        "id": "49488930",
+        "title": "Ask HN: Should one learn Rust as thier first programming language?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "same as title"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49488930",
+        "hn_url": "https://news.ycombinator.com/item?id=49488930",
+        "submitted_at": "2026-08-29T11:12:20Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/12061"
+      }
+    },
+    {
+      "id": "49469565",
+      "expected_label": "uncertain",
+      "reason_zh": "正文只说今天收拾了烂摊子，未说明服务。",
+      "input": {
+        "id": "49469565",
+        "title": "Ask HN: Was Quad9 ECS down for anyone else today at UTC 1PM?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I had a mess to clean up today."
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49469565",
+        "hn_url": "https://news.ycombinator.com/item?id=49469565",
+        "submitted_at": "2026-08-27T18:56:43Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/9855"
+      }
+    },
+    {
+      "id": "49471334",
+      "expected_label": "uncertain",
+      "reason_zh": "正文只有链接，无实质内容。",
+      "input": {
+        "id": "49471334",
+        "title": "[dup] Sam Altman says the economy is adapting to AI slower than he expected",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "http:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=49471334"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49471334",
+        "hn_url": "https://news.ycombinator.com/item?id=49471334",
+        "submitted_at": "2026-08-27T21:11:07Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/9687"
+      }
+    },
+    {
+      "id": "49397441",
+      "expected_label": "uncertain",
+      "reason_zh": "正文仅表达恐惧和反对，未说明具体事件。",
+      "input": {
+        "id": "49397441",
+        "title": "Ask HN: Why does the US government search through people's phones at the border?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "Seems scary, tyrannical and totalitarian to me."
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49397441",
+        "hn_url": "https://news.ycombinator.com/item?id=49397441",
+        "submitted_at": "2026-08-22T07:27:04Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/6330"
+      }
+    },
+    {
+      "id": "49487030",
+      "expected_label": "uncertain",
+      "reason_zh": "正文只有笼统的改进建议请求和链接，未说明工具功能或主题；不能仅凭标题判断。",
+      "input": {
+        "id": "49487030",
+        "title": "Are these 13 free AV and Robotics engineering calculators are useful?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "Let me know how i can improve https:&#x2F;&#x2F;www.udhy.com&#x2F;tools&#x2F;"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49487030",
+        "hn_url": "https://news.ycombinator.com/item?id=49487030",
+        "submitted_at": "2026-08-29T05:05:22Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/12219"
+      }
+    },
+    {
+      "id": "49318504",
+      "expected_label": "uncertain",
+      "reason_zh": "正文仅邀请试玩和链接，无法确认具体主题。",
+      "input": {
+        "id": "49318504",
+        "title": "Show HN: My queue model made in a game",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "hope you like it<p>Play it: <a href=\"https:&#x2F;&#x2F;0xrand.com&#x2F;juego&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;0xrand.com&#x2F;juego&#x2F;</a>"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49318504",
+        "hn_url": "https://news.ycombinator.com/item?id=49318504",
+        "submitted_at": "2026-08-16T09:51:01Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/527"
+      }
+    },
+    {
+      "id": "49388997",
+      "expected_label": "uncertain",
+      "reason_zh": "决策与认知能力宣传模糊，未明确软件或 AI。",
+      "input": {
+        "id": "49388997",
+        "title": "Krissis 4.0 for better decision making",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "KRISSIS was built to enhance decision making and cognitive intelligence. I want HN users to try it and guide me where to improve more."
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49388997",
+        "hn_url": "https://news.ycombinator.com/item?id=49388997",
+        "submitted_at": "2026-08-21T14:48:37Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/5200"
+      }
+    },
+    {
+      "id": "49326904",
+      "expected_label": "uncertain",
+      "reason_zh": "只说分享书评，没有书评内容；书名仅在标题和链接中。",
+      "input": {
+        "id": "49326904",
+        "title": "Book Review – Animal Farm",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "Sharing a book review<p>https:&#x2F;&#x2F;blog.jaysinh.dev&#x2F;2026&#x2F;08&#x2F;15&#x2F;book-review-animal-farm.html"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49326904",
+        "hn_url": "https://news.ycombinator.com/item?id=49326904",
+        "submitted_at": "2026-08-17T05:39:30Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/1703"
+      }
+    },
+    {
+      "id": "49322689",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集模型服务及订阅推荐。",
+      "input": {
+        "id": "49322689",
+        "title": "Ask HN: What LLM subscription/provider to use with pi harness?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I used to use Claude code but obviously they gone downhill for the last 2 to 3 months.<p>I switched to Codex and have been happy with it. Curious what other provider who provides good models at decent pricing?"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49322689",
+        "hn_url": "https://news.ycombinator.com/item?id=49322689",
+        "submitted_at": "2026-08-16T19:03:50Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/152"
+      }
+    },
+    {
+      "id": "49321400",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集人工审阅 AI 代码的工具和实践。",
+      "input": {
+        "id": "49321400",
+        "title": "Ask HN: What tools are you using for human code review of AI-assisted code?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "A good proportion of us and our colleagues are now churning out agent-assisted code at an incredible rate, with some of it that is actually good, and a lot that is not so good. I&#x27;m personally finding that the real quality gate for our projects is now how thoroughly the generated code was human reviewed to ensure that it is not just correct, but architecturally sensible.<p>AI code review tools like coderabbit and copilot, or even pointing claude code at a PR are all generally pretty good at finding bugs and style nits, but less good at finding duplicate code, module cross coupling, bad separation of concerns, and so on, even if prompted to do so.<p>I&#x27;m finding that github&#x27;s PR interface is not really cutting it for me, it was janky even when the reviews were small, but now at the size they&#x27;re at, it is becoming unmanageable. Add to that the extra noise of mixing in agent reviews, and people &quot;meat-proxying&quot; in copy-pasted agent output, and it&#x27;s getting pretty noisy and difficult to navigate.<p>What have you all found that works well for streamlining human review of AI assisted code? Tools and process suggestions are welcome."
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49321400",
+        "hn_url": "https://news.ycombinator.com/item?id=49321400",
+        "submitted_at": "2026-08-16T16:20:45Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/275"
+      }
+    },
+    {
+      "id": "49318324",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集软件工程学习资源。",
+      "input": {
+        "id": "49318324",
+        "title": "Ask HN: Where to learn software engineering fundamentals?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I have an open question for software engineers out there:<p>As someone that has never studied CS but has written basic code most of my life (accelerated now with AI), where is the best place to learn software engineering fundamentals?"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49318324",
+        "hn_url": "https://news.ycombinator.com/item?id=49318324",
+        "submitted_at": "2026-08-16T09:15:14Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/545"
+      }
+    },
+    {
+      "id": "49333379",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集大量 token 的实际使用经验。",
+      "input": {
+        "id": "49333379",
+        "title": "Ask HN: If you're burning tokens at scale, what are you using them for?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I know lots of people use tokens to run coding agents, but I&#x27;m interested in hearing from people who are burning large amounts of tokens on automated tasks that aren&#x27;t driving some kind of agent.<p>Do you have processes set up that are e.g. processing documents, audio, or video files? Particularly interested in hearing from people doing this in a business context."
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49333379",
+        "hn_url": "https://news.ycombinator.com/item?id=49333379",
+        "submitted_at": "2026-08-17T16:13:04Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/1196"
+      }
+    },
+    {
+      "id": "49353921",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集桌面 IMAP 邮件客户端推荐。",
+      "input": {
+        "id": "49353921",
+        "title": "Ask HN: Good IMAP Email Clients?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I&#x27;m looking for a good, simple desktop IMAP email client for Windows and Linux and coming up empty handed.<p>Thunderbird absolutely sucks now, it is borderline unusable (it would not connect to our internal email system, and I had no patience with its incomprehensible UI to figure out why).<p>New Outlook is just a web wrapper.<p>It feels like there are far fewer options in this space than existed 20 years ago.<p>Does anyone still use Seamonkey?"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49353921",
+        "hn_url": "https://news.ycombinator.com/item?id=49353921",
+        "submitted_at": "2026-08-18T22:49:46Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/1769"
+      }
+    },
+    {
+      "id": "49485147",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集为孩子制作学习项目的经验。",
+      "input": {
+        "id": "49485147",
+        "title": "Ask HN: Single Page Learning Games?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I am working on a few ideas to help my kids learn at home. I am curious if you have built anything for your kids to learn something?"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49485147",
+        "hn_url": "https://news.ycombinator.com/item?id=49485147",
+        "submitted_at": "2026-08-28T22:43:59Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/10620"
+      }
+    },
+    {
+      "id": "49476981",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集实体打印机购买推荐。",
+      "input": {
+        "id": "49476981",
+        "title": "Ask HN: What's a Good Physical Printer?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I want to buy a printer.<p>I have a theory that all printers are made by predatory companies that want to sell you planned obsolescence devices with cryptographically motivated expensive cartridges.<p>Am I not fully correct? Is there a good option outside of this realm? Should I buy an old used laser printer?"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49476981",
+        "hn_url": "https://news.ycombinator.com/item?id=49476981",
+        "submitted_at": "2026-08-28T11:13:29Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/11311"
+      }
+    },
+    {
+      "id": "49489306",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集邮件归档的工具和方法。",
+      "input": {
+        "id": "49489306",
+        "title": "Ask HN: Best way to archive 25 years of emails",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I have emails from 1997-98 onwards all in one massive inbox, currently on gmail with emclient on Mac as the mail client (there have been probably a dozen services starting from self-hosted in the beginning). I would like to archive the historic mails for the first 25 years, but in a way that&#x27;s actually searchable and usable in the future (and potentially importable to a new mail client&#x2F;service) and not in any particular mailbox format that may go obsolete. There is no good reason to hoard them, other than &quot;I feel like doing so&quot;. What are the best options, and tools?"
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49489306",
+        "hn_url": "https://news.ycombinator.com/item?id=49489306",
+        "submitted_at": "2026-08-29T12:19:07Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/12031"
+      }
+    },
+    {
+      "id": "49477766",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集替代 Fail2ban 的工具。",
+      "input": {
+        "id": "49477766",
+        "title": "Ask HN: Alternatives to Fail2ban?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I&#x27;m administering a small number of Linux servers that run an ssh server exposed to the Internet. I usually connect using a cryptographic key, but I still allow password authentication in case of trouble (perhaps I&#x27;m being overly cautious). I&#x27;ve been using fail2ban with good results, but I&#x27;m annoyed at having to install a Python interpreter on every server.<p>Is there an alternative to fail2ban that is just a single binary? It doesn&#x27;t need to have all of the features of fail2ban, blocking dictionary attacks against ssh is all I need."
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49477766",
+        "hn_url": "https://news.ycombinator.com/item?id=49477766",
+        "submitted_at": "2026-08-28T12:48:15Z",
+        "material_origin": "historical_story_reconstructed",
+        "local_archive": "data/keyword-evaluation/corpus-2026-08-17_2026-08-30.json",
+        "record_pointer": "/stories/11229"
+      }
+    },
+    {
+      "id": "49893157",
+      "expected_label": "community_roundup",
+      "reason_zh": "征集阅读书目，问题为语境，实际推荐在回答中。",
+      "input": {
+        "id": "49893157",
+        "title": "Ask HN: What are you reading?",
+        "source_host": "news.ycombinator.com",
+        "is_self_post": true,
+        "article_evidence_excerpt": "I&#x27;m plowing through the Dungeon Crawler Carl series, which is not particularly challenging as sci-fi&#x2F;LitRPG goes, but entertaining enough. I&#x27;m also wrapping up Doctorow&#x27;s _Enshittification_, and I&#x27;m looking for something a little meaty to keep the brain working..."
+      },
+      "source": {
+        "url": "https://news.ycombinator.com/item?id=49893157",
+        "hn_url": "https://news.ycombinator.com/item?id=49893157",
+        "submitted_at": "2026-09-29T13:44:43+00:00",
+        "material_origin": "summary_capture_reused",
+        "local_archive": "data/investigations/2026-10-03-integrated-summary/model-inputs.json",
+        "record_pointer": "/summary_candidates/6"
+      }
+    }
+  ]
+}

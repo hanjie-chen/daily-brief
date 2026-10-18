@@ -166,10 +166,9 @@ OpenRouter never uses cross-model fallback.
 Environment settings use `OPENROUTER_` or `GEMINI_` prefixes, with per-task
 `CLASSIFIER_INTERVAL_SECONDS` and `SUMMARIZER_INTERVAL_SECONDS` settings.
 The previous `DAILY_BRIEF_` names are not read. Both API keys may be present;
-only the selected service is constructed. Optional budget and price overrides
-are documented in [docs/openrouter.md](../../../docs/openrouter.md) rather than
-the everyday environment template. Unset model, pacing, retry, and cost defaults
-are unchanged.
+only the selected service is constructed. Common settings are listed in
+[`.env.example`](../../../.env.example); optional budget, price, and timing
+overrides are documented below.
 
 OpenRouter defaults to `qwen/qwen3.8-flash` with reasoning disabled for classification
 (512 output tokens), and `openai/gpt-6-luna` with requested medium reasoning for summaries
@@ -213,7 +212,36 @@ the existing candidate audit fields; `last_summary_usage` additionally exposes
 cost/cache details and `last_summary_provider` the upstream provider. No costs or
 provider error bodies enter the public brief schema.
 
-Configuration and rollout notes are in [docs/openrouter.md](../../../docs/openrouter.md).
+### Advanced Configuration
+
+These environment overrides are omitted from the everyday environment template.
+Defaults are defined in `OpenRouterBackend`; price caps are in USD per million
+tokens and control both provider selection and pre-request cost reservations.
+
+| Environment variable | Default | Unit / scope |
+| --- | ---: | --- |
+| `OPENROUTER_RUN_BUDGET_USD` | `0.25` | USD per backend instance |
+| `OPENROUTER_CLASSIFIER_INPUT_PRICE_CAP` | `0.15` | USD per million input tokens |
+| `OPENROUTER_CLASSIFIER_OUTPUT_PRICE_CAP` | `0.47` | USD per million output tokens |
+| `OPENROUTER_SUMMARIZER_INPUT_PRICE_CAP` | `0.10` | USD per million input tokens |
+| `OPENROUTER_SUMMARIZER_OUTPUT_PRICE_CAP` | `0.50` | USD per million output tokens |
+| `OPENROUTER_RETRY_BASE_SECONDS` | `1` | Seconds; retry backoff base |
+| `OPENROUTER_INTERVAL_SECONDS` | Unset | Seconds; overrides both task intervals |
+
+The price defaults apply only to the default models. A custom
+`OPENROUTER_CLASSIFIER_MODEL` or `OPENROUTER_SUMMARIZER_MODEL` requires both
+corresponding input and output price caps; omitting either fails configuration.
+Check the custom model's caching charges separately.
+
+When set, `OPENROUTER_INTERVAL_SECONDS` takes precedence over both
+`OPENROUTER_CLASSIFIER_INTERVAL_SECONDS` and
+`OPENROUTER_SUMMARIZER_INTERVAL_SECONDS`, whose defaults are 1 second each.
+These intervals space request starts, including retries.
+Gemini uses the opposite precedence: `GEMINI_INTERVAL_SECONDS` supplies a shared
+default, while `GEMINI_CLASSIFIER_INTERVAL_SECONDS` and
+`GEMINI_SUMMARIZER_INTERVAL_SECONDS` override it individually. Without interval
+overrides, Gemini defaults to 6 seconds for classification and 20 seconds for
+summaries.
 
 ## Summary Model Fallback and Quotas
 

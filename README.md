@@ -44,7 +44,7 @@
 
 模板默认选择 OpenRouter，使用 Qwen3.8 Flash 分类、GPT-6 Luna 生成摘要。两份 API key 可以同时保留，程序只使用所选服务，不会在 OpenRouter 和 Gemini 之间自动切换。
 
-模型和请求参数见 [`.env.example`](./.env.example)；OpenRouter 的费用控制与自定义模型配置见 [OpenRouter 接入与运行](./docs/openrouter.md)。
+模型和请求参数见 [`.env.example`](./.env.example)；OpenRouter 的费用控制与自定义模型配置见 [LLM 模块说明](./src/daily_brief/llm/README.md#provider-selection-and-openrouter)。
 
 ### Publishing
 
