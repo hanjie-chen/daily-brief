@@ -38,6 +38,25 @@ def test_success_exports_declared_sources_and_actual_model_separately_from_acqui
     validate_public_brief(payload(item))
 
 
+def test_comment_sampling_diagnostics_are_private():
+    from daily_brief.output.render import render_candidates_json
+
+    item = candidate()
+    item.discussion_retrieval = DiscussionRetrieval(
+        status='success', comments=31, chars=10_000, requested_items=40,
+        top_level_comments=28, reply_comments=3, stop_reason='request_limit',
+    )
+    audit = json.loads(render_candidates_json([item]))[0]['discussion_retrieval']
+    assert audit['top_level_comments'] == 28
+    assert audit['reply_comments'] == 3
+    assert audit['stop_reason'] == 'request_limit'
+    public = payload(item)
+    assert info(item)['materials']['hn_comments'] == {'status': 'success', 'reason': 'none'}
+    for field in ('top_level_comments', 'reply_comments', 'stop_reason'):
+        assert field not in json.dumps(public)
+    validate_public_brief(public)
+
+
 def test_github_issue_transport_is_public_direct_and_private_diagnostic():
     from daily_brief.output.render import render_candidates_json
 

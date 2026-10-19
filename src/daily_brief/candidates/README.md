@@ -109,14 +109,35 @@ These values appear in the private candidate audit (`rejection_reason`):
 ## Discussion Sampling
 
 `hn_client.fetch_hn_discussion(...)` reads a discussion breadth-first, so
-top-level answers come first. It stops at the comment, request, depth, or
-character limits in `MAX_DISCUSSION_*`, or after `MAX_DISCUSSION_FAILED_ITEMS`
-failed requests. Discussion requests use `DISCUSSION_REQUEST_TIMEOUT_SECONDS`
+top-level answers come first. There is no separate comment-count cap. It admits
+at most 40 item reads including the story root, and collects at most 16,000
+characters including labels and separators. Failed, deleted, dead, and empty
+items still spend the request budget, so at most 39 comments can be included
+under the defaults. Each comment body is capped at 2,000 characters; replies
+beyond depth 3 are not enqueued. Three failed item reads (exceptions or malformed
+items) stop sampling while preserving already collected material.
+Discussion requests use `DISCUSSION_REQUEST_TIMEOUT_SECONDS`
 and are not retried. Dead and deleted comments are skipped, and each comment is
 labeled with its position, HN comment ID, depth, and author. A reply is included
 only after its complete parent comment was included; its header names that
 parent's HN comment ID. Replies to deleted, empty, or truncated parents are
 skipped, so the sample does not contain orphaned context.
+
+Results report included `top_level_comments` and `reply_comments`, whose sum is
+`comments`, plus `stop_reason`: `request_limit`, `char_limit`, `failure_limit`,
+or `queue_exhausted`. Character truncation or inability to fit a comment body
+reports `char_limit` even for the final queued item. Reaching the failure threshold
+reports `failure_limit` even on the last admitted request. Otherwise an empty
+queue reports `queue_exhausted`; with work remaining, the character check precedes
+the request check. Queue exhaustion only describes eligible work after depth and
+parent-context pruning, not a complete read of the discussion. Per-comment
+truncation alone does not stop other threads. Root failures raise an exception
+instead of producing a normal stop reason.
+
+`generation/material.py` copies these diagnostics into private candidate audit
+and logs for both accepted and insufficient samples. They are not published in
+the public brief. Unattempted or failed acquisitions have zero counts and an
+empty stop reason.
 
 Selected ordinary items collect this bounded sample by default. Any nonempty
 sample is available to the summary model alongside other materials; it is not

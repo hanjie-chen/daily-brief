@@ -107,6 +107,9 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                         candidate.discussion_retrieval.requested_items
                     ),
                     "failed_items": candidate.discussion_retrieval.failed_items,
+                    "top_level_comments": candidate.discussion_retrieval.top_level_comments,
+                    "reply_comments": candidate.discussion_retrieval.reply_comments,
+                    "stop_reason": candidate.discussion_retrieval.stop_reason,
                     "error_type": candidate.discussion_retrieval.error_type,
                     "error_code": candidate.discussion_retrieval.error_code,
                     "error_message": candidate.discussion_retrieval.error_message,

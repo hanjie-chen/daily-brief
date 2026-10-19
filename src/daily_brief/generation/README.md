@@ -67,6 +67,11 @@ this package that owns it.
    this is independent of external retrieval success or apparent webpage
    sufficiency. A failed or empty discussion sample is recorded and does not
    prevent the remaining material from being summarized.
+   the sampler uses request and character budgets without a separate comment-count
+   cap. Included top-level/reply counts and the sampler's stop reason are copied
+   into private audit and logs, including insufficient samples; public material
+   status remains unchanged. The [candidate guide](../candidates/README.md)
+   documents sampling order, limits, and stop-reason semantics.
    Material fetched during classification is reused. Every fetched public PDF is
    Adobe PDF-to-Markdown first when credentials are configured, with the same
    bounded hard timeout in classification and summary retrieval, conversion

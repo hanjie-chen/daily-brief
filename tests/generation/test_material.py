@@ -20,7 +20,8 @@ def test_bounded_error_message_is_single_line_and_limited():
     assert len(message) == 500
 
 
-def test_ordinary_discussion_accepts_any_nonempty_sample_and_preserves_source_state():
+def test_ordinary_discussion_accepts_any_nonempty_sample_and_preserves_source_state(caplog):
+    caplog.set_level(logging.INFO)
     candidate = Candidate(story("1", "Claude release"))
     candidate.summary_basis = "fetched_article"
     candidate.summary_status = "success"
@@ -34,10 +35,16 @@ def test_ordinary_discussion_accepts_any_nonempty_sample_and_preserves_source_st
             chars=18,
             requested_items=2,
             failed_items=0,
+            top_level_comments=1,
+            stop_reason="request_limit",
         )
 
     assert material.prepare_hn_discussion_material(candidate, fetch_discussion) is True
     assert candidate.discussion_retrieval.status == "success"
+    assert candidate.discussion_retrieval.top_level_comments == 1
+    assert candidate.discussion_retrieval.reply_comments == 0
+    assert candidate.discussion_retrieval.stop_reason == "request_limit"
+    assert "top_level_comments=1 reply_comments=0 stop_reason=request_limit" in caplog.text
     assert candidate.discussion_text == "Useful correction."
     assert candidate.summary_basis == "fetched_article"
     assert candidate.summary_status == "success"
@@ -58,6 +65,7 @@ def test_discussion_failure_is_not_retried_or_allowed_to_replace_source_state():
 
     assert material.prepare_hn_discussion_material(candidate, fail_discussion) is False
     assert candidate.discussion_retrieval.status == "failed"
+    assert candidate.discussion_retrieval.stop_reason == ""
     assert candidate.summary_basis == "fetched_article"
     assert candidate.summary_status == "success"
 
@@ -65,7 +73,8 @@ def test_discussion_failure_is_not_retried_or_allowed_to_replace_source_state():
     assert calls == ["1"]
 
 
-def test_community_roundup_keeps_strict_discussion_minimums():
+def test_community_roundup_keeps_strict_discussion_minimums(caplog):
+    caplog.set_level(logging.INFO)
     candidate = Candidate(story("1", "Ask HN: tools"), content_kind="community_roundup")
     candidate.summary_basis = "fetched_article"
 
@@ -77,10 +86,15 @@ def test_community_roundup_keeps_strict_discussion_minimums():
             chars=18,
             requested_items=2,
             failed_items=0,
+            top_level_comments=1,
+            stop_reason="queue_exhausted",
         ),
     ) is False
 
     assert candidate.discussion_retrieval.status == "insufficient"
+    assert candidate.discussion_retrieval.top_level_comments == 1
+    assert candidate.discussion_retrieval.stop_reason == "queue_exhausted"
+    assert "top_level_comments=1 reply_comments=0 stop_reason=queue_exhausted" in caplog.text
     assert candidate.discussion_text == ""
     assert candidate.summary_basis == "fetched_article"
 

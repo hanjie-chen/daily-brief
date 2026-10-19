@@ -398,6 +398,9 @@ def test_fetch_hn_discussion_collects_bounded_breadth_first_plain_text():
     assert result.comments == 3
     assert result.requested_items == 4
     assert result.failed_items == 0
+    assert result.top_level_comments == 2
+    assert result.reply_comments == 1
+    assert result.stop_reason == "queue_exhausted"
     assert "[评论 1；HN 评论 ID 2；层级 0；作者 alice]" in result.text
     assert "First view.\nSecond line & detail." in result.text
     assert result.text.index("作者 bob") < result.text.index("作者 carol")
@@ -576,3 +579,158 @@ def test_fetch_hn_discussion_caps_complete_material():
     assert result.comments == 1
     assert result.chars == 100
     assert len(result.text) == 100
+    assert result.stop_reason == "char_limit"
+
+
+@pytest.mark.parametrize(("top_count", "expected_top", "expected_replies"), [
+    (28, 28, 11),
+    (45, 39, 0),
+])
+def test_discussion_uses_request_budget_beyond_24_comments(
+    top_count, expected_top, expected_replies,
+):
+    top_ids = list(range(2, 2 + top_count))
+    responses = {"1": {"id": 1, "type": "story", "kids": top_ids}}
+    for index, item_id in enumerate(top_ids):
+        responses[str(item_id)] = {
+            "id": item_id, "type": "comment",
+            "text": (
+                "Security notice: stored provider keys may be exposed."
+                if index == 25 else "A short independent observation."
+            ),
+            "kids": [100 + index],
+        }
+        responses[str(100 + index)] = {
+            "id": 100 + index, "type": "comment", "text": "A reply with context.",
+        }
+    requested = []
+
+    def fetch(url):
+        item_id = url.rsplit("/", 1)[-1].split(".", 1)[0]
+        requested.append(int(item_id))
+        return responses[item_id]
+
+    result = fetch_hn_discussion("1", item_fetcher=fetch)
+
+    assert result.comments == 39
+    assert result.requested_items == len(requested) == 40
+    assert result.top_level_comments == expected_top
+    assert result.reply_comments == expected_replies
+    assert result.stop_reason == "request_limit"
+    assert "stored provider keys may be exposed" in result.text
+    assert result.chars == len(result.text) < 16_000
+    assert requested == [1, *top_ids[:expected_top], *range(100, 100 + expected_replies)]
+
+
+@pytest.mark.parametrize("bad_item", [None, {"type": "story"}, RuntimeError("offline")])
+def test_discussion_stops_at_failure_limit_and_retains_partial_material(bad_item):
+    requested = []
+
+    def fetch(url):
+        item_id = int(url.rsplit("/", 1)[-1].split(".", 1)[0])
+        requested.append(item_id)
+        if item_id == 1:
+            return {"id": 1, "type": "story", "kids": [2, 3, 4, 5, 6]}
+        if item_id == 2:
+            return {"id": 2, "type": "comment", "text": "Useful material."}
+        if isinstance(bad_item, Exception):
+            raise bad_item
+        return bad_item
+
+    result = fetch_hn_discussion("1", max_item_requests=5, item_fetcher=fetch)
+
+    assert requested == [1, 2, 3, 4, 5]
+    assert result.failed_items == 3
+    assert result.comments == result.top_level_comments == 1
+    assert result.reply_comments == 0
+    assert "Useful material." in result.text
+    assert result.stop_reason == "failure_limit"
+
+
+def test_discussion_deleted_and_empty_comments_still_spend_request_budget():
+    responses = {
+        "1": {"id": 1, "type": "story", "kids": [2, 3, 4]},
+        "2": {"id": 2, "type": "comment", "deleted": True},
+        "3": {"id": 3, "type": "comment", "text": " "},
+        "4": {"id": 4, "type": "comment", "text": "Not reached."},
+    }
+    result = fetch_hn_discussion(
+        "1", max_item_requests=3,
+        item_fetcher=lambda url: responses[url.rsplit("/", 1)[-1].split(".", 1)[0]],
+    )
+    assert result.requested_items == 3
+    assert result.comments == result.top_level_comments == result.reply_comments == 0
+    assert result.failed_items == 0
+    assert result.stop_reason == "request_limit"
+
+
+@pytest.mark.parametrize("kids", [[], [2]])
+def test_discussion_root_only_budget_distinguishes_empty_queue(kids):
+    result = fetch_hn_discussion(
+        "1", max_item_requests=1,
+        item_fetcher=lambda url: {"id": 1, "type": "story", "kids": kids},
+    )
+    assert result.requested_items == 1
+    assert result.comments == 0
+    assert result.stop_reason == ("request_limit" if kids else "queue_exhausted")
+
+
+@pytest.mark.parametrize("max_chars", [1, 39])
+def test_discussion_reports_char_limit_even_if_last_item_does_not_fit(max_chars):
+    def fetch(url):
+        if url == HN_ITEM_URL.format(item_id=1):
+            return {"id": 1, "type": "story", "kids": [2]}
+        return {"id": 2, "type": "comment", "by": "a", "text": "one two three four"}
+
+    result = fetch_hn_discussion("1", max_chars=max_chars, item_fetcher=fetch)
+    assert result.stop_reason == "char_limit"
+    assert result.chars <= max_chars
+    assert result.requested_items == 2
+
+
+def test_discussion_preserves_maximum_reply_depth():
+    requested = []
+
+    def fetch(url):
+        item_id = int(url.rsplit("/", 1)[-1].split(".", 1)[0])
+        requested.append(item_id)
+        return {"id": item_id, "type": "story" if item_id == 1 else "comment",
+                "text": "Complete context.", "kids": [item_id + 1]}
+
+    result = fetch_hn_discussion("1", item_fetcher=fetch)
+    assert requested == [1, 2, 3, 4, 5]
+    assert result.top_level_comments == 1
+    assert result.reply_comments == 3
+    assert result.stop_reason == "queue_exhausted"
+
+
+@pytest.mark.parametrize("spare_chars", [0, 1, 2, 3])
+def test_discussion_separator_cannot_overrun_remaining_character_budget(spare_chars):
+    def fetch(url):
+        item_id = int(url.rsplit("/", 1)[-1].split(".", 1)[0])
+        if item_id == 1:
+            return {"id": 1, "type": "story", "kids": [2, 3]}
+        return {"id": item_id, "type": "comment", "by": "a", "text": "Complete."}
+
+    first_only = fetch_hn_discussion("1", max_item_requests=2, item_fetcher=fetch)
+    limit = first_only.chars + spare_chars
+    result = fetch_hn_discussion("1", max_chars=limit, item_fetcher=fetch)
+
+    assert result.text == first_only.text
+    assert result.comments == 1
+    assert result.chars <= limit
+    assert result.stop_reason == "char_limit"
+
+
+def test_discussion_exact_limits_with_no_remaining_nodes_are_queue_exhaustion():
+    def fetch(url):
+        if url == HN_ITEM_URL.format(item_id=1):
+            return {"id": 1, "type": "story", "kids": [2]}
+        return {"id": 2, "type": "comment", "text": "Complete."}
+
+    complete = fetch_hn_discussion("1", item_fetcher=fetch)
+    result = fetch_hn_discussion(
+        "1", max_chars=complete.chars, max_item_requests=2, item_fetcher=fetch,
+    )
+    assert result.text == complete.text
+    assert result.stop_reason == "queue_exhausted"

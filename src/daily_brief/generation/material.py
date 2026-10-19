@@ -401,17 +401,24 @@ def prepare_hn_discussion_material(
         chars=result.chars,
         requested_items=result.requested_items,
         failed_items=result.failed_items,
+        top_level_comments=result.top_level_comments,
+        reply_comments=result.reply_comments,
+        stop_reason=result.stop_reason,
         error_code="" if status == "success" else "insufficient_comments",
     )
     if status != "success":
         LOGGER.info(
             "component=hn_discussion_fetch item_id=%s status=insufficient "
-            "comments=%d chars=%d requested_items=%d failed_items=%d",
+            "comments=%d chars=%d requested_items=%d failed_items=%d "
+            "top_level_comments=%d reply_comments=%d stop_reason=%s",
             candidate.story.hn_item_id,
             result.comments,
             result.chars,
             result.requested_items,
             result.failed_items,
+            result.top_level_comments,
+            result.reply_comments,
+            result.stop_reason,
         )
         return False
 
@@ -426,12 +433,16 @@ def prepare_hn_discussion_material(
         candidate.summary_generation = SummaryGeneration()
     LOGGER.info(
         "component=hn_discussion_fetch item_id=%s status=success "
-        "comments=%d chars=%d requested_items=%d failed_items=%d",
+        "comments=%d chars=%d requested_items=%d failed_items=%d "
+        "top_level_comments=%d reply_comments=%d stop_reason=%s",
         candidate.story.hn_item_id,
         result.comments,
         result.chars,
         result.requested_items,
         result.failed_items,
+        result.top_level_comments,
+        result.reply_comments,
+        result.stop_reason,
     )
     return True
 

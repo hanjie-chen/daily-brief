@@ -144,6 +144,9 @@ class DiscussionRetrieval:
     chars: int = 0
     requested_items: int = 0
     failed_items: int = 0
+    top_level_comments: int = 0
+    reply_comments: int = 0
+    stop_reason: str = ""
     error_type: str = ""
     error_code: str = ""
     error_message: str = ""

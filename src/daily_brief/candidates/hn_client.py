@@ -25,7 +25,6 @@ LOGGER = logging.getLogger(__name__)
 REQUEST_TIMEOUT_SECONDS = 20
 RETRY_DELAYS_SECONDS = (10, 20)
 MAX_ATTEMPTS = 1 + len(RETRY_DELAYS_SECONDS)
-MAX_DISCUSSION_COMMENTS = 24
 MAX_DISCUSSION_ITEM_REQUESTS = 40
 MAX_DISCUSSION_DEPTH = 3
 MAX_DISCUSSION_CHARS = 16_000
@@ -59,6 +58,9 @@ class HNDiscussionResult:
     chars: int
     requested_items: int
     failed_items: int
+    top_level_comments: int = 0
+    reply_comments: int = 0
+    stop_reason: str = ""
 
 
 class _HNTextExtractor(HTMLParser):
@@ -162,7 +164,6 @@ def _has_sane_story_text_fields(item: dict) -> bool:
 def fetch_hn_discussion(
     item_id: str,
     *,
-    max_comments: int = MAX_DISCUSSION_COMMENTS,
     max_item_requests: int = MAX_DISCUSSION_ITEM_REQUESTS,
     max_depth: int = MAX_DISCUSSION_DEPTH,
     max_chars: int = MAX_DISCUSSION_CHARS,
@@ -176,7 +177,6 @@ def fetch_hn_discussion(
             error_code="invalid_item_id",
         )
     if min(
-        max_comments,
         max_item_requests,
         max_depth + 1,
         max_chars,
@@ -210,12 +210,16 @@ def fetch_hn_discussion(
     samples: list[str] = []
     selected_chars = 0
     failed_items = 0
-    while (
-        queue
-        and len(samples) < max_comments
-        and requested_items < max_item_requests
-        and selected_chars < max_chars
-    ):
+    top_level_comments = 0
+    reply_comments = 0
+    stop_reason = "queue_exhausted"
+    while queue:
+        if selected_chars >= max_chars:
+            stop_reason = "char_limit"
+            break
+        if requested_items >= max_item_requests:
+            stop_reason = "request_limit"
+            break
         comment_id, depth, parent_id = queue.popleft()
         requested_items += 1
         try:
@@ -223,10 +227,14 @@ def fetch_hn_discussion(
         except Exception:
             failed_items += 1
             if failed_items >= MAX_DISCUSSION_FAILED_ITEMS:
+                stop_reason = "failure_limit"
                 break
             continue
         if not isinstance(comment, dict) or comment.get("type") != "comment":
             failed_items += 1
+            if failed_items >= MAX_DISCUSSION_FAILED_ITEMS:
+                stop_reason = "failure_limit"
+                break
             continue
         if comment.get("dead") or comment.get("deleted"):
             continue
@@ -244,11 +252,22 @@ def fetch_hn_discussion(
         )
         separator_chars = 2 if samples else 0
         remaining = max_chars - selected_chars - separator_chars
+        if remaining <= len(header):
+            stop_reason = "char_limit"
+            break
         sample = (header + text)[:remaining].rstrip()
         if len(sample) <= len(header.rstrip()):
+            stop_reason = "char_limit"
             break
         samples.append(sample)
+        if depth == 0:
+            top_level_comments += 1
+        else:
+            reply_comments += 1
         selected_chars += len(sample) + separator_chars
+        if len(header + text) > remaining:
+            stop_reason = "char_limit"
+            break
         parent_is_complete = len(raw_text) <= max_comment_chars and len(sample) == len(
             header + text
         )
@@ -265,6 +284,9 @@ def fetch_hn_discussion(
         chars=len(discussion_text),
         requested_items=requested_items,
         failed_items=failed_items,
+        top_level_comments=top_level_comments,
+        reply_comments=reply_comments,
+        stop_reason=stop_reason,
     )
 
 

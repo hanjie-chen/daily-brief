@@ -57,7 +57,9 @@ def inputs(calls):
     def fetch_comments(item_id):
         calls.append(('comments', item_id))
         text = 'Fresh comment: it also supports offline playback. ' * 12
-        return HNDiscussionResult(text, 3, len(text), 4, 0)
+        return HNDiscussionResult(text, 3, len(text), 4, 0,
+                                  top_level_comments=2, reply_comments=1,
+                                  stop_reason='queue_exhausted')
 
     return dict(hn_story_fetcher=fetch_story, article_fetcher=fetch_article,
                 hn_discussion_fetcher=fetch_comments)
@@ -101,6 +103,9 @@ def test_single_retry_refetches_all_material_preserves_selection_and_does_not_sa
     assert audit[1:] == before_audit[1:]
     assert audit[0]['score'] == before_audit[0]['score']
     assert audit[0]['last_retry']['status'] == 'updated'
+    assert audit[0]['discussion_retrieval']['top_level_comments'] == 2
+    assert audit[0]['discussion_retrieval']['reply_comments'] == 1
+    assert audit[0]['discussion_retrieval']['stop_reason'] == 'queue_exhausted'
     assert audit[0]['summary_reference_date'] == DAY
     assert audit[0]['last_retry']['summary_reference_date'] == DAY
     assert updated_item['generation_info']['generation']['reasoning_effort'] == 'medium'
@@ -161,6 +166,9 @@ def test_failed_retry_preserves_published_fields_and_updates_only_latest_diagnos
     assert audit[0]['last_retry']['summary_generation']['error_code'] == 'quota_exceeded'
     assert audit[0]['last_retry']['summary_generation']['reasoning_effort'] == 'medium'
     assert audit[0]['last_retry']['status'] == 'failed'
+    assert audit[0]['last_retry']['discussion_retrieval']['top_level_comments'] == 2
+    assert audit[0]['last_retry']['discussion_retrieval']['reply_comments'] == 1
+    assert audit[0]['last_retry']['discussion_retrieval']['stop_reason'] == 'queue_exhausted'
     assert {k: v for k, v in audit[0].items() if k != 'last_retry'} == old_audit[0]
     assert audit[1:] == old_audit[1:]
 
