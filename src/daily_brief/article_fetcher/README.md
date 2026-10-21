@@ -140,6 +140,12 @@ bounded flow:
    text or credentials. Status errors include bounded numeric status values;
    malformed fields are represented by markers, never echoed. The key uses an
    unredirected Authorization header and is never logged.
+   Generic Reader request failures retain bounded exception type names in logs
+   and private error messages, including the underlying exception type when a
+   `URLError` wraps a timeout or DNS error. Exception messages and string reasons
+   are omitted, so request URLs and credentials cannot leak through this detail.
+   Authenticated retries and subsequent Wayback failures preserve this detail;
+   error codes and retry eligibility are unchanged.
 6. Return `ArticleFetchResult` with transport, extractor, attempt count,
    retrieved URL, fallback reason, material origin, and optional bounded
    `source_evidence`. The latter preserves fetched title, author, publication

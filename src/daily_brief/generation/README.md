@@ -86,10 +86,14 @@ this package that owns it.
    cross-post/republication backlink to the source, and substantive body are
    required. YouTube candidates use the existing captions path and must declare
    narration of that source. Search snippets and bare/canonical backlinks are
-   insufficient. Rejections continue to source-appropriate recovery: Reuters syndicated copies
-   or same-event reporting from other publishers. The latter reuses already
-   fetched pages before issuing an additional search, while preserving the
-   original URL and marking accepted material as `alternate_reporting`.
+   insufficient. After same-article recovery fails, Reuters sources first try
+   syndicated copies, then continue to same-event reporting if no copy succeeds
+   and the shared budget allows another stage. Other sources proceed directly
+   to same-event reporting. This route reuses pages fetched by the same-article
+   search before issuing an additional search, while preserving the original
+   URL and marking accepted material as `alternate_reporting`. Each completed
+   route's audit and the original retrieval failure are retained; successful
+   same-article or syndicated recovery stops the sequence.
    Search eligibility covers recoverable HTTP errors, challenges, empty HTML
    extraction, timeouts or interrupted connections, and missing TLS issuer
    information after Jina/Wayback failure. It does not require a known challenge

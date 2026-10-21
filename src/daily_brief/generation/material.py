@@ -189,7 +189,7 @@ def _attempt_search_recovery(
     syndicated_finder: SyndicatedCopyFinder | None,
     alternate_reporting_finder: AlternateReportingFinder | None,
 ) -> _SearchRecovery:
-    """Try same-article, then a source-appropriate recovery route."""
+    """Try same article, Reuters syndication if applicable, then other reporting."""
     if not _is_search_recovery_eligible(failure):
         return _SearchRecovery()
     recovery = _check_recovery_budget(_SearchRecovery())
@@ -203,23 +203,22 @@ def _attempt_search_recovery(
     ))
     if recovery.material is not None or recovery.error_code:
         return recovery
-    if _should_attempt_reuters_recovery(candidate, failure):
+    if is_reuters_url(candidate.story.source_url):
         outcome = attempt_syndicated_recovery(candidate, article_client, syndicated_finder)
-        return _check_recovery_budget(_SearchRecovery(
-            outcome.material, "syndicated_copy", same_article=same_article, syndicated=outcome.audit,
+        recovery = _check_recovery_budget(replace(
+            recovery, material=outcome.material, material_origin="syndicated_copy",
+            syndicated=outcome.audit,
         ))
-    if _should_attempt_alternate_reporting(candidate, failure):
-        outcome = attempt_alternate_reporting_recovery(
-            candidate, article_client, alternate_reporting_finder,
-            fetched_candidates=fetched_candidates,
-        )
-        return _check_recovery_budget(_SearchRecovery(
-            outcome.material,
-            "alternate_reporting",
-            same_article=same_article,
-            alternate_reporting=outcome.audit,
-        ))
-    return recovery
+        if recovery.material is not None or recovery.error_code:
+            return recovery
+    outcome = attempt_alternate_reporting_recovery(
+        candidate, article_client, alternate_reporting_finder,
+        fetched_candidates=fetched_candidates,
+    )
+    return _check_recovery_budget(replace(
+        recovery, material=outcome.material, material_origin="alternate_reporting",
+        alternate_reporting=outcome.audit,
+    ))
 
 
 def _check_recovery_budget(recovery: _SearchRecovery) -> _SearchRecovery:
@@ -471,26 +470,6 @@ def _retrieval_failure(exc: Exception) -> RetrievalFailure:
         error_type=type(exc).__name__,
         error_code=getattr(exc, "error_code", "fetch_failed"),
         error_message=bounded_error_message(exc),
-    )
-
-
-def _should_attempt_reuters_recovery(
-    candidate: Candidate,
-    failure: RetrievalFailure,
-) -> bool:
-    return (
-        is_reuters_url(candidate.story.source_url)
-        and _is_search_recovery_eligible(failure)
-    )
-
-
-def _should_attempt_alternate_reporting(
-    candidate: Candidate,
-    failure: RetrievalFailure,
-) -> bool:
-    return (
-        not is_reuters_url(candidate.story.source_url)
-        and _is_search_recovery_eligible(failure)
     )
 
 

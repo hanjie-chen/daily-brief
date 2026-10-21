@@ -165,6 +165,10 @@ listed only in that package's guide.
   method, without extending the website's enum contract.
   The private `github_api_rate_limited` recovery reason projects to the existing
   `rate_limited` generation-info reason and `unknown` provenance fallback reason.
+  A final `wayback_no_capture` failure projects to the public
+  `archive_unavailable` generation-info reason. Deploy website support for this
+  reason before publishing payloads that use it; historical `unknown` reasons
+  are not backfilled.
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never
   scans or catches up old dates implicitly.

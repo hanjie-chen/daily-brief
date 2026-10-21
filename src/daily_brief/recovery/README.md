@@ -32,9 +32,12 @@ and stops at the first accepted page:
 1. Same article: find another publication of the original work.
 2. Reuters syndicated copy: the original URL is on Reuters. This does not
    require a DataDome marker.
-3. Alternate reporting: the original URL is not on Reuters.
+3. Alternate reporting: all eligible sources, including Reuters after syndicated
+   recovery returns no usable copy. Reuse pages fetched during same-article
+   recovery before issuing another search.
 
-Routes 2 and 3 are mutually exclusive. When every route fails, the story keeps
+Each completed route's audit is retained when a later route runs or succeeds.
+When every route fails, the story keeps
 its original retrieval failure; budget exhaustion is recorded explicitly when
 it stops further work. Available HN post and discussion materials can still be
 used by generation.

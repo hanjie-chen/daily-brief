@@ -76,6 +76,7 @@ def test_reuters_datadome_failure_recovers_verified_yahoo_copy(tmp_path):
         ]
     )
     summarizer = CapturingSummarizer()
+    alternate_finder = FakeAlternateReportingFinder([])
 
     def fetch(url, **kwargs):
         fetched_urls.append(url)
@@ -104,10 +105,12 @@ def test_reuters_datadome_failure_recovers_verified_yahoo_copy(tmp_path):
         hot_stories=[],
         article_fetcher=fetch,
         syndicated_finder=finder,
+        alternate_reporting_finder=alternate_finder,
         summarizer=summarizer,
     )
 
     assert finder.calls == ["49323686"]
+    assert alternate_finder.calls == []
     assert fetched_urls == [reuters_url, yahoo_url]
     assert summarizer.fetched_texts == [verified_reuters_copy_body().strip()]
     payload = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
@@ -773,7 +776,7 @@ def test_alternate_reporting_conflict_fails_closed(tmp_path):
     assert summarizer.titles == []
 
 
-def test_alternate_reporting_is_disabled_for_classification_and_reuters_origins(
+def test_alternate_reporting_is_disabled_for_classification(
     tmp_path,
 ):
     alternate_finder = FakeAlternateReportingFinder([])
@@ -803,30 +806,57 @@ def test_alternate_reporting_is_disabled_for_classification_and_reuters_origins(
     )
     assert alternate_finder.calls == []
 
-    reuters_finder = FakeAlternateReportingFinder([])
-    run_generate(
+
+def test_reuters_syndication_failure_searches_other_reporting_and_exports_provenance(tmp_path):
+    reuters_url = 'https://www.reuters.com/legal/government/anthropic-blacklisting-ruling-pentagon-2026-08-28/'
+    alternate_url = yahoo_anthropic_url()
+    block = origin_block_failure('datadome_challenge')
+    reuters_finder = FakeAlternateReportingFinder([
+        AlternateReportingCandidate('Other reporting', alternate_url),
+    ])
+    fetched_urls = []
+    summarizer = CapturingSummarizer()
+
+    def fetch(url, **kwargs):
+        fetched_urls.append(url)
+        if url == reuters_url:
+            raise block
+        assert url == alternate_url
+        return ArticleFetchResult(
+            alternate_reporting_body(), method='direct', extractor='trafilatura',
+            retrieved_url=alternate_url,
+        )
+
+    result = run_generate(
         output_dir=tmp_path / "reuters-briefs",
         data_dir=tmp_path / "reuters-data",
         date_label="2026-08-29",
         algolia_stories=[
             story(
                 "49473523",
-                "Anthropic court ruling",
+                "Anthropic blacklisting ruling against Pentagon",
                 points=500,
                 comments=300,
-                url=(
-                    "https://www.reuters.com/legal/government/"
-                    "anthropic-ruling-2026-08-28/"
-                ),
+                url=reuters_url,
             )
         ],
         hot_stories=[],
-        article_fetcher=lambda url, **kwargs: (_ for _ in ()).throw(block),
+        article_fetcher=fetch,
         syndicated_finder=FakeSyndicatedFinder([]),
         alternate_reporting_finder=reuters_finder,
-        summarizer=FakeSummarizer(),
+        summarizer=summarizer,
     )
-    assert reuters_finder.calls == []
+    assert reuters_finder.calls == ['49473523']
+    assert fetched_urls == [reuters_url, alternate_url]
+    assert summarizer.fetched_texts == [alternate_reporting_body().strip()]
+    audit = json.loads(result.data_path.read_text())[0]['article_retrieval']
+    assert audit['syndicated_recovery']['status'] == 'not_found'
+    assert audit['alternate_reporting_recovery']['status'] == 'success'
+    assert audit['origin_failure']['fallback_reason'] == 'datadome_challenge'
+    public = json.loads(result.public_json_path.read_text())['sections']['ai']['items'][0]
+    assert public['source_url'] == reuters_url
+    assert public['content_status'] == 'ok'
+    assert public['generation_info']['materials']['webpage']['origin'] == 'alternate_reporting'
 
 
 def test_alternate_reporting_rejects_unsafe_redirect_and_keeps_origin_failure(

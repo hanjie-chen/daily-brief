@@ -134,6 +134,28 @@ def test_web_failure_does_not_determine_summary_success_and_unknown_diagnostics_
     assert info(item)['materials']['webpage']['status'] == 'empty'
 
 
+def test_missing_wayback_capture_exports_safe_archive_reason_and_preserves_private_error():
+    from daily_brief.output.render import render_candidates_json
+
+    item = candidate()
+    item.article_retrieval = ArticleRetrieval(
+        status='failed', method='wayback', error_code='wayback_no_capture',
+        fallback_reason='datadome_challenge', error_message='private diagnostic details',
+    )
+    item.summary_sources_used = ['hn_comments']
+    data = payload(item)
+    public = data['sections']['ai']['items'][0]
+    assert public['generation_info']['materials']['webpage'] == {
+        'status': 'failed', 'method': 'wayback', 'origin': 'unknown', 'reason': 'archive_unavailable',
+    }
+    assert public['provenance']['fallback_reason'] == 'datadome_challenge'
+    assert public['generation_info']['generation']['status'] == 'success'
+    assert 'private diagnostic details' not in json.dumps(data)
+    assert 'wayback_no_capture' not in json.dumps(data)
+    assert json.loads(render_candidates_json([item]))[0]['article_retrieval']['error_code'] == 'wayback_no_capture'
+    validate_public_brief(data)
+
+
 def test_self_post_and_unrecorded_usage_model_are_not_guessed():
     item = candidate()
     item.article_retrieval = ArticleRetrieval(status='not_needed', method='story_text')

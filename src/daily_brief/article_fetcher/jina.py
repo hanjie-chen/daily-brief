@@ -4,7 +4,7 @@ import json
 import os
 import socket
 from dataclasses import dataclass, replace
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 from .challenges import _is_challenge_page
@@ -84,9 +84,13 @@ def _fetch_jina_reader(
                 "component=jina_reader auth=api_key status=failed code=%s attempts=2",
                 authenticated_error.error_code,
             )
+            detail = (
+                f" ({authenticated_error})"
+                if authenticated_error.error_code == "request_failed" else ""
+            )
             raise ArticleFetchError(
                 f"Jina Reader anonymous={anonymous_error.error_code}; "
-                f"api_key={authenticated_error.error_code}",
+                f"api_key={authenticated_error.error_code}{detail}",
                 error_code=authenticated_error.error_code,
                 method="jina", extractor="jina", attempts=2,
             ) from authenticated_error
@@ -255,8 +259,20 @@ def _fetch_jina_reader_once(
             extractor="jina",
         ) from exc
     except Exception as exc:
+        exception_type = _exception_type_name(exc)
+        reason_type = (
+            _exception_type_name(exc.reason)
+            if isinstance(exc, URLError) and isinstance(exc.reason, BaseException)
+            else "unknown"
+        )
+        LOGGER.info(
+            "component=jina_reader auth=%s event=request_failure "
+            "exception_type=%s reason_type=%s",
+            "api_key" if api_key else "anonymous", exception_type, reason_type,
+        )
         raise ArticleFetchError(
-            "Jina Reader request failed",
+            "Jina Reader request failed: "
+            f"exception_type={exception_type} reason_type={reason_type}",
             error_code="request_failed",
             method="jina",
             extractor="jina",
@@ -274,6 +290,13 @@ def _fetch_jina_reader_once(
             _diagnostic_status(http_status),
             content_chars if content_chars is not None else "unknown",
         )
+
+
+def _exception_type_name(exc: BaseException) -> str:
+    # Exception messages and URL-error reason strings may include URLs or keys.
+    # Even custom class names must remain bounded, single-token metadata.
+    name = type(exc).__name__
+    return name if len(name) <= 64 and name.isascii() and name.isidentifier() else "unknown"
 
 
 def _publication_date(data: dict) -> str:
