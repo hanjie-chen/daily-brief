@@ -13,6 +13,11 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ..models import Candidate
 from ..network_recovery import is_transient_network_error, recoverable_network
+from .content_deduplication import (
+    ContentDecision, CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION,
+    DEDUPLICATION_MAX_OUTPUT_TOKENS, build_content_deduplication_prompt,
+    content_deduplication_schema, validate_content_decisions,
+)
 from .gemini_api import GeminiResponseError, MAX_RESPONSE_BYTES
 from .gemini_output import (
     classification_schema, classifier_labels, summary_schema,
@@ -143,6 +148,8 @@ class OpenRouterBackend:
         self.last_summary_provider_status = ""
         self.last_summary_usage = {}
         self.last_summary_provider = ""
+        self.last_deduplication_model = self.classifier_model
+        self.last_deduplication_usage = {}
 
     @classmethod
     def from_environment(cls, env: Mapping[str, str] | None = None, **kwargs):
@@ -182,6 +189,21 @@ class OpenRouterBackend:
         except GeminiResponseError:
             raise OpenRouterResponseError("OpenRouter classifier returned invalid decisions") from None
 
+    def deduplicate(self, candidates: list[Candidate]) -> list[ContentDecision]:
+        self.last_deduplication_model = self.classifier_model
+        self.last_deduplication_usage = {}
+        if not candidates:
+            return []
+        output = self._interact(
+            "deduplicate", self.classifier_model, CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION,
+            build_content_deduplication_prompt(candidates),
+            content_deduplication_schema(candidates), DEDUPLICATION_MAX_OUTPUT_TOKENS,
+        )
+        try:
+            return validate_content_decisions(output, candidates)
+        except ValueError:
+            raise OpenRouterResponseError("OpenRouter returned invalid content decisions") from None
+
     def summarize(self, candidate: Candidate) -> str:
         self.last_summary_reasoning_effort = None
         self.last_summary_model = self.summarizer_model
@@ -208,10 +230,10 @@ class OpenRouterBackend:
 
     @recoverable_network("openrouter")
     def _interact(self, task, model, system, prompt, schema, output_limit):
-        input_price, output_price = self._prices[task]
+        input_price, output_price = self._prices["classify" if task == "deduplicate" else task]
         payload = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                    "max_tokens": output_limit, "stream": False,
-                   "reasoning": {"enabled": False} if task == "classify" else {"effort": SUMMARY_REASONING_EFFORT, "exclude": True},
+                   "reasoning": {"enabled": False} if task != "summarize" else {"effort": SUMMARY_REASONING_EFFORT, "exclude": True},
                    "response_format": {"type": "json_schema", "json_schema": {"name": "daily_brief_" + task, "strict": True, "schema": schema}},
                    "provider": {"require_parameters": True, "allow_fallbacks": True,
                                 "max_price": {"prompt": input_price, "completion": output_price}}}
@@ -227,6 +249,8 @@ class OpenRouterBackend:
             record = {"task": task, "model": model, "attempt": attempt + 1,
                       "reserved_usd": reservation, "cost_usd": None, "status": "pending"}
             self.request_records.append(record)
+            if task == "deduplicate":
+                self.last_deduplication_usage = {}
             if task == "summarize":
                 self.last_summary_reasoning_effort = payload["reasoning"]["effort"]
                 record["reasoning_effort"] = self.last_summary_reasoning_effort
@@ -234,7 +258,7 @@ class OpenRouterBackend:
                 self.last_summary_provider_status = ""
                 self.last_summary_usage = {}
                 self.last_summary_provider = ""
-            interval = self.classifier_min_request_interval_seconds if task == "classify" else self.summarizer_min_request_interval_seconds
+            interval = self.classifier_min_request_interval_seconds if task != "summarize" else self.summarizer_min_request_interval_seconds
             now = self.clock()
             remaining = interval - (now - self._last_started.get(model, now - interval))
             if remaining > 0:
@@ -286,6 +310,8 @@ class OpenRouterBackend:
                 record["provider"] = provider
             LOGGER.info("component=openrouter task=%s model=%s attempt=%d input_tokens=%s output_tokens=%s cost_usd=%s accounted_usd=%.6f",
                         task, model, attempt + 1, usage.get("input_tokens"), usage.get("output_tokens"), cost, self.accounted_cost_usd)
+            if task == "deduplicate":
+                self.last_deduplication_usage = dict(usage)
             if task == "summarize":
                 self.last_summary_usage = usage
                 provider = response.get("provider")

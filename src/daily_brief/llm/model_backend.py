@@ -4,6 +4,7 @@ from typing import Protocol
 
 from ..models import Candidate
 from .topic_classifier import TOPIC_LABELS
+from .content_deduplication import ContentDecision
 
 
 class Summarizer(Protocol):
@@ -16,6 +17,8 @@ class TopicClassifier(Protocol):
 
 class ModelBackend(Summarizer, TopicClassifier, Protocol):
     name: str
+
+    def deduplicate(self, candidates: list[Candidate]) -> list[ContentDecision]: ...
 
 
 def ensure_topic_decisions(

@@ -75,8 +75,15 @@ defines the rule.
 8. `selection.select_exploration_candidates(...)` fills the outside section
    (public key `non_ai_hot`) by points and then comments, not by score, up to
    `NON_AI_MAX_ITEMS`.
+   These are initial selections. `generation/classification.py` also retains
+   ranked qualified reserves: `rank_core_candidates(...)` applies the same
+   exact deduplication and core minimums without changing flags, and outside
+   reserves keep points/comments order. The generation package compares
+   successful summaries for same-day information duplication and may use these
+   reserves for bounded same-section refills. No semantic model calls live here.
 9. After the brief is written, `history.save_history(...)` records today's
-   selected IDs and drops entries older than `DEFAULT_HISTORY_DAYS`. An
+   final selected IDs, after content comparison and refills, and drops entries
+   older than `DEFAULT_HISTORY_DAYS`. An
    unreadable or malformed history file is logged and treated as empty; a
    failed save is logged and does not fail the run.
 
@@ -100,6 +107,7 @@ These values appear in the private candidate audit (`rejection_reason`):
 | Value | Set by | Meaning |
 | --- | --- | --- |
 | `recently_selected` | `generation/pipeline.py` | Excluded by recommendation history |
+| `content_duplicate` | `generation/content_deduplication.py` | Repeated information already covered by a retained item today |
 | `not_selected` | `selection.py` | Lost deduplication, was not classified, or missed a section quota |
 | `below_ai_minimum` | `selection.py` | Keyword-routed core candidate below `AI_MIN_SCORE` or `AI_MIN_POINTS` |
 | `below_core_minimum` | `selection.py` | Article-confirmed core candidate below the same minimums |

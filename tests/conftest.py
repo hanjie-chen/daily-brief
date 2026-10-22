@@ -2,6 +2,14 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def prevent_live_default_content_deduplicator(monkeypatch):
+    from daily_brief.generation import content_deduplication
+    from fakes import FakeContentDeduplicator
+
+    monkeypatch.setattr(content_deduplication, "create_model_backend", FakeContentDeduplicator)
+
+
+@pytest.fixture(autouse=True)
 def clear_jina_api_key(monkeypatch):
     """Keep optional authentication deterministic regardless of the shell environment."""
     monkeypatch.delenv('JINA_API_KEY', raising=False)

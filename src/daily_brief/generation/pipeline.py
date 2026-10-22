@@ -32,6 +32,7 @@ from ..time_window import TimeWindow, daily_window
 from ..network_recovery import network_recovery_exhausted
 from ..output.artifacts import atomic_write_text as _atomic_write_text
 from .classification import SelectionResult, classify_and_select_candidates
+from .content_deduplication import deduplicate_and_refill
 from .summaries import summarize_selected_candidates
 
 LOGGER = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ def run_generate(
     model_backend: ModelBackend | None = None,
     capture_model_inputs: bool = False,
     same_article_finder: SameArticleFinder | None = None,
+    deduplicator=None,
 ) -> GenerateResult:
     window = daily_window()
     label = date_label or window.date_label
@@ -112,6 +114,15 @@ def run_generate(
         alternate_reporting_finder,
         window,
         same_article_finder=same_article_finder,
+    )
+    summarization_inputs += deduplicate_and_refill(
+        selection,
+        deduplicator or backend,
+        lambda replacements: summarize_selected_candidates(
+            replacements, [], summarizer or backend, article_fetcher,
+            hn_discussion_fetcher, syndicated_finder, alternate_reporting_finder,
+            window, same_article_finder=same_article_finder,
+        ),
     )
     return _persist_generation(
         output_dir,

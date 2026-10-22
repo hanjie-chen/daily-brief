@@ -1,7 +1,7 @@
 # LLM
 
 This package holds everything that talks to, or prepares input for, a language
-model: topic-classification and summary prompts, bounded evidence excerpts, the
+model: topic-classification, summary and content-comparison prompts, bounded evidence excerpts, the
 provider-neutral backend contract, the Gemini and OpenRouter adapters, and model-input capture
 and replay. The package-level facade is the import used by the rest of the
 application:
@@ -20,7 +20,8 @@ writing summaries into the brief stays in `output/`.
 | File | Responsibility |
 | --- | --- |
 | `__init__.py` | Stable package facade and supported imports |
-| `model_backend.py` | Provider-neutral classification and summarization contract |
+| `model_backend.py` | Provider-neutral classification, summarization and content-comparison contract |
+| `content_deduplication.py` | Bounded comparison evidence, structured decisions and retained-reference validation |
 | `factory.py` | Shared environment-based backend selection for CLI, generation, retry and evaluation |
 | `openrouter_backend.py` | Chat-completions adapter, provider price caps, per-run cost reservations, retries and usage records |
 | `gemini_backend.py` | Gemini adapter: configuration, pacing, requests and retries, and summary model fallback |
@@ -30,6 +31,38 @@ writing summaries into the brief stays in `output/`.
 | `summarizer.py` | Summary routes, prompts, sufficiency rules, source prefixes, and normalization |
 | `evidence_selection.py` | Bounded title-aware excerpts with explicit omissions |
 | `model_evaluation.py` | Versioned model-input capture and side-effect-free replay |
+
+## Same-Day Content Comparison
+
+Both backends implement `deduplicate(candidates)` using the configured classifier
+model. `content_deduplication.py` supplies the prompt/schema and validates
+`ContentDecision(item_id, duplicate_of, reason)` results. Every supplied ID must
+appear exactly once. Non-null references must identify an earlier retained item;
+self-references, forward references and duplicate chains are rejected as a whole.
+Reasons must be nonempty and at most 500 characters.
+
+Input order determines preference. Repetition of core facts without meaningful
+new information is redundant, including a separate release announcement for the
+same patch. A shared topic/event alone does not establish duplication: independent
+technical analysis, causes, process investigations, corrections and substantive
+developments remain eligible. Incomplete evidence or uncertainty means retain.
+All content is explicitly untrusted and cannot instruct the model.
+
+Each item includes a bounded title, URLs, summary and up to 4,000 characters of
+original evidence. With multiple sources, 3,000 characters go to the first
+available webpage/post, and 1,000 are shared by the remaining post/comment sources;
+with a single source it receives the full budget. Community roundups prioritize
+comments and then question context, excluding webpage evidence. Truncated excerpts
+carry omission notices. These excerpts do not replace stored in-memory materials.
+
+OpenRouter uses disabled reasoning, classifier pricing/pacing and the existing
+instance budget; Gemini uses the classifier request path without summary fallback.
+Output is bounded to 2,048 tokens. `last_deduplication_model` and
+`last_deduplication_usage` expose separate diagnostics, preserving summary fields.
+OpenRouter logs the distinct `deduplicate` task with actual usage/cost. Generation
+owns selection changes, bounded refills and failure handling, and suspends long
+network recovery for this optional check. `tests/test_content_deduplication_backend.py`
+checks prompts, validation and both provider wire contracts with fake transports.
 
 ## Summary Sufficiency
 
@@ -195,19 +228,20 @@ cost reservations, request records, and summary attempt counts. The shared scope
 allows at most six ten-minute pauses across generation and publishing. HTTP 408,
 5xx and temporary transport failures qualify; quota responses, certificate errors,
 permanent DNS failures and invalid model output do not. Calls outside that scope
-keep the bounded short-retry behavior.
+keep the bounded short-retry behavior. Generation also suspends long recovery
+for the optional content-comparison task; its failure preserves current items.
 
 A backend instance reserves a conservative input/output cost before every attempt,
 using UTF-8 input bytes plus framing allowance and configured per-million price
 caps. Luna reserves at least its cache-write input rate. Valid response cost
 replaces that attempt's reservation; unknown-cost failures retain reservations.
-The default $0.25 instance budget is shared across classification, summaries and
+The default $0.25 instance budget is shared across classification, summaries, content comparison and
 retries; it resets in a new process and is not a monthly account limit. Price caps
 are sent to the provider router. Custom model IDs require explicit input/output
 caps; operators must also account for that model's caching charges.
 
 Safe per-attempt records are available in `request_records`, and logs include
-reported cost and accounted total for both tasks. Summary token diagnostics use
+reported cost and accounted total for all three tasks. Summary token diagnostics use
 the existing candidate audit fields; `last_summary_usage` additionally exposes
 cost/cache details and `last_summary_provider` the upstream provider. No costs or
 provider error bodies enter the public brief schema.
@@ -281,7 +315,9 @@ evaluate-model`. Both live in `model_evaluation.py`.
 Model comparison is intentionally separate from generation. A generation run can
 capture the exact classifier and summarizer inputs, and `evaluate-model` can
 replay that immutable input without fetching sources, rendering a brief, or
-modifying recommendation and publishing state. Capture schema 7 records exact
+modifying recommendation and publishing state. Generation captures additional
+summary inputs from content-deduplication refills, but this capture/replay does
+not include the content-comparison task itself. Capture schema 7 records exact
 `summary_reference_date` and `webpage_published_at` values (including unknowns), plus
 `summary_input_mode`: new ordinary candidates use `materials`, while historical
 captures retain their legacy mode. It preserves each material origin and retrieval

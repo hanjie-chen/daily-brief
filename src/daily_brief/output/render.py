@@ -44,6 +44,7 @@ def render_candidates_json(candidates: list[Candidate]) -> str:
                 "selected": candidate.selected,
                 "section": candidate.section,
                 "rejection_reason": candidate.rejection_reason,
+                "content_deduplication": candidate.content_deduplication,
                 "article_retrieval": {
                     "status": candidate.article_retrieval.status,
                     "method": candidate.article_retrieval.method,

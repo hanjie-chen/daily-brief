@@ -16,6 +16,11 @@ from zoneinfo import ZoneInfo
 
 from ..models import Candidate
 from ..network_recovery import is_transient_network_error, recoverable_network
+from .content_deduplication import (
+    ContentDecision, CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION,
+    DEDUPLICATION_MAX_OUTPUT_TOKENS, build_content_deduplication_prompt,
+    content_deduplication_schema, validate_content_decisions,
+)
 from .gemini_api import (
     MAX_RESPONSE_BYTES,
     GeminiAPIError,
@@ -104,6 +109,8 @@ class GeminiBackend:
             *(_validate_model(model) for model in summarizer_fallback_models),
         )))
         self.summarizer_fallback_models = self._summary_models[1:]
+        self.last_deduplication_model = self.classifier_model
+        self.last_deduplication_usage = {}
         self.last_summary_model = self.summarizer_model
         self._summary_attempt_models: list[str] = []
         self._daily_exhausted_until: dict[str, float] = {}
@@ -250,6 +257,29 @@ class GeminiBackend:
             max_output_tokens=CLASSIFIER_MAX_OUTPUT_TOKENS,
         )
         return validate_classification(output, candidates, allowed_ids, allowed_labels)
+
+    def deduplicate(self, candidates: list[Candidate]) -> list[ContentDecision]:
+        self.last_deduplication_model = self.classifier_model
+        self.last_deduplication_usage = {}
+        if not candidates:
+            return []
+        self._reset_request_diagnostics(self.classifier_model)
+        try:
+            output = self._interact(
+                task="deduplicate", model=self.classifier_model,
+                system_instruction=CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION,
+                prompt=build_content_deduplication_prompt(candidates),
+                schema=content_deduplication_schema(candidates),
+                max_output_tokens=DEDUPLICATION_MAX_OUTPUT_TOKENS,
+            )
+        finally:
+            self.last_deduplication_usage = dict(
+                self._last_response_usage_by_model.get(self.classifier_model, {})
+            )
+        try:
+            return validate_content_decisions(output, candidates)
+        except ValueError:
+            raise GeminiResponseError("Gemini returned invalid content decisions") from None
 
     def summarize(self, candidate: Candidate) -> str:
         if uses_material_summary(candidate):

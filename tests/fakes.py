@@ -2,6 +2,7 @@
 
 from daily_brief.article_fetcher import ArticleFetchError
 from daily_brief.llm.gemini_backend import GeminiAPIError
+from daily_brief.llm import ContentDecision
 from daily_brief.models import Story
 from daily_brief.recovery import SyndicatedFinderError
 
@@ -82,7 +83,13 @@ class FakeClassifier:
         }
 
 
-class FakeModelBackend(FakeSummarizer, FakeClassifier):
+class FakeContentDeduplicator:
+    def deduplicate(self, candidates):
+        return [ContentDecision(c.story.hn_item_id, None, "Independent test item.")
+                for c in candidates]
+
+
+class FakeModelBackend(FakeSummarizer, FakeClassifier, FakeContentDeduplicator):
     name = "fake"
 
     def __init__(self):

@@ -152,8 +152,27 @@ this package that owns it.
    `community_roundup` remains the exception: its comment-led overview was
    assessed before selection and is reused. An external-source retrieval failure
    never becomes a title- or model-knowledge-based article summary.
-8. `pipeline.py`: `output/render.py` serializes the validated public JSON
-   and private candidate audit for writing. `candidates/history.py` then records selected item IDs. An
+8. `content_deduplication.py`: Successful nonempty summaries are compared together
+   across both sections, in core-then-outside preference order. The configured
+   classifier model receives summaries plus bounded original evidence. It marks
+   repeated core information, while retaining independent analysis or important
+   developments from the same event and uncertain cases. The entire response is
+   validated before any deletion; duplicate references must point to earlier
+   retained items, never duplicate chains. Unsuccessful summaries are skipped.
+   `classification.py` supplies ranked, already-qualified reserves for each
+   section. Removed items get `content_duplicate`; each gap is filled from its
+   own section without reclassification. Replacement summaries use the existing
+   material path, and successful roundup summaries are reused. Later comparisons
+   put retained references first and only apply decisions to new items.
+   `CONTENT_DEDUP_MAX_REPLACEMENTS` limits additional candidates to three, hence
+   at most four comparisons; exhausted reserves or limits may leave fewer items.
+   Comparison failures preserve current items and stop further refills. This
+   optional model operation retains short retries but suspends long network
+   recovery. Per-item `content_deduplication` audit entries record the decision
+   round, status, reference ID, reason, model and error type. Logs record timing;
+   provider logs retain token/cost usage. Original evidence is not persisted.
+9. `pipeline.py`: `output/render.py` serializes the validated public JSON
+   and private candidate audit for writing. `candidates/history.py` then records only final selected item IDs. An
    empty brief writes a `.no-content` marker instead of public JSON.
 
 ## Retry Existing Items
@@ -190,7 +209,9 @@ comparison captures remain a separate opt-in workflow.
 Writes use atomic file replacement and check for changes to the inputs made while
 retrieval was running. Ordinary write errors roll back artifacts already replaced;
 this is not a cross-file crash transaction. Retry does not change recommendation
-history or publishing state and never publishes. Use `publish --date YYYY-MM-DD`
+history or publishing state and never publishes. It does not perform content
+deduplication or refill; its saved selection diagnostics remain historical.
+Use `publish --date YYYY-MM-DD`
 separately after checking the local result. No eligible items is a no-op; any
 unsuccessful target gives the CLI a nonzero exit status, even if other items update.
 
@@ -202,6 +223,7 @@ unsuccessful target gives the CLI a nonzero exit status, even if other items upd
 | `pipeline.py` | Stage order, candidate collection, history exclusion, and artifact writes |
 | `retry.py` | Refresh selected saved items, preserve successful results, and replace local artifacts |
 | `classification.py` | Keyword routing, bounded topic classification, roundup assessment, and section selection |
+| `content_deduplication.py` | Same-day information comparison, stable retained references and bounded section refills |
 | `summaries.py` | Selected-item single-call summary loop and summary diagnostics |
 | `material.py` | Classification/summary retrieval modes, recovery dispatch, and bounded HN discussion material |
 
@@ -211,7 +233,8 @@ Keep dependencies directed from the pipeline toward later, lower-level stages:
 
 ```text
 __init__       -> pipeline, retry
-pipeline       -> classification, summaries
+pipeline       -> classification, content_deduplication, summaries
+content_deduplication -> classification (selection result only)
 retry          -> summaries, material
 classification -> summaries, material
 summaries      -> material
@@ -225,7 +248,7 @@ dependency graph free of cycles.
 ## Invariants
 
 - External collaborators (story sources, article fetcher, discussion fetcher,
-  search finders, classifier, summarizer, and model backend) remain injectable
+  search finders, classifier, summarizer, content deduplicator, and model backend) remain injectable
   through `run_generate(...)`, so tests never reach live services.
 - Behavioral invariants shared with other packages, such as fail-closed
   retrieval, recovery eligibility, and public/private output boundaries, are
@@ -239,6 +262,13 @@ End-to-end tests run `run_generate(...)` with injected fakes and live in
 `test_summaries.py`, and `test_retry.py`. `tests/generation/conftest.py` replaces the default model
 backend, article fetcher, and discussion fetcher for every test there; shared
 fakes and story builders live in `tests/fakes.py`.
+
+`test_content_deduplication.py` verifies atomic fail-open comparison, refill
+ranking/quotas/bounds, stable references, roundup reuse and final-only history.
+The PHP advisory/release/foundation fixture uses saved public summaries; its
+mocked judgments test orchestration, not live model quality. Normal model-input
+capture includes any additional summary calls but does not replay content
+comparison through `evaluate-model`.
 
 - `tests/test_same_article_pipeline.py`: same-article recovery and its hand-off
   to the other recovery routes and to discussion fallback.

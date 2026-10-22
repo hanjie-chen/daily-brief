@@ -17,7 +17,13 @@ def test_openrouter_roundup_is_classified_from_comments_and_reused(tmp_path):
         body = json.loads(request.data)
         prompt = body['messages'][-1]['content']
         schema = body['response_format']['json_schema']['schema']
-        if body['model'] == 'qwen/qwen3.8-flash':
+        if body['response_format']['json_schema']['name'] == 'daily_brief_deduplicate':
+            calls.append('deduplicate')
+            item_ids = schema['properties']['decisions']['items']['properties']['item_id']['enum']
+            result = {'decisions': [{'item_id': item_id, 'duplicate_of': None,
+                                     'reason': 'Distinct article and community examples.'}
+                                    for item_id in item_ids]}
+        elif body['model'] == 'qwen/qwen3.8-flash':
             is_comment_classification = '"hn_comments"' in prompt
             label = 'core_non_ai' if is_comment_classification else 'community_roundup'
             calls.append(label)
@@ -52,6 +58,9 @@ def test_openrouter_roundup_is_classified_from_comments_and_reused(tmp_path):
     audit = {r['hn_item_id']: r for r in json.loads(result.data_path.read_text())}
     assert calls[:3] == ['community_roundup', 'core_non_ai', 'roundup_summary']
     assert calls.count('roundup_summary') == 1
+    assert calls.count('deduplicate') == 1
+    assert all(row['content_deduplication'][0]['status'] == 'retained'
+               for row in audit.values() if row['selected'])
     assert audit['49686380']['content_kind'] == 'community_roundup'
     assert audit['49686380']['summary_sources_used'] == ['hn_comments']
     assert audit['49686380']['selected'] is True

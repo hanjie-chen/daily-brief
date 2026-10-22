@@ -1,5 +1,6 @@
 """Model-facing logic: prompts, evidence selection, provider adapters, and evaluation."""
 
+from .content_deduplication import ContentDecision, ensure_content_decisions
 from .gemini_backend import GeminiBackend
 from .openrouter_backend import OpenRouterBackend
 from .factory import create_model_backend
@@ -23,6 +24,8 @@ from .summarizer import (
 
 
 __all__ = [
+    "ContentDecision",
+    "ensure_content_decisions",
     "ALTERNATE_REPORTING_SUMMARY_PREFIX",
     "HN_DISCUSSION_SUMMARY_PREFIX",
     "GeminiBackend",

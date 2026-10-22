@@ -65,6 +65,7 @@ def test_render_candidates_json_uses_snake_case_fields():
         "selected",
         "section",
         "rejection_reason",
+        "content_deduplication",
         "article_retrieval",
         "discussion_retrieval",
         "hn_post_retrieval",

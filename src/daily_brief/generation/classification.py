@@ -9,6 +9,7 @@ from ..candidates import (
     apply_article_evidence_bonus,
     has_non_weak_keyword_match,
     meets_exploration_minimum,
+    rank_core_candidates,
     rank_exploration_candidates,
     select_ai_candidates,
     select_exploration_candidates,
@@ -32,6 +33,8 @@ LOGGER = logging.getLogger(__name__)
 class SelectionResult:
     ai_items: list[Candidate]
     selected_hot_items: list[Candidate]
+    ai_reserve: list[Candidate]
+    hot_reserve: list[Candidate]
     classification_batches: list[list[Candidate]]
     summary_inputs: list[Candidate]
 
@@ -176,6 +179,14 @@ def classify_and_select_candidates(
     return SelectionResult(
         ai_items=ai_items,
         selected_hot_items=selected_hot_items,
+        ai_reserve=[item for item in rank_core_candidates(core_candidates) if not item.selected],
+        hot_reserve=[
+            item for item in sorted(
+                outside_candidates,
+                key=lambda item: (item.story.points, item.story.comments),
+                reverse=True,
+            ) if not item.selected
+        ],
         classification_batches=classification_batches,
         summary_inputs=summary_inputs,
     )

@@ -15,6 +15,7 @@ from .scoring import apply_article_evidence_bonus, score_candidate
 from .selection import (
     dedupe_candidates,
     meets_exploration_minimum,
+    rank_core_candidates,
     rank_exploration_candidates,
     select_ai_candidates,
     select_exploration_candidates,
@@ -35,6 +36,7 @@ __all__ = [
     "load_history",
     "match_keywords",
     "meets_exploration_minimum",
+    "rank_core_candidates",
     "rank_exploration_candidates",
     "recent_ids",
     "save_history",

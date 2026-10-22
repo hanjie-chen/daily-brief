@@ -162,6 +162,7 @@ class Candidate:
     selected: bool = False
     section: str = ""
     rejection_reason: str = ""
+    content_deduplication: list[dict] = field(default_factory=list)
     summary: str = ""
     why: str = ""
     topic_route: str = "not_evaluated"

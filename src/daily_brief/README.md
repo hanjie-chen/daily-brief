@@ -118,6 +118,14 @@ listed only in that package's guide.
   source text. Empty or failed material sources do not suppress the others.
   Failed external retrieval never produces a title-only article paraphrase.
   Product-level summary requirements are defined in [the product document](../../docs/product.md).
+- Before generation writes artifacts, successful summaries undergo a same-day
+  information comparison across both sections. Repeated core facts without
+  substantive additions lose to earlier retained items; independent analysis of
+  the same event remains eligible. Qualified same-section reserves can fill the
+  gaps, with at most three replacement candidates. Invalid or failed comparisons
+  retain current items and never spend scheduled long network pauses. The
+  generation guide documents ordering, diagnostics and the refill boundary.
+  History stores only final selections; retry does not rerun this stage.
 - Candidate collection is run-scoped: either required source failing aborts the
   run. After collection succeeds, classifier, article-retrieval, and summarizer
   failures are item-scoped and retain distinct reader-facing and audit states.

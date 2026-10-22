@@ -107,6 +107,15 @@ def rank_exploration_candidates(candidates: list[Candidate]) -> list[Candidate]:
     return sorted(candidates, key=lambda item: item.score, reverse=True)
 
 
+def rank_core_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    """Return eligible, exactly deduplicated core candidates without changing flags."""
+    return sorted(
+        (item for item in _dedupe_ai_candidates(candidates) if _meets_ai_minimum(item)),
+        key=lambda item: item.score,
+        reverse=True,
+    )
+
+
 def select_exploration_candidates(candidates: list[Candidate]) -> list[Candidate]:
     """Select the hottest confirmed outside-core candidates."""
 
