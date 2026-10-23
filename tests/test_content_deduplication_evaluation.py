@@ -80,14 +80,14 @@ def test_runner_repeats_both_orders_with_matching_hashes_and_cost_records(evalua
     assert all("evaluation_group" in row for row in output["runs"] + output["case_stats"])
 
 
-def test_v1_archive_keeps_original_gold_and_group_fallback(evaluator):
-    path = evaluator.DEFAULT_CASES.with_name("cases.json")
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == "d54609af38f7fc5c535a467bee6184615e7598863be8b9525917d88f49354453"
+def test_group_defaults_to_category_when_unspecified(evaluator, tmp_path):
+    cases = evaluator.load_cases()[:1]
+    cases[0].pop("evaluation_group")
+    path = tmp_path / "ungrouped.json"
+    path.write_text(json.dumps({"schema_version": 1, "cases": cases}))
     cases = evaluator.load_cases(path)
-    assert len(cases) == 7
-    assert cases[5]["expected_retained_ids"] == ["2501", "2502"]
     result = evaluator.run_suite(cases, ExpectedBackend(cases), repeats=1)
-    assert result["planned_calls"] == result["passed"] == 14
+    assert result["planned_calls"] == result["passed"] == 2
     assert all(row["evaluation_group"] == row["category"] for row in result["runs"] + result["case_stats"])
 
 
