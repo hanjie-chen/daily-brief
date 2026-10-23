@@ -32,11 +32,74 @@ def output():
     ]}
 
 
-def test_valid_decisions_follow_preference_order_and_keep_independent_analysis():
+def test_valid_decisions_follow_input_order_and_keep_independent_analysis():
     decisions = validate_content_decisions(output(), candidates())
     assert [d.duplicate_of for d in decisions] == [None, '1', None]
     assert ensure_content_decisions(list(reversed(decisions)), candidates()) == decisions
     assert ensure_content_decisions([], []) == []
+
+
+def test_forward_references_select_later_stronger_representative_in_input_order():
+    rows = [ContentDecision('1', '5', 'Later item provides stronger supported coverage.'),
+            ContentDecision('2', '5', 'Same core information with incidental additions.'),
+            ContentDecision('5', None, 'Most complete and useful supported account.')]
+    before = list(rows)
+    decisions = ensure_content_decisions([rows[2], rows[0], rows[1]], candidates())
+    assert decisions == before
+    assert rows == before
+    wire = {'decisions': [{'item_id': d.item_id, 'duplicate_of': d.duplicate_of,
+                            'reason': d.reason} for d in reversed(rows)]}
+    assert validate_content_decisions(wire, candidates()) == rows
+
+
+def test_invalid_later_decision_rejects_entire_result_without_mutating_inputs():
+    items = candidates()
+    before_items = [replace(c) for c in items]
+    rows = [ContentDecision('1', '5', 'Later stronger representative.'),
+            ContentDecision('2', None, 'Independent.'),
+            ContentDecision('5', 'unknown', 'Invalid later target.')]
+    before_rows = list(rows)
+    with pytest.raises(ValueError):
+        ensure_content_decisions(rows, items)
+    assert rows == before_rows
+    assert items == before_items
+
+
+def test_prompt_is_generic_and_selects_representative_by_quality_before_rank():
+    instruction = CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION.lower()
+    for known_case_term in ('php', 'security advisory', 'release announcement',
+                            'support deadline', 'delayed remediation', 'for example'):
+        assert known_case_term not in instruction
+    assert 'independently' in instruction and 'of their order' in instruction
+    assert 'most complete, useful, and evidence-supported' in instruction
+    assert 'tie-break' in instruction
+    assert 'including one later' in instruction
+    prompt = build_content_deduplication_prompt(candidates())
+    assert 'input rank breaks quality ties only' in prompt
+    assert 'null or any retained input ID' in prompt
+    assert 'earlier retained' not in prompt
+
+
+def test_prompt_requires_positive_identity_evidence_and_full_information_coverage():
+    instruction = CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION.lower()
+    assert 'positive evidence' in instruction
+    assert 'absence of distinguishing information' in instruction
+    assert 'titles alone cannot resolve that gap' in instruction
+    assert 'keep only the stronger representative' in instruction
+    assert 'fully covered subset independent' in instruction
+    assert 'intended audience' in instruction
+    assert 'distinct factual' in instruction
+
+
+def test_prompt_names_character_reason_limits_without_weakening_validation():
+    assert 'at most 200 characters per reason' in CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION
+    assert 'hard maximum is 500 characters' in CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION
+    rows = [ContentDecision('1', None, 'x' * 500),
+            ContentDecision('2', '1', '重复。'), ContentDecision('5', None, '独立。')]
+    assert ensure_content_decisions(rows, candidates()) == rows
+    rows[0] = replace(rows[0], reason='字' * 501)
+    with pytest.raises(ValueError, match='reasons must be nonempty and bounded'):
+        ensure_content_decisions(rows, candidates())
 
 
 @pytest.mark.parametrize('rows', [
@@ -44,7 +107,9 @@ def test_valid_decisions_follow_preference_order_and_keep_independent_analysis()
     [ContentDecision('1', None, 'Keep')],
     [ContentDecision('1', None, 'Keep')] * 3,
     [ContentDecision('1', '1', 'Self'), ContentDecision('2', None, 'Keep'), ContentDecision('5', None, 'Keep')],
-    [ContentDecision('1', '5', 'Later'), ContentDecision('2', None, 'Keep'), ContentDecision('5', None, 'Keep')],
+    [ContentDecision('1', '2', 'Cycle'), ContentDecision('2', '1', 'Cycle'), ContentDecision('5', None, 'Keep')],
+    [ContentDecision('1', '2', 'Cycle'), ContentDecision('2', '5', 'Cycle'), ContentDecision('5', '1', 'Cycle')],
+    [ContentDecision('1', '2', 'Chain'), ContentDecision('2', '5', 'Chain'), ContentDecision('5', None, 'Keep')],
     [ContentDecision('1', None, 'Keep'), ContentDecision('2', '1', 'Same'), ContentDecision('5', '2', 'Chain')],
     [ContentDecision('1', None, 'Keep'), ContentDecision('2', 'missing', 'Unknown'), ContentDecision('5', None, 'Keep')],
     [ContentDecision('1', None, ' '), ContentDecision('2', None, 'Keep'), ContentDecision('5', None, 'Keep')],
@@ -122,7 +187,12 @@ def test_backend_uses_classifier_and_does_not_alter_summary_diagnostics(provider
     transport = Opener(provider, output())
     backend = cls(api_key='test-key', opener=transport, min_request_interval_seconds=0)
     before_model = backend.last_summary_model
-    assert backend.deduplicate(candidates())[1].duplicate_of == '1'
+    transport.result = {'decisions': [
+        {'item_id': '1', 'duplicate_of': '5', 'reason': 'Later stronger representative.'},
+        {'item_id': '2', 'duplicate_of': '5', 'reason': 'Same core information.'},
+        {'item_id': '5', 'duplicate_of': None, 'reason': 'Most complete supported account.'},
+    ]}
+    assert [d.duplicate_of for d in backend.deduplicate(candidates())] == ['5', '5', None]
     request = transport.requests[0]
     assert request['model'] == backend.classifier_model
     assert backend.last_deduplication_model == backend.classifier_model

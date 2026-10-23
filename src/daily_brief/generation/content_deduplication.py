@@ -21,14 +21,13 @@ def deduplicate_and_refill(
 ) -> list[Candidate]:
     """Mutate final selection and return only new summary inputs for optional capture.
 
-    Previously retained items are stable references in subsequent rounds. Failed
-    summaries are never compared; their existing reader-facing behavior is kept.
+    Every round can replace a weaker item with a more informative representative,
+    including a newly summarized reserve. Failed summaries are never compared;
+    their existing reader-facing behavior is kept.
     Only qualified reserves are visited, without another classification pass.
     """
     summary_inputs: list[Candidate] = []
-    current = [*selection.ai_items, *selection.selected_hot_items]
-    pending = current
-    references: list[Candidate] = []
+    pending = [*selection.ai_items, *selection.selected_hot_items]
     replacements = 0
     round_number = 0
     reserves = {
@@ -38,20 +37,21 @@ def deduplicate_and_refill(
     while pending:
         round_number += 1
         compared = [
-            item for item in [*references, *pending]
+            item for item in [*selection.ai_items, *selection.selected_hot_items]
             if item.summary_status == "success" and item.summary.strip()
         ]
         pending_ids = {item.story.hn_item_id for item in pending}
+        compared_ids = {item.story.hn_item_id for item in compared}
         for item in pending:
-            if item not in compared:
+            if item.story.hn_item_id not in compared_ids:
                 _record(item, round_number, "skipped", reason="summary_unavailable")
         if len(compared) < 2:
             for item in pending:
-                if item in compared:
+                if item.story.hn_item_id in compared_ids:
                     _record(item, round_number, "skipped", reason="fewer_than_two_summaries")
             break
         # Refills with only failed summaries cannot create a new comparison.
-        if not any(item.story.hn_item_id in pending_ids for item in compared):
+        if not pending_ids & compared_ids:
             break
         started = time.monotonic()
         try:
@@ -61,20 +61,15 @@ def deduplicate_and_refill(
             with suspend_network_recovery():
                 decisions = ensure_content_decisions(deduplicator.deduplicate(compared), compared)
         except Exception as exc:
-            for item in pending:
-                if item in compared:
-                    _record(item, round_number, "failed", error_type=type(exc).__name__,
-                            model=_model(deduplicator))
+            for item in compared:
+                _record(item, round_number, "failed", error_type=type(exc).__name__,
+                        model=_model(deduplicator))
             LOGGER.warning("component=content_deduplication status=failed round=%d duration=%.3fs error=%s",
                            round_number, time.monotonic() - started, type(exc).__name__)
             break
 
         dropped = set()
         for item, decision in zip(compared, decisions, strict=True):
-            # A refill cannot overturn earlier accepted items. It can only lose
-            # its own place to an earlier retained item in this comparison.
-            if item.story.hn_item_id not in pending_ids:
-                continue
             status = "duplicate" if decision.duplicate_of else "retained"
             _record(item, round_number, status, duplicate_of=decision.duplicate_of,
                     reason=decision.reason, model=_model(deduplicator))
@@ -91,7 +86,6 @@ def deduplicate_and_refill(
         selection.selected_hot_items[:] = [
             i for i in selection.selected_hot_items if i.story.hn_item_id not in dropped
         ]
-        references = [*selection.ai_items, *selection.selected_hot_items]
         pending = []
         for section, selected, quota in (
             ("ai", selection.ai_items, AI_MAX_ITEMS),

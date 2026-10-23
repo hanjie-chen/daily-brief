@@ -153,23 +153,31 @@ this package that owns it.
    assessed before selection and is reused. An external-source retrieval failure
    never becomes a title- or model-knowledge-based article summary.
 8. `content_deduplication.py`: Successful nonempty summaries are compared together
-   across both sections, in core-then-outside preference order. The configured
+   across both sections, supplied in core-then-outside ranking order. The configured
    classifier model receives summaries plus bounded original evidence. It marks
    repeated core information, while retaining independent analysis or important
-   developments from the same event and uncertain cases. The entire response is
-   validated before any deletion; duplicate references must point to earlier
-   retained items, never duplicate chains. Unsuccessful summaries are skipped.
+   developments from the same event and uncertain cases. For redundant coverage,
+   it selects the most informative, evidence-supported representative regardless
+   of input position; ranking only breaks quality ties. The entire response is
+   validated before any deletion; duplicate references may point to any item
+   retained in that batch, never self-references, unknown IDs, cycles or chains.
+   Unsuccessful summaries are skipped.
    `classification.py` supplies ranked, already-qualified reserves for each
    section. Removed items get `content_duplicate`; each gap is filled from its
    own section without reclassification. Replacement summaries use the existing
    material path, and successful roundup summaries are reused. Later comparisons
-   put retained references first and only apply decisions to new items.
+   reassess the current successful items together, allowing a more informative
+   refill to replace a weaker previously retained item. Dropped items never
+   re-enter the reserve queue. Surviving items keep their section and relative order.
    `CONTENT_DEDUP_MAX_REPLACEMENTS` limits additional candidates to three, hence
    at most four comparisons; exhausted reserves or limits may leave fewer items.
    Comparison failures preserve current items and stop further refills. This
    optional model operation retains short retries but suspends long network
    recovery. Per-item `content_deduplication` audit entries record the decision
-   round, status, reference ID, reason, model and error type. Logs record timing;
+   round, status, reference ID, reason, model and error type for every comparison.
+   References describe that round's decision; a representative can itself lose
+   to a later refill in a subsequent round. Final `selected` flags and history
+   reflect the completed selection. Logs record timing;
    provider logs retain token/cost usage. Original evidence is not persisted.
 9. `pipeline.py`: `output/render.py` serializes the validated public JSON
    and private candidate audit for writing. `candidates/history.py` then records only final selected item IDs. An
@@ -223,7 +231,7 @@ unsuccessful target gives the CLI a nonzero exit status, even if other items upd
 | `pipeline.py` | Stage order, candidate collection, history exclusion, and artifact writes |
 | `retry.py` | Refresh selected saved items, preserve successful results, and replace local artifacts |
 | `classification.py` | Keyword routing, bounded topic classification, roundup assessment, and section selection |
-| `content_deduplication.py` | Same-day information comparison, stable retained references and bounded section refills |
+| `content_deduplication.py` | Same-day information comparison, representative replacement and bounded section refills |
 | `summaries.py` | Selected-item single-call summary loop and summary diagnostics |
 | `material.py` | Classification/summary retrieval modes, recovery dispatch, and bounded HN discussion material |
 
@@ -264,9 +272,12 @@ backend, article fetcher, and discussion fetcher for every test there; shared
 fakes and story builders live in `tests/fakes.py`.
 
 `test_content_deduplication.py` verifies atomic fail-open comparison, refill
-ranking/quotas/bounds, stable references, roundup reuse and final-only history.
+ranking/quotas/bounds, later representative replacement, roundup reuse and final-only history.
 The PHP advisory/release/foundation fixture uses saved public summaries; its
-mocked judgments test orchestration, not live model quality. Normal model-input
+mocked judgments test orchestration, not live model quality. Repeated live
+order-reversal checks and independent authored cases live in
+[`evals/content_deduplication/`](../../../evals/content_deduplication/README.md).
+Normal model-input
 capture includes any additional summary calls but does not replay content
 comparison through `evaluate-model`.
 

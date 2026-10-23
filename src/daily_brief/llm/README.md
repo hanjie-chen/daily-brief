@@ -37,15 +37,23 @@ writing summaries into the brief stays in `output/`.
 Both backends implement `deduplicate(candidates)` using the configured classifier
 model. `content_deduplication.py` supplies the prompt/schema and validates
 `ContentDecision(item_id, duplicate_of, reason)` results. Every supplied ID must
-appear exactly once. Non-null references must identify an earlier retained item;
-self-references, forward references and duplicate chains are rejected as a whole.
+appear exactly once. Non-null references must identify another item retained in
+the complete response, including later input items. Self-references, unknown IDs,
+cycles and duplicate chains are rejected as a whole before any selection changes.
 Reasons must be nonempty and at most 500 characters.
 
-Input order determines preference. Repetition of core facts without meaningful
-new information is redundant, including a separate release announcement for the
-same patch. A shared topic/event alone does not establish duplication: independent
-technical analysis, causes, process investigations, corrections and substantive
-developments remain eligible. Incomplete evidence or uncertainty means retain.
+The prompt first assesses informational redundancy across the complete batch,
+then selects representatives by factual coverage, explanatory depth, relevant
+conditions/limitations and support in the supplied evidence. Input rank only
+breaks ties in those quality factors; length and position do not establish
+quality. A later, stronger representative can replace an earlier weaker item.
+The prompt contains no concrete development-case examples or expected answers.
+A shared topic/event alone does not establish duplication: independently useful
+facts, explanations, analysis, corrections and developments remain eligible.
+Shared identity and core facts require specific positive source evidence;
+vague summaries and missing distinguishing details cannot establish redundancy.
+A fully covered subset does not gain independent value from its audience,
+format or reading effort. Missing supporting evidence or uncertainty means retain.
 All content is explicitly untrusted and cannot instruct the model.
 
 Each item includes a bounded title, URLs, summary and up to 4,000 characters of
@@ -63,6 +71,10 @@ OpenRouter logs the distinct `deduplicate` task with actual usage/cost. Generati
 owns selection changes, bounded refills and failure handling, and suspends long
 network recovery for this optional check. `tests/test_content_deduplication_backend.py`
 checks prompts, validation and both provider wire contracts with fake transports.
+The separate [`content comparison evaluation`](../../../evals/content_deduplication/README.md)
+runs frozen cases through this same production prompt and backend in different
+orders, with repetitions, expected judgments kept out of model input, and results
+written separately from generation artifacts.
 
 ## Summary Sufficiency
 

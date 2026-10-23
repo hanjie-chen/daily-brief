@@ -108,10 +108,12 @@ def test_refill_summary_inputs_remain_loadable_for_model_evaluation(tmp_path):
     ]
 
 
-def test_php_release_duplicate_preserves_foundation_analysis_refills_and_saves_final_history(tmp_path):
+@pytest.mark.parametrize("reverse_pair", [False, True])
+def test_php_release_duplicate_preserves_foundation_analysis_refills_and_saves_final_history(tmp_path, reverse_pair):
     fixture = json.loads((Path(__file__).parents[1] / "fixtures/content_deduplication/php_security_2026_10_22.json").read_text())
     first, second, fifth = fixture["items"]
-    rows = [first, second,
+    pair = [second, first] if reverse_pair else [first, second]
+    rows = [*pair,
             {"hn_item_id": "101", "title": "Independent report A"},
             {"hn_item_id": "102", "title": "Independent report B"}, fifth,
             {"hn_item_id": "103", "title": "Independent report C"}]
@@ -160,7 +162,10 @@ def test_cross_section_duplicate_refills_its_own_section(tmp_path):
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("comparison unavailable"), [],
-    [ContentDecision("1", None, "keep"), ContentDecision("2", "1", "duplicate")]])
+    [ContentDecision("1", None, "keep"), ContentDecision("2", "1", "duplicate")],
+    [ContentDecision("1", "2", "invalid cycle"), ContentDecision("2", "1", "invalid cycle"),
+     ContentDecision("3", "4", "would be valid alone"), ContentDecision("4", None, "keep"),
+     ContentDecision("5", None, "keep")]])
 def test_failed_or_partial_decisions_retain_entire_selection_and_stop_refill(tmp_path, failure):
     deduplicator = ScriptedDeduplicator(failure=failure)
     ids, records, _ = generate(tmp_path, core_stories(6), deduplicator)
@@ -223,20 +228,43 @@ def test_refill_excludes_recent_and_under_threshold_candidates(tmp_path):
     assert records["302"]["selected"] is False
 
 
-def test_later_round_cannot_remove_a_previously_retained_item(tmp_path):
-    class ChangingDeduplicator(ScriptedDeduplicator):
+def test_more_complete_refill_can_replace_an_earlier_retained_item(tmp_path):
+    class MoreCompleteRefillDeduplicator(ScriptedDeduplicator):
         def deduplicate(self, candidates):
-            self.duplicate_of = {"2": "1"} if not self.calls else {"3": "1"}
+            self.duplicate_of = {"2": "1"} if not self.calls else {"1": "6"}
             return super().deduplicate(candidates)
 
-    deduplicator = ChangingDeduplicator()
-    ids, records, _ = generate(tmp_path, core_stories(6), deduplicator)
+    deduplicator = MoreCompleteRefillDeduplicator()
+    summarizer = FakeSummarizer()
+    ids, records, history = generate(tmp_path, core_stories(8), deduplicator,
+                                     summarizer=summarizer)
 
-    assert ids["ai"] == ["1", "3", "4", "5", "6"]
-    assert records["3"]["content_deduplication"] == [{
-        "round": 1, "status": "retained", "duplicate_of": None,
-        "reason": "Independent information or uncertain overlap", "error_type": "", "model": "test-content-model",
-    }]
+    assert ids["ai"] == history["2026-10-22"] == ["3", "4", "5", "6", "7"]
+    assert deduplicator.calls == [
+        ["1", "2", "3", "4", "5"], ["1", "3", "4", "5", "6"],
+        ["3", "4", "5", "6", "7"],
+    ]
+    assert len(summarizer.titles) == 7
+    assert [check["status"] for check in records["1"]["content_deduplication"]] == [
+        "retained", "duplicate",
+    ]
+    assert records["1"]["content_deduplication"][-1]["duplicate_of"] == "6"
+    assert records["1"]["selected"] is False
+    assert records["1"]["rejection_reason"] == "content_duplicate"
+    assert records["8"]["selected"] is False
+
+
+def test_later_section_representative_can_replace_earlier_section_item(tmp_path):
+    deduplicator = ScriptedDeduplicator({"1": "201"})
+    outside = [story(str(200 + index), f"History report {index}", points=900 - index * 50)
+               for index in range(1, 4)]
+    ids, records, history = generate(tmp_path, core_stories(6) + outside, deduplicator)
+
+    assert ids["ai"] == ["2", "3", "4", "5", "6"]
+    assert ids["non_ai_hot"] == ["201", "202"]
+    assert "1" not in history["2026-10-22"]
+    assert records["203"]["selected"] is False
+    assert records["1"]["content_deduplication"][0]["duplicate_of"] == "201"
 
 
 def test_later_comparison_failure_keeps_refill_and_previous_removal(tmp_path):
