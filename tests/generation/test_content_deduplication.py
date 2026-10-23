@@ -254,6 +254,82 @@ def test_more_complete_refill_can_replace_an_earlier_retained_item(tmp_path):
     assert records["8"]["selected"] is False
 
 
+def test_refill_cannot_reverse_previous_old_item_comparison(tmp_path):
+    class ChangingDeduplicator(ScriptedDeduplicator):
+        def deduplicate(self, candidates):
+            self.duplicate_of = {"2": "1"} if not self.calls else {"4": "3"}
+            return super().deduplicate(candidates)
+
+    deduplicator = ChangingDeduplicator()
+    summarizer = FakeSummarizer()
+    ids, records, history = generate(tmp_path, core_stories(8), deduplicator,
+                                     summarizer=summarizer)
+
+    assert ids["ai"] == history["2026-10-22"] == ["1", "3", "4", "5", "6"]
+    assert len(deduplicator.calls) == 2
+    assert len(summarizer.titles) == 6
+    assert records["4"]["selected"] is True
+    assert records["4"]["rejection_reason"] == ""
+    last = records["4"]["content_deduplication"][-1]
+    assert last["status"] == "retained"
+    assert last["duplicate_of"] is None
+    assert last["reason"] == "old_to_old_duplicate_ignored"
+    assert records["7"]["selected"] is False
+
+
+@pytest.mark.parametrize("new_duplicate_target", ["3", "6"])
+def test_refill_applies_only_new_item_relations_even_in_later_rounds(tmp_path, new_duplicate_target):
+    class MixedDeduplicator(ScriptedDeduplicator):
+        def deduplicate(self, candidates):
+            self.duplicate_of = [
+                {"2": "1", "5": "3"},
+                {"4": "3", "1": "6", "7": new_duplicate_target},
+                {"6": "3"},
+            ][len(self.calls)]
+            return super().deduplicate(candidates)
+
+    deduplicator = MixedDeduplicator()
+    summarizer = FakeSummarizer()
+    ids, records, history = generate(tmp_path, core_stories(9), deduplicator,
+                                     summarizer=summarizer)
+
+    # New 6 replaces old 1; new 7 loses to an old or a new representative.
+    # Old 4 survives round 2; previous refill 6 is now old and survives round 3.
+    assert ids["ai"] == history["2026-10-22"] == ["3", "4", "6", "8"]
+    assert deduplicator.calls == [
+        ["1", "2", "3", "4", "5"], ["1", "3", "4", "6", "7"],
+        ["3", "4", "6", "8"],
+    ]
+    assert len(summarizer.titles) == 8  # At most three extra summary candidates.
+    assert records["1"]["content_deduplication"][-1]["duplicate_of"] == "6"
+    assert records["7"]["content_deduplication"][-1]["duplicate_of"] == new_duplicate_target
+    for item_id, audit_index in (("4", 1), ("6", 1)):
+        assert records[item_id]["selected"] is True
+        audit = records[item_id]["content_deduplication"][audit_index]
+        assert audit["status"] == "retained"
+        assert audit["duplicate_of"] is None
+        assert audit["reason"] == "old_to_old_duplicate_ignored"
+    assert records["9"]["selected"] is False
+
+
+def test_refill_validates_whole_response_before_ignoring_old_item_relations(tmp_path):
+    class InvalidRefillDeduplicator(ScriptedDeduplicator):
+        def deduplicate(self, candidates):
+            self.duplicate_of = ({"2": "1"} if not self.calls
+                                 else {"3": "4", "4": "3", "6": "1"})
+            return super().deduplicate(candidates)
+
+    deduplicator = InvalidRefillDeduplicator()
+    ids, records, history = generate(tmp_path, core_stories(8), deduplicator)
+
+    # Ignoring the old-to-old cycle must not make a malformed batch actionable.
+    assert ids["ai"] == history["2026-10-22"] == ["1", "3", "4", "5", "6"]
+    assert len(deduplicator.calls) == 2
+    assert all(records[item_id]["content_deduplication"][-1]["status"] == "failed"
+               for item_id in ids["ai"])
+    assert records["7"]["selected"] is False
+
+
 def test_later_section_representative_can_replace_earlier_section_item(tmp_path):
     deduplicator = ScriptedDeduplicator({"1": "201"})
     outside = [story(str(200 + index), f"History report {index}", points=900 - index * 50)

@@ -166,8 +166,13 @@ this package that owns it.
    section. Removed items get `content_duplicate`; each gap is filled from its
    own section without reclassification. Replacement summaries use the existing
    material path, and successful roundup summaries are reused. Later comparisons
-   reassess the current successful items together, allowing a more informative
-   refill to replace a weaker previously retained item. Dropped items never
+   still send the current successful items together, but code only applies a
+   duplicate relation if either endpoint is a refill added for that round. New
+   items can lose to old or new representatives, and a more informative refill
+   can replace a weaker retained item. Old-to-old duplicate decisions are ignored,
+   including for refills retained in a previous round. The complete model response
+   is validated before this filter; malformed results still fail as a whole.
+   Dropped items never
    re-enter the reserve queue. Surviving items keep their section and relative order.
    `CONTENT_DEDUP_MAX_REPLACEMENTS` limits additional candidates to three, hence
    at most four comparisons; exhausted reserves or limits may leave fewer items.
@@ -175,6 +180,8 @@ this package that owns it.
    optional model operation retains short retries but suspends long network
    recovery. Per-item `content_deduplication` audit entries record the decision
    round, status, reference ID, reason, model and error type for every comparison.
+   Ignored old-to-old duplicates record `retained`, a null reference, and reason
+   `old_to_old_duplicate_ignored`, reflecting the applied outcome.
    References describe that round's decision; a representative can itself lose
    to a later refill in a subsequent round. Final `selected` flags and history
    reflect the completed selection. Logs record timing;
@@ -272,7 +279,8 @@ backend, article fetcher, and discussion fetcher for every test there; shared
 fakes and story builders live in `tests/fakes.py`.
 
 `test_content_deduplication.py` verifies atomic fail-open comparison, refill
-ranking/quotas/bounds, later representative replacement, roundup reuse and final-only history.
+ranking/quotas/bounds, later representative replacement, protection from old-to-old
+rejudgments, roundup reuse and final-only history.
 The PHP advisory/release/foundation fixture uses saved public summaries; its
 mocked judgments test orchestration, not live model quality. Repeated live
 order-reversal checks and independent authored cases live in

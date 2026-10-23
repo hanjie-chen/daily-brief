@@ -126,7 +126,9 @@ listed only in that package's guide.
   Qualified same-section reserves can fill the
   gaps, with at most three replacement candidates. Invalid or failed comparisons
   retain current items and never spend scheduled long network pauses. A more
-  informative refill can replace a previously retained item. The
+  informative refill can replace a previously retained item. Later rounds apply
+  only duplicate relations involving a refill added for that round; prior
+  retained items cannot be removed by a new old-to-old judgment. The
   generation guide documents ordering, diagnostics and the refill boundary.
   History stores only final selections; retry does not rerun this stage.
 - Candidate collection is run-scoped: either required source failing aborts the

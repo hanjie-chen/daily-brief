@@ -21,9 +21,9 @@ def deduplicate_and_refill(
 ) -> list[Candidate]:
     """Mutate final selection and return only new summary inputs for optional capture.
 
-    Every round can replace a weaker item with a more informative representative,
-    including a newly summarized reserve. Failed summaries are never compared;
-    their existing reader-facing behavior is kept.
+    The first round compares all items. Later rounds only apply duplicate
+    relations involving a new refill, which can replace a weaker retained item.
+    Failed summaries are never compared; their reader-facing behavior is kept.
     Only qualified reserves are visited, without another classification pass.
     """
     summary_inputs: list[Candidate] = []
@@ -70,6 +70,15 @@ def deduplicate_and_refill(
 
         dropped = set()
         for item, decision in zip(compared, decisions, strict=True):
+            # All items are pending in round 1. Later, pending contains only
+            # this round's refills: never reopen old-to-old decisions just
+            # because an unrelated refill triggered another model call.
+            if (decision.duplicate_of is not None
+                    and decision.item_id not in pending_ids
+                    and decision.duplicate_of not in pending_ids):
+                _record(item, round_number, "retained",
+                        reason="old_to_old_duplicate_ignored", model=_model(deduplicator))
+                continue
             status = "duplicate" if decision.duplicate_of else "retained"
             _record(item, round_number, status, duplicate_of=decision.duplicate_of,
                     reason=decision.reason, model=_model(deduplicator))
