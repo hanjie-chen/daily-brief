@@ -153,8 +153,9 @@ this package that owns it.
    assessed before selection and is reused. An external-source retrieval failure
    never becomes a title- or model-knowledge-based article summary.
 8. `content_deduplication.py`: Successful nonempty summaries are compared together
-   across both sections, supplied in core-then-outside ranking order. The configured
-   classifier model receives summaries plus bounded original evidence. It marks
+   across both sections, supplied in core-then-outside ranking order. OpenRouter's
+   configured summarizer model (medium reasoning) or Gemini's classifier model
+   receives summaries plus bounded original evidence. It marks
    repeated core information, while retaining independent analysis or important
    developments from the same event and uncertain cases. For redundant coverage,
    it selects the most informative, evidence-supported representative regardless

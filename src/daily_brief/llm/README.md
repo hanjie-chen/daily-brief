@@ -34,8 +34,9 @@ writing summaries into the brief stays in `output/`.
 
 ## Same-Day Content Comparison
 
-Both backends implement `deduplicate(candidates)` using the configured classifier
-model. `content_deduplication.py` supplies the prompt/schema and validates
+Both backends implement `deduplicate(candidates)`. OpenRouter uses the configured
+summarizer model (GPT-6 Luna by default); Gemini uses its classifier model.
+`content_deduplication.py` supplies the prompt/schema and validates
 `ContentDecision(item_id, duplicate_of, reason)` results. Every supplied ID must
 appear exactly once. Non-null references must identify another item retained in
 the complete response, including later input items. Self-references, unknown IDs,
@@ -63,12 +64,18 @@ with a single source it receives the full budget. Community roundups prioritize
 comments and then question context, excluding webpage evidence. Truncated excerpts
 carry omission notices. These excerpts do not replace stored in-memory materials.
 
-OpenRouter uses disabled reasoning, classifier pricing/pacing and the existing
-instance budget; Gemini uses the classifier request path without summary fallback.
-Output is bounded to 2,048 tokens. `last_deduplication_model` and
+OpenRouter requests medium reasoning with an 8,192-token limit covering reasoning
+and final output. It shares summarizer model configuration, price caps and request
+spacing, while retaining the existing instance budget. Changing
+`OPENROUTER_SUMMARIZER_MODEL` also changes the content-comparison model. Gemini
+uses the classifier request path without summary fallback and retains its
+2,048-token output limit. `last_deduplication_model` and
 `last_deduplication_usage` expose separate diagnostics, preserving summary fields.
-OpenRouter logs the distinct `deduplicate` task with actual usage/cost. Generation
-owns selection changes, bounded refills and failure handling, and suspends long
+OpenRouter also records `last_deduplication_reasoning_effort`: it resets before
+each comparison and is set only when an HTTP attempt is admitted. Request records
+keep the distinct `deduplicate` task, requested effort and actual usage/cost.
+Output truncation, malformed decisions and budget failures reject the comparison.
+Generation owns selection changes, bounded refills and failure handling, and suspends long
 network recovery for this optional check. `tests/test_content_deduplication_backend.py`
 checks prompts, validation and both provider wire contracts with fake transports.
 The separate [`content comparison evaluation`](../../../evals/content_deduplication/README.md)
@@ -217,7 +224,9 @@ overrides are documented below.
 
 OpenRouter defaults to `qwen/qwen3.8-flash` with reasoning disabled for classification
 (512 output tokens), and `openai/gpt-6-luna` with requested medium reasoning for summaries
-(8192 output tokens). The request and per-attempt diagnostics share the fixed `SUMMARY_REASONING_EFFORT`
+and content comparison (8192 tokens including reasoning). Both tasks use the
+summarizer model, price caps and interval. Their requests and per-attempt diagnostics
+share the fixed `SUMMARY_REASONING_EFFORT`
 constant. `last_summary_reasoning_effort` resets before each summary and is set
 only when an HTTP attempt is admitted; pre-request budget failures leave it null.
 It describes requested effort, not measured reasoning usage, which can be zero. All summary routes reuse
@@ -269,8 +278,8 @@ tokens and control both provider selection and pre-request cost reservations.
 | `OPENROUTER_RUN_BUDGET_USD` | `0.25` | USD per backend instance |
 | `OPENROUTER_CLASSIFIER_INPUT_PRICE_CAP` | `0.15` | USD per million input tokens |
 | `OPENROUTER_CLASSIFIER_OUTPUT_PRICE_CAP` | `0.47` | USD per million output tokens |
-| `OPENROUTER_SUMMARIZER_INPUT_PRICE_CAP` | `0.10` | USD per million input tokens |
-| `OPENROUTER_SUMMARIZER_OUTPUT_PRICE_CAP` | `0.50` | USD per million output tokens |
+| `OPENROUTER_SUMMARIZER_INPUT_PRICE_CAP` | `0.10` | USD per million input tokens; summaries and content comparison |
+| `OPENROUTER_SUMMARIZER_OUTPUT_PRICE_CAP` | `0.50` | USD per million output tokens; summaries and content comparison |
 | `OPENROUTER_RETRY_BASE_SECONDS` | `1` | Seconds; retry backoff base |
 | `OPENROUTER_INTERVAL_SECONDS` | Unset | Seconds; overrides both task intervals |
 

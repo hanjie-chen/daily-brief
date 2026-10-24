@@ -1,4 +1,5 @@
 """Offline contract and wire tests for same-day information comparison."""
+from copy import deepcopy
 from dataclasses import replace
 import io
 import json
@@ -10,7 +11,7 @@ from daily_brief.llm.content_deduplication import (
     CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION,
     build_content_deduplication_prompt, validate_content_decisions,
 )
-from daily_brief.llm.openrouter_backend import OpenRouterBackend, OpenRouterResponseError
+from daily_brief.llm.openrouter_backend import OpenRouterAPIError, OpenRouterBackend, OpenRouterResponseError
 from daily_brief.llm.gemini_backend import GeminiBackend, GeminiResponseError
 from daily_brief.models import Candidate
 from fakes import story
@@ -173,7 +174,8 @@ class Opener:
         self.requests.append(json.loads(request.data))
         if self.provider == 'openrouter':
             response = {'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps(self.result)}}],
-                        'usage': {'prompt_tokens': 100, 'completion_tokens': 70, 'cost': .00004}}
+                        'usage': {'prompt_tokens': 100, 'completion_tokens': 70, 'cost': .00004,
+                                  'completion_tokens_details': {'reasoning_tokens': 30}}}
         else:
             response = {'status': 'completed', 'steps': [{'type': 'model_output', 'content': [
                 {'type': 'text', 'text': json.dumps(self.result)}]}],
@@ -183,7 +185,7 @@ class Opener:
 
 @pytest.mark.parametrize('provider,cls,error', [('openrouter', OpenRouterBackend, OpenRouterResponseError),
                                                ('gemini', GeminiBackend, GeminiResponseError)])
-def test_backend_uses_classifier_and_does_not_alter_summary_diagnostics(provider, cls, error):
+def test_backend_uses_task_model_and_does_not_alter_summary_diagnostics(provider, cls, error):
     transport = Opener(provider, output())
     backend = cls(api_key='test-key', opener=transport, min_request_interval_seconds=0)
     before_model = backend.last_summary_model
@@ -194,15 +196,21 @@ def test_backend_uses_classifier_and_does_not_alter_summary_diagnostics(provider
     ]}
     assert [d.duplicate_of for d in backend.deduplicate(candidates())] == ['5', '5', None]
     request = transport.requests[0]
-    assert request['model'] == backend.classifier_model
-    assert backend.last_deduplication_model == backend.classifier_model
+    expected_model = backend.summarizer_model if provider == 'openrouter' else backend.classifier_model
+    assert request['model'] == expected_model
+    assert backend.last_deduplication_model == expected_model
     assert backend.last_deduplication_usage['input_tokens'] == 100
     assert backend.last_summary_model == before_model
     if provider == 'openrouter':
-        assert request['reasoning'] == {'enabled': False}
-        assert request['max_tokens'] == 2048
-        assert request['provider']['max_price'] == {'prompt': .15, 'completion': .47}
+        assert request['model'] == 'openai/gpt-6-luna'
+        assert request['reasoning'] == {'effort': 'medium', 'exclude': True}
+        assert request['max_tokens'] == 8192
+        assert request['provider']['max_price'] == {'prompt': .10, 'completion': .50}
+        assert request['messages'][0]['content'] == CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION
+        assert backend.last_deduplication_reasoning_effort == 'medium'
+        assert backend.last_deduplication_usage['thought_tokens'] == 30
         assert backend.request_records[0]['task'] == 'deduplicate'
+        assert backend.request_records[0]['reasoning_effort'] == 'medium'
         assert backend.accounted_cost_usd == pytest.approx(.00004)
     else:
         assert request['generation_config'] == {'max_output_tokens': 2048}
@@ -211,9 +219,11 @@ def test_backend_uses_classifier_and_does_not_alter_summary_diagnostics(provider
         backend.deduplicate(candidates())
     assert backend.deduplicate([]) == []
     assert backend.last_deduplication_usage == {}
+    if provider == 'openrouter':
+        assert backend.last_deduplication_reasoning_effort is None
 
 
-def test_openrouter_deduplication_shares_classifier_pacing_and_budget():
+def test_openrouter_deduplication_shares_summary_pacing_and_budget_without_changing_classification():
     transport = Opener('openrouter', output())
     now = [0.0]
     delays = []
@@ -224,10 +234,72 @@ def test_openrouter_deduplication_shares_classifier_pacing_and_budget():
                                 classifier_min_request_interval_seconds=7,
                                 summarizer_min_request_interval_seconds=20,
                                 sleeper=sleep, clock=lambda: now[0])
+    summary_output = {'status': 'sufficient', 'summary': '一个工具的摘要。', 'reason': ''}
+    transport.result = summary_output
+    backend.summarize(candidates()[0])
+    diagnostics = deepcopy({k: v for k, v in vars(backend).items() if k.startswith('last_summary_')})
+    transport.result = output()
     backend.deduplicate(candidates())
+    assert {k: v for k, v in vars(backend).items() if k.startswith('last_summary_')} == diagnostics
+    assert delays == [20]
     transport.result = {'decisions': [{'id': c.story.hn_item_id, 'label': 'core_non_ai'}
                                       for c in candidates()]}
     assert backend.classify(candidates()) == {'1': 'core_non_ai', '2': 'core_non_ai', '5': 'core_non_ai'}
-    assert delays == [7]
-    assert backend.accounted_cost_usd == pytest.approx(.00008)
-    assert [record['task'] for record in backend.request_records] == ['deduplicate', 'classify']
+    assert delays == [20]  # The separate classifier model needs no summary-model wait.
+    request = transport.requests[-1]
+    assert request['model'] == 'qwen/qwen3.8-flash'
+    assert request['reasoning'] == {'enabled': False}
+    assert request['max_tokens'] == 512
+    assert request['provider']['max_price'] == {'prompt': .15, 'completion': .47}
+    transport.result = summary_output
+    backend.summarize(candidates()[0])
+    assert delays == [20, 20]
+    assert backend.accounted_cost_usd == pytest.approx(.00016)
+    assert [record['task'] for record in backend.request_records] == ['summarize', 'deduplicate', 'classify', 'summarize']
+
+
+def test_openrouter_deduplication_uses_configured_summary_model_and_price_caps():
+    transport = Opener('openrouter', output())
+    backend = OpenRouterBackend.from_environment({
+        'OPENROUTER_API_KEY': 'test-key',
+        'OPENROUTER_SUMMARIZER_MODEL': 'other/summarizer',
+        'OPENROUTER_SUMMARIZER_INPUT_PRICE_CAP': '.3',
+        'OPENROUTER_SUMMARIZER_OUTPUT_PRICE_CAP': '.8',
+    }, opener=transport, min_request_interval_seconds=0)
+    backend.deduplicate(candidates())
+    assert backend.last_deduplication_model == 'other/summarizer'
+    assert transport.requests[0]['model'] == 'other/summarizer'
+    assert transport.requests[0]['provider']['max_price'] == {'prompt': .3, 'completion': .8}
+
+
+def test_openrouter_deduplication_reserves_thinking_budget_before_sending():
+    transport = Opener('openrouter', output())
+    backend = OpenRouterBackend(api_key='test-key', opener=transport, min_request_interval_seconds=0)
+    backend.deduplicate(candidates())
+    # Less than the output-only reservation for 8,192 Luna tokens remains.
+    backend.max_run_cost_usd = backend.accounted_cost_usd + .003
+    with pytest.raises(OpenRouterAPIError) as caught:
+        backend.deduplicate(candidates())
+    assert caught.value.error_code == 'budget_exceeded'
+    assert len(transport.requests) == 1
+    assert backend.last_deduplication_reasoning_effort is None
+    assert backend.last_deduplication_usage == {}
+    assert backend.accounted_cost_usd == pytest.approx(.00004)
+
+
+def test_openrouter_deduplication_rejects_truncated_thinking_output_without_retry():
+    requests = []
+    def opener(request, timeout):
+        requests.append(json.loads(request.data))
+        return io.BytesIO(json.dumps({
+            'choices': [{'finish_reason': 'length', 'message': {'content': ''}}],
+            'usage': {'prompt_tokens': 100, 'completion_tokens': 8192, 'cost': .0042,
+                      'completion_tokens_details': {'reasoning_tokens': 8192}},
+        }).encode())
+    backend = OpenRouterBackend(api_key='test-key', opener=opener, min_request_interval_seconds=0)
+    with pytest.raises(OpenRouterResponseError) as caught:
+        backend.deduplicate(candidates())
+    assert caught.value.provider_status == 'length'
+    assert len(requests) == 1
+    assert backend.last_deduplication_usage['thought_tokens'] == 8192
+    assert backend.accounted_cost_usd == pytest.approx(.0042)
