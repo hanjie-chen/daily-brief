@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "frozen_date": "2026-10-22",
-  "description": "Version 2: original v1 preserved. Four development regressions, three previously evaluated untouched cases, and three fresh authored holdouts. Gold fixed before second live evaluation; all groups must be reported separately.",
+  "frozen_date": "2026-10-24",
+  "description": "Version 2.1: ten v2 cases and their expected decisions unchanged; adds the previously evaluated database correction as a fifth development regression. Historical evaluation groups are retained and must be reported separately.",
   "cases": [
     {
       "id": "php-security-2026-10-22",
@@ -355,8 +355,43 @@
       ],
       "expected_duplicate_targets": {},
       "rationale": "Shared animals, colors, and apparently conflicting success rates do not make separate experimental designs redundant. Each article supplies its own result and methods; neither contains the other experiment's independent details."
+    },
+    {
+      "id": "alderdb-benchmark-corrected-measurement",
+      "category": "development_regression",
+      "evaluation_group": "development_regression",
+      "provenance": {
+        "introduced_in": "v2.1",
+        "first_evaluated": "2026-10-23-water-followup",
+        "reason": "Previously evaluated software correction case, promoted to a permanent regression. The complete correction must replace the original report in either input order."
+      },
+      "items": [
+        {
+          "item_id": "4101",
+          "title": "AlderDB 2.6 benchmark reports 32% lower CPU use",
+          "summary": "AlderDB reports 32% lower CPU use for version 2.6 versus 2.5 on a fixed read workload; the benchmark uses a 16-core server, 40 clients, and the same ten-million-row data set.",
+          "evidence": "The AlderDB team published a benchmark on Monday comparing versions 2.5 and 2.6. The chart showed 32 percent less CPU time per completed read in version 2.6. Both versions ran on the same 16-core server with 40 clients and a ten-million-row data set. The workload used indexed point reads and excluded writes. The team ran each version five times after a warmup period and published the median result. Source code for the benchmark driver and the configuration files were posted with the chart. The release announcement attributed the reduction to the new tuple decoding path. A maintainer said the result was measured in this setup and should not be treated as a prediction for every database workload.",
+          "source_url": "https://example.org/evaluation/4101"
+        },
+        {
+          "item_id": "4102",
+          "title": "AlderDB corrects CPU chart after benchmark counter error",
+          "summary": "AlderDB revised its claimed CPU reduction from 32% to 3.2% after finding an extra factor of ten in its reporting script; reruns confirmed the corrected result.",
+          "evidence": "On Tuesday, AlderDB corrected Monday's comparison of versions 2.5 and 2.6. The original chart reported 32 percent less CPU time per completed read; the corrected reduction is 3.2 percent. An extra factor of ten had been applied when the reporting script converted the measured difference to a percentage. Five fresh runs confirmed the new median. The experiment still uses the same 16-core server, 40 clients, ten-million-row data set, indexed point reads, and no writes, with a warmup before each run. The driver source and configuration files remain available beside the corrected chart. The tuple decoding path accounts for the smaller improvement. The team again cautioned that this one setup does not predict every database workload and added a unit check for percentage calculations.",
+          "source_url": "https://example.org/evaluation/4102"
+        }
+      ],
+      "expected_retained_ids": [
+        "4102"
+      ],
+      "expected_duplicate_targets": {
+        "4101": [
+          "4102"
+        ]
+      },
+      "rationale": "The correction restates the original result and its experimental scope, setup, publication details, attribution and caveat, then supplies the calculation error and verified replacement result. The original has no remaining separate factual contribution."
     }
   ],
-  "suite_revision": "v2",
-  "predecessor_sha256": "d54609af38f7fc5c535a467bee6184615e7598863be8b9525917d88f49354453"
+  "suite_revision": "v2.1",
+  "predecessor_sha256": "25bfaa646e0ee4cb5dce993eb78607e81d44b96cd2d7a96c9f2d7b99a5914056"
 }

@@ -40,12 +40,16 @@ class ExpectedBackend:
 
 def test_frozen_suite_has_independent_gold_and_required_coverage(evaluator):
     cases = evaluator.load_cases()
-    assert len(cases) == 10
+    assert len(cases) == 11
     assert cases[0]["category"] == "development_regression"
     assert sum(case["category"] == "authored_holdout" for case in cases) == 6
     assert cases[0]["expected_retained_ids"] == ["50172041", "50182987"]
     assert all(not item["evidence"] for item in cases[0]["items"])
     assert {case["id"]: case["expected_retained_ids"] for case in cases}["laboratory-water-correction"] == ["2502"]
+    database = next(case for case in cases if case["id"] == "alderdb-benchmark-corrected-measurement")
+    assert database["category"] == database["evaluation_group"] == "development_regression"
+    assert database["expected_retained_ids"] == ["4102"]
+    assert database["expected_duplicate_targets"] == {"4101": ["4102"]}
     for case in cases:
         normal = evaluator.candidate_inputs(case, "normal")
         reverse = evaluator.candidate_inputs(case, "reversed")
@@ -58,8 +62,8 @@ def test_runner_repeats_both_orders_with_matching_hashes_and_cost_records(evalua
     cases = evaluator.load_cases()
     backend = ExpectedBackend(cases)
     output = evaluator.run_suite(cases, backend, repeats=3)
-    assert output["planned_calls"] == output["passed"] == len(backend.calls) == 60
-    assert output["max_transport_attempts"] == 60
+    assert output["planned_calls"] == output["passed"] == len(backend.calls) == 66
+    assert output["max_transport_attempts"] == 66
     assert output["system_instruction"]
     assert len(output["system_sha256"]) == 64
     assert all(row["passed"] == row["runs"] == 6 for row in output["case_stats"])
@@ -74,7 +78,7 @@ def test_runner_repeats_both_orders_with_matching_hashes_and_cost_records(evalua
     assert all(row["authoritative"] for row in output["runs"][6:])
     assert all(not item["available"] for item in output["runs"][0]["evidence"])
     groups = {row["evaluation_group"]: row for row in output["group_stats"]}
-    assert groups["development_regression"]["runs"] == groups["development_regression"]["passed"] == 24
+    assert groups["development_regression"]["runs"] == groups["development_regression"]["passed"] == 30
     assert groups["previously_evaluated_untuned"]["runs"] == groups["previously_evaluated_untuned"]["passed"] == 18
     assert groups["first_view_v2_holdout"]["runs"] == groups["first_view_v2_holdout"]["passed"] == 18
     assert all("evaluation_group" in row for row in output["runs"] + output["case_stats"])
@@ -92,7 +96,7 @@ def test_group_defaults_to_category_when_unspecified(evaluator, tmp_path):
 
 
 def test_v2_fresh_cases_and_gold_remain_frozen(evaluator):
-    assert hashlib.sha256(evaluator.DEFAULT_CASES.read_bytes()).hexdigest() == "25bfaa646e0ee4cb5dce993eb78607e81d44b96cd2d7a96c9f2d7b99a5914056"
+    assert hashlib.sha256(evaluator.DEFAULT_CASES.read_bytes()).hexdigest() == "106a552a4fad284fc2b74463e093059f7bd301fd12cde96c769774d4b0c76749"
     cases = evaluator.load_cases()
     fresh = [case for case in cases if case["evaluation_group"] == "first_view_v2_holdout"]
     assert len(fresh) == 3
