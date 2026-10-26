@@ -459,12 +459,12 @@ def test_materials_are_assessed_once_after_discussion_retrieval(tmp_path, outcom
     assert captured[0].summary_input_mode == "materials"
     if outcome in {"success", "short"}:
         assert audit["summary_sources_used"] == ["hn_comments"]
-        assert public["provenance"]["summary_basis"] == "hn_comments"
-        assert public["provenance"]["fallback_reason"] == "none"
+        assert public["generation_info"]["summary_sources"] == ["hn_comments"]
+        assert "provenance" not in public
         assert public["content_status"] == "ok"
     else:
         assert audit["summary_sources_used"] == []
-        assert public["provenance"]["summary_basis"] == "none"
+        assert public["generation_info"]["summary_sources"] == []
         assert public["content_status"] == "summary_failed"
         assert audit["summary_status"] == ("failed" if outcome == "model_error" else "insufficient")
 
@@ -489,7 +489,7 @@ def test_sufficient_source_still_fetches_comments_and_can_ignore_them(tmp_path):
     assert audit["source_material"]["status"] == "sufficient"
     assert audit["discussion_retrieval"]["status"] == "success"
     assert audit["summary_sources_used"] == ["web_body"]
-    assert public["provenance"]["summary_basis"] == "article"
+    assert public["generation_info"]["summary_sources"] == ["web_body"]
 
 
 @pytest.mark.parametrize("long_source", [False, True])
@@ -571,7 +571,7 @@ def test_hn_submission_survives_shell_page_or_fetch_failure(tmp_path, failed_sou
     audit = json.loads(result.data_path.read_text())[0]
     assert audit["summary_sources_used"] == ["hn_post"]
     public = json.loads(result.public_json_path.read_text())["sections"]["ai"]["items"][0]
-    assert public["provenance"]["summary_basis"] == "hn_post"
+    assert public["generation_info"]["summary_sources"] == ["hn_post"]
 
 
 def test_comment_failure_does_not_block_available_article(tmp_path):

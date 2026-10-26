@@ -64,7 +64,7 @@ def test_github_issue_transport_is_public_direct_and_private_diagnostic():
     item.article_retrieval.method = 'github_issue'
     data = payload(item)
     public = data['sections']['ai']['items'][0]
-    assert public['provenance']['retrieval_method'] == 'direct'
+    assert 'provenance' not in public
     assert public['generation_info']['materials']['webpage']['method'] == 'direct'
     assert json.loads(render_candidates_json([item]))[0]['article_retrieval']['method'] == 'github_issue'
     validate_public_brief(data)
@@ -94,7 +94,7 @@ def test_github_api_limit_uses_existing_public_reason_after_recovery(origin):
     data = payload(item)
     public = data['sections']['ai']['items'][0]
     assert public['generation_info']['materials']['webpage']['reason'] == 'rate_limited'
-    assert public['provenance']['fallback_reason'] == 'unknown'
+    assert 'provenance' not in public
     assert reason not in json.dumps(data)
     assert reason in render_candidates_json([item])
     validate_public_brief(data)
@@ -148,7 +148,7 @@ def test_missing_wayback_capture_exports_safe_archive_reason_and_preserves_priva
     assert public['generation_info']['materials']['webpage'] == {
         'status': 'failed', 'method': 'wayback', 'origin': 'unknown', 'reason': 'archive_unavailable',
     }
-    assert public['provenance']['fallback_reason'] == 'datadome_challenge'
+    assert 'provenance' not in public
     assert public['generation_info']['generation']['status'] == 'success'
     assert 'private diagnostic details' not in json.dumps(data)
     assert 'wayback_no_capture' not in json.dumps(data)
@@ -186,6 +186,9 @@ def test_safe_generation_reason(status, code, expected):
 @pytest.mark.parametrize('change', [
     lambda x: x.update(extra='bad'),
     lambda x: x['materials']['webpage'].update(status='invented'),
+    lambda x: x['materials']['webpage'].update(method='github_issue'),
+    lambda x: x['materials']['webpage'].update(origin='private origin'),
+    lambda x: x['materials']['webpage'].update(reason='private error'),
     lambda x: x['materials']['hn_post'].update(error_message='bad'),
     lambda x: x.update(summary_sources=['web_body', 'web_body']),
     lambda x: x.update(summary_sources=[{}]),
@@ -204,12 +207,14 @@ def test_schema_rejects_invalid_or_unsafe_generation_info(change):
         validate_public_brief(data)
 
 
-def test_additive_schema_accepts_both_optional_fields_independently():
-    for omitted in ((), ('generation_info',), ('provenance',), ('generation_info', 'provenance')):
-        data = payload()
-        for name in omitted:
-            del data['sections']['ai']['items'][0][name]
-        validate_public_brief(data)
+@pytest.mark.parametrize('include_generation_info', [False, True])
+def test_schema_accepts_optional_generation_info(include_generation_info):
+    data = payload()
+    item = data['sections']['ai']['items'][0]
+    assert 'provenance' not in item
+    if not include_generation_info:
+        del item['generation_info']
+    validate_public_brief(data)
 
 
 @pytest.mark.parametrize(('text', 'expected'), [('', 'empty'), ('HN self-post body', 'success')])

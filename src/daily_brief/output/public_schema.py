@@ -20,28 +20,13 @@ ITEM_KEYS = {
     "comments",
 }
 CONTENT_STATUSES = {"ok", "fetch_failed", "summary_failed", "title_only"}
-# Optional additive v2 field. Only these public codes cross the audit boundary.
-PROVENANCE_VALUES = {
-    "summary_basis": {
-        "article", "source_and_comments", "hn_comments", "hn_post",
-        "video_captions", "none", "unknown",
-    },
-    "retrieval_method": {
-        "direct", "jina", "wayback", "github_readme", "github_raw",
-        "youtube_caption", "story_text", "none", "unknown",
-    },
-    "retrieval_status": {
-        "success", "failed", "not_attempted", "not_needed", "unknown",
-    },
-    "material_origin": {
-        "original", "archived_copy", "same_article", "syndicated_copy",
-        "alternate_reporting", "unknown",
-    },
-    "fallback_reason": {
-        "none", "challenge_page", "cloudflare_challenge", "datadome_challenge",
-        "vercel_challenge", "empty_content", "network_timeout",
-        "tls_issuer_unavailable", "source_material_insufficient", "unknown",
-    },
+RETRIEVAL_METHODS = {
+    "direct", "jina", "wayback", "github_readme", "github_raw",
+    "youtube_caption", "story_text", "none", "unknown",
+}
+MATERIAL_ORIGINS = {
+    "original", "archived_copy", "same_article", "syndicated_copy",
+    "alternate_reporting", "unknown",
 }
 
 
@@ -103,11 +88,8 @@ def validate_public_brief(payload) -> None:
 
 def _validate_item(item) -> None:
     if (not isinstance(item, dict) or not ITEM_KEYS <= set(item)
-            or set(item) - ITEM_KEYS - {"provenance", "generation_info"}):
+            or set(item) - ITEM_KEYS - {"generation_info"}):
         raise PublicBriefValidationError("item must contain the exact schema v2 fields")
-
-    if "provenance" in item:
-        _validate_provenance(item["provenance"])
 
     if "generation_info" in item:
         _validate_generation_info(item["generation_info"])
@@ -136,14 +118,6 @@ def _validate_item(item) -> None:
         raise PublicBriefValidationError("discussion_url must match hn_item_id")
 
 
-def _validate_provenance(value) -> None:
-    if not isinstance(value, dict) or set(value) != set(PROVENANCE_VALUES):
-        raise PublicBriefValidationError("provenance must contain the exact public fields")
-    for field, allowed in PROVENANCE_VALUES.items():
-        if not isinstance(value[field], str) or value[field] not in allowed:
-            raise PublicBriefValidationError(f"unsupported provenance.{field}")
-
-
 def _validate_generation_info(value) -> None:
     def exact(obj, keys, name):
         if not isinstance(obj, dict) or set(obj) != set(keys):
@@ -161,8 +135,8 @@ def _validate_generation_info(value) -> None:
         enum(material["status"], MATERIAL_STATUSES, f"{name}.status")
         enum(material["reason"], GENERATION_REASONS, f"{name}.reason")
         if name == "webpage":
-            enum(material["method"], PROVENANCE_VALUES["retrieval_method"], "webpage.method")
-            enum(material["origin"], PROVENANCE_VALUES["material_origin"], "webpage.origin")
+            enum(material["method"], RETRIEVAL_METHODS, "webpage.method")
+            enum(material["origin"], MATERIAL_ORIGINS, "webpage.origin")
     sources = value["summary_sources"]
     if sources is not None:
         if (not isinstance(sources, list) or len(sources) > 4

@@ -107,7 +107,7 @@ bounded flow:
    URL correction. The original story URL remains unchanged; success records
    the actual `retrieved_url`, total attempts, and the private fallback reason
    `url_trailing_backslash`. Failure retains that reason and the final error.
-   Logs record the correction; public provenance maps the new reason to the
+   Logs record the correction; public generation info maps the reason to the
    existing `unknown` value without expanding the public schema.
 5. For eligible failures, try Jina Reader and then a validated Wayback capture.
    Eligibility includes ordinary HTTP 400–599 responses except 400, 401, 407,

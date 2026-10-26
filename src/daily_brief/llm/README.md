@@ -127,7 +127,7 @@ from another outlet, the body label and an
 the same event, so its claims are not attributed to the linked source. The module
 requires allegations, disputed claims, and unverified assertions to retain the
 attribution stated in the fetched reporting. The reader-facing summary still
-carries no prefix, and provenance records the origin.
+carries no prefix, and public generation info records the origin.
 Recommendation questions in ordinary self-posts are context; the summary focuses
 on concrete answers and their explanations rather than restating the question.
 It starts with the recommendations themselves, retains the substance and direction
@@ -148,10 +148,9 @@ for material sufficiency. There is no semantic second call that adds comments:
 ordinary selected items fetch their one sample before the call. Empty or failed
 sources do not suppress useful remaining material, including comments alone.
 
-Public schema is unchanged. Source details are carried by existing public
-provenance enums where expressible and by the private `summary_sources_used`
-array; unsupported public combinations remain `unknown`. Fetched comments do not
-imply used comments. Historical legacy replay routes keep their older response
+Source details are carried by public `generation_info.summary_sources` and the
+private `summary_sources_used` array. Available sources are recorded separately
+from model-declared usage; fetched comments do not imply used comments. Historical legacy replay routes keep their older response
 contracts and source prefixes; current generation and retry use the integrated
 material contract for ordinary items.
 

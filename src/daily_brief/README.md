@@ -112,7 +112,7 @@ listed only in that package's guide.
 - Ordinary selected-item summaries receive separately labeled available webpage
   metadata, extracted webpage text, HN self-post text, and one bounded HN
   discussion sample in a single model call. The output is one integrated summary
-  with model-declared source usage for audit and public provenance; no fixed source
+  with model-declared source usage for audit and public generation info; no fixed source
   prefixes or comment appendix are added. The model may omit noisy discussion;
   it must not turn a bounded sample into community consensus or present it as
   source text. Empty or failed material sources do not suppress the others.
@@ -155,9 +155,11 @@ listed only in that package's guide.
 - Public JSON and private audit data have different trust and compatibility
   boundaries. Public output uses the strict schema in `output/public_schema.py` and never
   exposes raw provider diagnostics, recovery URLs, or private evaluation material.
-- Schema v2 items may include `provenance` and `generation_info` independently.
-  Existing provenance retains its five-field enum-only contract and is still
-  emitted. New generation info separates webpage, HN post, and HN comment
+- Schema v2 items use `generation_info` for public generation diagnostics.
+  The renderer emits it for every item; it remains optional in validation.
+  The retired public item field `provenance` is neither emitted nor accepted.
+  Private retrieval diagnostics remain in the candidate audit. Generation info
+  separates webpage, HN post, and HN comment
   acquisition from model-declared source usage and summary generation. It uses
   exact nested objects, allowlisted statuses/reasons, nullable source declarations,
   and a nullable ASCII model identifier (at most 128 characters). Summary generation
@@ -171,13 +173,13 @@ listed only in that package's guide.
   remains an acquisition success when nonempty. Retrieval success does not imply
   generation success. Retry records HN post failure separately from an empty post.
   Failed retries preserve the prior public summary and generation info together.
-  Historical items omit either object and remain valid; no backfill is required.
+  Items without generation info remain valid; no values are inferred.
   Deploy the accepting website before enabling generator output with new fields.
   GitHub issue API acquisition records `github_issue` in private diagnostics;
-  both public provenance and generation info map it to the existing `direct`
+  public generation info maps it to the existing `direct`
   method, without extending the website's enum contract.
   The private `github_api_rate_limited` recovery reason projects to the existing
-  `rate_limited` generation-info reason and `unknown` provenance fallback reason.
+  `rate_limited` generation-info reason.
   A final `wayback_no_capture` failure projects to the public
   `archive_unavailable` generation-info reason. Deploy website support for this
   reason before publishing payloads that use it; historical `unknown` reasons

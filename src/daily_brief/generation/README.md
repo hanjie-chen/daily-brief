@@ -57,7 +57,7 @@ this package that owns it.
    Insufficient comments, uncertain topics, retrieval errors, or model failures
    exclude the item so other eligible candidates can fill the slots. Successful
    overviews are reused after selection, with comment usage recorded in the audit
-   and public provenance, without adding a fixed source prefix. This preselection
+   and public `generation_info`, without adding a fixed source prefix. This preselection
    work is bounded by the classification pool.
    Confirmed core candidates join one ranked pool. Confirmed outside candidates
    must also satisfy the exploration eligibility rules and are ranked separately.
@@ -209,7 +209,7 @@ repeat their existing comment qualification and structured overview without
 running topic classification or selection again. Historical retry dates determine
 the Wayback time window; fetched live pages and discussions reflect the retry time.
 
-A successful summary replaces only that item's public summary/provenance/status
+A successful summary replaces only that item's public summary/status
 and generation diagnostics in the public JSON and candidate audit.
 A failed attempt leaves its prior public result and base audit intact; its latest
 attempt diagnostics are stored under `last_retry` in the candidate audit. This

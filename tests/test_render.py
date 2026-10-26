@@ -223,13 +223,6 @@ def test_render_public_brief_json_contains_stable_schema_and_selected_items():
                             "summary_sources": [],
                             "generation": {"status": "not_attempted", "model": None, "reason": "none"},
                         },
-                        "provenance": {
-                            "summary_basis": "unknown",
-                            "retrieval_method": "unknown",
-                            "retrieval_status": "not_attempted",
-                            "material_origin": "unknown",
-                            "fallback_reason": "none",
-                        },
                     }
                 ],
             },
@@ -254,13 +247,6 @@ def test_render_public_brief_json_contains_stable_schema_and_selected_items():
                             },
                             "summary_sources": [],
                             "generation": {"status": "not_attempted", "model": None, "reason": "none"},
-                        },
-                        "provenance": {
-                            "summary_basis": "unknown",
-                            "retrieval_method": "unknown",
-                            "retrieval_status": "not_attempted",
-                            "material_origin": "unknown",
-                            "fallback_reason": "none",
                         },
                     }
                 ],
@@ -453,24 +439,26 @@ def public_item(item):
         ("github_raw", "original", ""),
     ],
 )
-def test_public_provenance_separates_material_from_transport(method, origin, reason):
+def test_public_generation_info_separates_material_from_transport(method, origin, reason):
     item = candidate()
     item.summary_status = "success"
-    item.summary_basis = "fetched_article"
     item.article_retrieval = ArticleRetrieval(
         status="success", method=method, material_origin=origin,
         fallback_reason=reason, error_message="private diagnostic",
         retrieved_url="https://example.com/private-recovery-url",
     )
     published = public_item(item)
-    assert published["provenance"] == {
-        "summary_basis": "article",
-        "retrieval_method": method,
-        "retrieval_status": "success",
-        "material_origin": origin,
-        "fallback_reason": reason or "none",
+    assert "provenance" not in published
+    assert published["generation_info"]["materials"]["webpage"] == {
+        "status": "success", "method": method, "origin": origin, "reason": reason or "none",
     }
     assert "private" not in json.dumps(published)
+    audit = json.loads(render_candidates_json([item]))[0]["article_retrieval"]
+    assert audit["method"] == method
+    assert audit["material_origin"] == origin
+    assert audit["fallback_reason"] == reason
+    assert audit["retrieved_url"] == "https://example.com/private-recovery-url"
+    assert audit["error_message"] == "private diagnostic"
 
 
 @pytest.mark.parametrize("origin", ["same_article", "syndicated_copy", "alternate_reporting"])
@@ -479,7 +467,6 @@ def test_public_recovered_material_keeps_origin_failure_reason(origin):
 
     item = candidate()
     item.summary_status = "success"
-    item.summary_basis = "fetched_article"
     item.article_retrieval = ArticleRetrieval(
         status="success", method="direct", material_origin=origin,
         origin_failure=RetrievalFailure(
@@ -487,63 +474,29 @@ def test_public_recovered_material_keeps_origin_failure_reason(origin):
             error_message="private diagnostic",
         ),
     )
-    provenance = public_item(item)["provenance"]
-    assert provenance["material_origin"] == origin
-    assert provenance["retrieval_method"] == "direct"
-    assert provenance["fallback_reason"] == "datadome_challenge"
+    material = public_item(item)["generation_info"]["materials"]["webpage"]
+    assert material["origin"] == origin
+    assert material["method"] == "direct"
+    assert material["reason"] == "datadome_challenge"
+    audit = json.loads(render_candidates_json([item]))[0]["article_retrieval"]
+    assert audit["origin_failure"]["fallback_reason"] == "datadome_challenge"
+    assert audit["origin_failure"]["error_message"] == "private diagnostic"
 
 
 def test_public_discussion_success_does_not_hide_original_fetch_failure():
     item = candidate()
     item.summary_status = "success"
-    item.summary_basis = "hn_comments"
-    item.summary = "根据 Hacker News 部分评论：评论者介绍了两个实践。"
+    item.summary_sources_used = ["hn_comments"]
+    item.summary = "评论者介绍了两个实践。"
     item.article_retrieval = ArticleRetrieval(
         status="failed", method="jina", fallback_reason="cloudflare_challenge",
     )
     published = public_item(item)
     assert published["content_status"] == "fetch_failed"
-    assert published["provenance"]["summary_basis"] == "hn_comments"
-    assert published["provenance"]["retrieval_status"] == "failed"
-    assert published["provenance"]["retrieval_method"] == "jina"
+    assert published["generation_info"]["summary_sources"] == ["hn_comments"]
+    assert published["generation_info"]["materials"]["webpage"]["status"] == "failed"
+    assert published["generation_info"]["materials"]["webpage"]["method"] == "jina"
     assert published["summary"] == item.summary
-
-
-@pytest.mark.parametrize("source_field", ["fetched_text", "story_text"])
-def test_public_mixed_material_differs_from_roundup_question_context(source_field):
-    item = candidate()
-    item.summary_status = "success"
-    item.summary_basis = "hn_comments"
-    item.source_material_status = "insufficient"
-    item.story = replace(item.story, **{source_field: "Some source material"})
-    provenance = public_item(item)["provenance"]
-    assert provenance["summary_basis"] == "source_and_comments"
-    assert provenance["fallback_reason"] == "source_material_insufficient"
-
-    item.content_kind = "community_roundup"
-    item.source_material_status = "not_assessed"
-    provenance = public_item(item)["provenance"]
-    assert provenance["summary_basis"] == "hn_comments"
-    assert provenance["fallback_reason"] == "none"
-
-
-@pytest.mark.parametrize(
-    ("basis", "status", "expected"),
-    [
-        ("story_text", "success", "hn_post"),
-        ("youtube_caption", "success", "video_captions"),
-        ("fetched_article", "failed", "none"),
-        ("fetched_article", "insufficient", "none"),
-        ("hn_comments", "failed", "none"),
-        ("title_only", "success", "none"),
-        ("not_generated", "not_generated", "unknown"),
-    ],
-)
-def test_public_basis_does_not_claim_a_summary_when_generation_failed(basis, status, expected):
-    item = candidate()
-    item.summary_basis = basis
-    item.summary_status = status
-    assert public_item(item)["provenance"]["summary_basis"] == expected
 
 
 def test_unknown_internal_values_never_become_public_diagnostics():
@@ -552,34 +505,20 @@ def test_unknown_internal_values_never_become_public_diagnostics():
         method="private transport", status="private status",
         material_origin="private origin", fallback_reason="private failure",
     )
-    assert set(public_item(item)["provenance"].values()) == {"unknown"}
+    assert set(public_item(item)["generation_info"]["materials"]["webpage"].values()) == {"unknown"}
 
 
-@pytest.mark.parametrize("sources,expected", [
-    (["web_body"], "article"),
-    (["hn_post"], "hn_post"),
-    (["hn_comments"], "hn_comments"),
-    (["web_body", "hn_comments"], "source_and_comments"),
-    (["web_metadata", "hn_post", "hn_comments"], "source_and_comments"),
-    (["web_metadata"], "unknown"),
-    (["web_body", "hn_post"], "unknown"),
-    ([], "unknown"),
+@pytest.mark.parametrize("sources", [
+    ["web_body"], ["hn_post"], ["hn_comments"], ["web_body", "hn_comments"],
+    ["web_metadata", "hn_post", "hn_comments"], ["web_metadata"], ["web_body", "hn_post"], [],
 ])
-def test_material_provenance_uses_output_sources_not_available_inputs(sources, expected):
-    from daily_brief.output.render import _public_provenance
-    from daily_brief.output.public_schema import PROVENANCE_VALUES
-
+def test_public_generation_info_uses_declared_sources_not_available_inputs(sources):
     item = candidate()
     item.summary_input_mode = "materials"
     item.summary_status = "success"
-    item.summary_basis = "mixed_sources"
     item.summary_sources_used = sources
     item.story = replace(item.story, fetched_text="Available body", story_text="Available post")
     item.discussion_text = "Available but possibly ignored comments"
-    item.article_retrieval = ArticleRetrieval(status="success", method="direct", material_origin="original")
-
-    provenance = _public_provenance(item)
-    assert provenance["summary_basis"] == expected
-    assert all(value in PROVENANCE_VALUES[key] for key, value in provenance.items())
+    assert public_item(item)["generation_info"]["summary_sources"] == (sources or None)
     audit = json.loads(render_candidates_json([item]))[0]
     assert audit["summary_sources_used"] == sources

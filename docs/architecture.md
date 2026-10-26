@@ -128,7 +128,7 @@ GitHub issue 和 README 的 REST API 请求读取可选环境变量 `GITHUB_TOKE
 
 普通网页获取与后续搜索共用每条 120 秒、24 次传输请求的预算，包含直接重试、Jina 匿名/带 key 请求、存档索引与回放、Tavily 搜索及候选页面获取；嵌套调用不会重置预算。GitHub 候选的 HTTP 请求也计入。预算决定是否开始下一次请求或恢复阶段，socket timeout 不超过剩余时间；已经返回的结果继续通过正常内容校验，不因完成时超过 120 秒而丢弃。PDF 转换不受该期限中止，Adobe 在分类和摘要阶段均保留原有 300 秒转换上限；PDF 和 YouTube 的其他子进程限制也保持独立。urllib 内部重定向不逐跳计数，仍受既有重定向和公网校验限制。无可用结果且预算耗尽时停止追加获取并记录 `retrieval_budget_exhausted`，HN 材料和摘要调用仍可继续。
 
-普通 HTTP 回退原因在私有诊断中保留为 `http_403` 等具体状态码；公开 `generation_info` 沿用 `http_error`，连接失败 `request_failed` 映射为既有 `network_error`。预算耗尽仍在私有诊断保留具体原因，公开映射为 `unknown`；既有 `provenance` 对未收录的原因也使用 `unknown`，不扩大网站公开 schema。
+普通 HTTP 回退原因在私有诊断中保留为 `http_403` 等具体状态码；公开 `generation_info` 沿用 `http_error`，连接失败 `request_failed` 映射为既有 `network_error`。预算耗尽仍在私有诊断保留具体原因，公开映射为 `unknown`，不发布原始错误。
 
 ### 如何搜索其他来源
 
@@ -194,11 +194,11 @@ GitHub issue 和 README 的 REST API 请求读取可选环境变量 `GITHUB_TOKE
 
 ### 第一步：找到当天的条目
 
-打开 `data/YYYY-MM-DD-hn-candidates.json`，按标题、原文链接（`source_url`）或 HN 条目编号（`hn_item_id`）找到对应记录。完整诊断保存在候选记录中；公开简报 JSON 通过可选的 `provenance` 与 `generation_info` 字段提供经过白名单转换的生成信息，供网站折叠展示。既有 `provenance` 保留摘要依据、获取方式与状态、材料来源和回退原因；新增 `generation_info` 分开记录网页、HN 帖子、HN 评论的获取状态、模型声明使用的材料，以及摘要生成状态和实际调用模型。不发布原始错误、恢复 URL 或搜索候选记录。
+打开 `data/YYYY-MM-DD-hn-candidates.json`，按标题、原文链接（`source_url`）或 HN 条目编号（`hn_item_id`）找到对应记录。完整诊断保存在候选记录中；公开简报 JSON 通过 `generation_info` 提供经过白名单转换的生成信息，供网站折叠展示。它分开记录网页、HN 帖子、HN 评论的获取状态、模型声明使用的材料，以及摘要生成状态和实际调用模型。不发布原始错误、恢复 URL 或搜索候选记录。旧的公开条目字段 `provenance` 已移除，生成器不再输出，校验器也不再接受。
 
-`provenance` 是 schema v2 的可选扩展，历史条目缺少它时仍可读取和发布，不补写推测值。获取方式表示最终记录的尝试方式，失败时不能当作成功路径；其他来源恢复成功时，回退原因优先保留原站失败的原因。摘要依据只使用公开 schema 支持的既有枚举；不能准确表达的材料组合写为 `unknown`。它不由 `content_status` 或“已取得评论”推断，评论是否实际被摘要采用以私有审计中的按来源结果和摘要正文为准。详情不是完整的重试时间线。
+网页获取方式表示最终记录的尝试方式，失败时不能当作成功路径；其他来源恢复成功时，原因优先保留原站失败的原因。摘要采用的来源由 `summary_sources` 表示，不从 `content_status` 或“已取得评论”推断。这是模型声明，不是逐句事实核验，详情也不是完整的重试时间线。
 
-`generation_info` 是 schema v2 的可选扩展，须先部署接受它的 website，再启用生成器输出。两个公开对象可独立缺省，历史简报无需重新生成或迁移。材料获取状态区分成功、空内容、失败、未尝试、不需要和未知；成功取得评论但未达到征集帖资格门槛时，仍表示获取成功。HN 帖子在候选收集和 retry 中显式记录状态，fresh story 请求失败不会伪装为空帖子。摘要材料列表来自模型声明的 `summary_sources_used`，不是输入材料清单，也不是事实核验；成功摘要缺少声明时为 null，未生成摘要时为 []。模型标识仅允许长度不超过 128 的 ASCII 标识符，未记录时为 null。`generation.reasoning_effort` 为可选字段，仅从本次摘要调用记录导出请求的思考强度（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`，也接受 null）；OpenRouter 请求和诊断共用固定 medium 配置。这不是实际思考 token 用量。历史条目或未记录该配置的后端不补写字段，请求前预算耗尽也不会沿用上次调用的值。接收端须先支持该字段，再发布含有它的新简报。公开失败原因只使用确定的枚举投影，不发布原始异常或模型生成的理由。失败 retry 保留旧摘要及其生成信息，最新失败仍在私有 `last_retry`。
+`generation_info` 仍是 schema v2 的可选字段；生成器为每条输出它，校验器也接受缺少它的条目，不补写推测值。材料获取状态区分成功、空内容、失败、未尝试、不需要和未知；成功取得评论但未达到征集帖资格门槛时，仍表示获取成功。HN 帖子在候选收集和 retry 中显式记录状态，fresh story 请求失败不会伪装为空帖子。摘要材料列表来自模型声明的 `summary_sources_used`，不是输入材料清单，也不是事实核验；成功摘要缺少声明时为 null，未生成摘要时为 []。模型标识仅允许长度不超过 128 的 ASCII 标识符，未记录时为 null。`generation.reasoning_effort` 为可选字段，仅从本次摘要调用记录导出请求的思考强度（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`，也接受 null）；OpenRouter 请求和诊断共用固定 medium 配置。这不是实际思考 token 用量。历史条目或未记录该配置的后端不补写字段，请求前预算耗尽也不会沿用上次调用的值。接收端须先支持该字段，再发布含有它的新简报。公开失败原因只使用确定的枚举投影，不发布原始异常或模型生成的理由。失败 retry 保留旧摘要及其生成信息，最新失败仍在私有 `last_retry`。
 
 先看 `selected`：如果没有入选，查看 `rejection_reason` 了解原因。条目可能在筛选阶段就被排除，因此没有执行后续的获取和恢复流程。
 

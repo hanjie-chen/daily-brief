@@ -4,8 +4,8 @@ import json
 from dataclasses import asdict
 
 from ..models import Candidate
-from .public_schema import PROVENANCE_VALUES, PUBLIC_BRIEF_SCHEMA_VERSION
-from .generation_info import public_generation_info, public_retrieval_method
+from .public_schema import PUBLIC_BRIEF_SCHEMA_VERSION
+from .generation_info import public_generation_info
 
 
 def render_candidates_json(candidates: list[Candidate]) -> str:
@@ -217,69 +217,7 @@ def _public_item(candidate: Candidate) -> dict:
         "discussion_url": story.hn_discussion_url,
         "points": story.points,
         "comments": story.comments,
-        "provenance": _public_provenance(candidate),
         "generation_info": public_generation_info(candidate),
-    }
-
-
-def _public_provenance(candidate: Candidate) -> dict[str, str]:
-    """Project recorded evidence into public codes, never raw diagnostics.
-
-    Retrieval describes the final recorded attempt, not a complete trace or a
-    guarantee that a summary was generated. Unknown records stay unknown.
-    """
-    retrieval = candidate.article_retrieval
-    basis = "unknown"
-    if candidate.summary_status in {"failed", "insufficient"} or candidate.summary_basis in {
-        "none", "title_only",
-    }:
-        basis = "none"
-    elif candidate.summary_status == "success":
-        if candidate.summary_input_mode == "materials":
-            sources = set(candidate.summary_sources_used)
-            if "hn_comments" in sources:
-                basis = "hn_comments" if len(sources) == 1 else "source_and_comments"
-            elif sources == {"hn_post"}:
-                basis = "hn_post"
-            elif sources == {"web_body"}:
-                basis = (
-                    "video_captions" if retrieval.method == "youtube_caption" else "article"
-                )
-            # Metadata-only and web/post combinations have no exact public v2
-            # code. Keep unknown; the prose and private audit retain exact use.
-        else:
-            basis = {
-                "fetched_article": "article",
-                "youtube_caption": "video_captions",
-                "story_text": "hn_post",
-                "hn_comments": "hn_comments",
-            }.get(candidate.summary_basis, "unknown")
-        if (
-            candidate.summary_input_mode != "materials"
-            and basis == "hn_comments"
-            and candidate.content_kind != "community_roundup"
-            and (candidate.story.fetched_text.strip() or candidate.story.story_text.strip())
-        ):
-            basis = "source_and_comments"
-
-    # A recovered copy may itself have been fetched directly. Preserve the
-    # original site's recorded reason for needing that replacement material.
-    origin_failure = retrieval.origin_failure
-    reason = (
-        origin_failure.fallback_reason if origin_failure else retrieval.fallback_reason
-    )
-    if not reason and candidate.source_material_status == "insufficient":
-        reason = "source_material_insufficient"
-    values = {
-        "summary_basis": basis,
-        "retrieval_method": public_retrieval_method(retrieval.method) if retrieval.method != "title" else "none",
-        "retrieval_status": retrieval.status,
-        "material_origin": retrieval.material_origin,
-        "fallback_reason": reason or "none",
-    }
-    return {
-        field: value if value in PROVENANCE_VALUES[field] else "unknown"
-        for field, value in values.items()
     }
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..models import Candidate
 from .public_schema import (
     GENERATION_REASONS, GENERATION_STATUSES, MATERIAL_STATUSES, MODEL_IDENTIFIER,
-    PROVENANCE_VALUES, REASONING_EFFORTS, SUMMARY_SOURCES,
+    MATERIAL_ORIGINS, REASONING_EFFORTS, RETRIEVAL_METHODS, SUMMARY_SOURCES,
 )
 
 
@@ -43,7 +43,7 @@ def public_retrieval_method(method: str) -> str:
     """Project private transport details onto the existing public vocabulary."""
     if method == "github_issue":
         return "direct"
-    return method if method in PROVENANCE_VALUES["retrieval_method"] else "unknown"
+    return method if method in RETRIEVAL_METHODS else "unknown"
 
 
 def public_generation_info(candidate: Candidate) -> dict:
@@ -56,7 +56,7 @@ def public_generation_info(candidate: Candidate) -> dict:
         page_method = "none"
     page_method = public_retrieval_method(page_method)
     origin = retrieval.material_origin
-    origin = origin if origin in PROVENANCE_VALUES["material_origin"] else "unknown"
+    origin = origin if origin in MATERIAL_ORIGINS else "unknown"
     origin_failure = retrieval.origin_failure
     if page_status == "success":
         page_reason = _reason(origin_failure.fallback_reason if origin_failure else retrieval.fallback_reason)
