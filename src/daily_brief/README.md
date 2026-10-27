@@ -184,6 +184,9 @@ listed only in that package's guide.
   `archive_unavailable` generation-info reason. Deploy website support for this
   reason before publishing payloads that use it; historical `unknown` reasons
   are not backfilled.
+  Response download size failures retain the public `response_too_large` reason;
+  the website must accept this reason before these payloads are published.
+  This does not change retrieval limits, recovery eligibility, or summary status.
 - Public JSON replacement and no-content marker writes are atomic. A no-content
   marker cannot hide an existing invalid public payload, and publishing never
   scans or catches up old dates implicitly.

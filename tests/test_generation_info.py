@@ -156,6 +156,29 @@ def test_missing_wayback_capture_exports_safe_archive_reason_and_preserves_priva
     validate_public_brief(data)
 
 
+def test_oversized_response_exports_reason_without_affecting_comment_summary():
+    from daily_brief.output.render import render_candidates_json
+
+    item = candidate()
+    item.article_retrieval = ArticleRetrieval(
+        status='failed', method='direct', error_code='response_too_large',
+        error_message='private diagnostic details',
+    )
+    item.summary_sources_used = ['hn_comments']
+    data = payload(item)
+    result = data['sections']['ai']['items'][0]['generation_info']
+    assert result['materials']['webpage'] == {
+        'status': 'failed', 'method': 'direct', 'origin': 'unknown', 'reason': 'response_too_large',
+    }
+    assert result['summary_sources'] == ['hn_comments']
+    assert result['generation']['status'] == 'success'
+    assert 'private diagnostic details' not in json.dumps(data)
+    audit = json.loads(render_candidates_json([item]))[0]['article_retrieval']
+    assert audit['error_code'] == 'response_too_large'
+    assert audit['fallback_attempted'] is False
+    validate_public_brief(data)
+
+
 def test_self_post_and_unrecorded_usage_model_are_not_guessed():
     item = candidate()
     item.article_retrieval = ArticleRetrieval(status='not_needed', method='story_text')

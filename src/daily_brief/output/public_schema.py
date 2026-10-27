@@ -39,7 +39,7 @@ GENERATION_REASONS = {
     "vercel_challenge", "empty_content", "network_timeout", "tls_issuer_unavailable",
     "source_material_insufficient", "network_error", "http_error", "extraction_failed",
     "rate_limited", "authentication_failed", "provider_unavailable", "invalid_response",
-    "no_materials", "archive_unavailable",
+    "no_materials", "archive_unavailable", "response_too_large",
 }
 MODEL_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,127}", re.ASCII)
 

@@ -220,6 +220,8 @@ GitHub issue 和 README 的 REST API 请求读取可选环境变量 `GITHUB_TOKE
 
 Wayback 在允许时间范围内未找到符合条件的存档时，私有错误码为 `wayback_no_capture`，公开 `generation_info` 映射为 `archive_unavailable`，网站显示“未找到可用存档”。这一公开原因需要网站接收端先支持，再发布使用它的简报；历史 `unknown` 不自动补写。
 
+下载响应超过大小上限时，公开 `generation_info` 保留 `response_too_large` 原因，网站显示“原文超过获取大小上限”。它表示下载响应过大，不等同于正文提取超限或摘要失败；其他材料仍可支持摘要。大小上限与恢复策略不变。网站须先支持该原因，再发布使用它的简报；历史 `unknown` 不自动补写。
+
 Jina 的一般请求失败仍记为 `request_failed`，私有错误信息和 `component=jina_reader event=request_failure` 日志额外保留异常类型；`URLError` 包装的异常还记录 `reason_type`，用于区分超时和 DNS 等故障。诊断不复制异常文本或字符串形式的 reason，避免输出 URL 或凭据；类型信息会保留到后续 Wayback 组合失败中，不改变获取和重试策略。
 
 **如果需要了解搜索恢复**，查看 `article_retrieval` 中对应的记录：
