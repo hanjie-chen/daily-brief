@@ -72,7 +72,7 @@ def test_prompt_is_generic_and_selects_representative_by_quality_before_rank():
                             'support deadline', 'delayed remediation', 'for example'):
         assert known_case_term not in instruction
     assert 'independently' in instruction and 'of their order' in instruction
-    assert 'most complete, useful, and evidence-supported' in instruction
+    assert 'most complete and informative representative' in instruction
     assert 'tie-break' in instruction
     assert 'including one later' in instruction
     prompt = build_content_deduplication_prompt(candidates())
@@ -81,15 +81,14 @@ def test_prompt_is_generic_and_selects_representative_by_quality_before_rank():
     assert 'earlier retained' not in prompt
 
 
-def test_prompt_requires_positive_identity_evidence_and_full_information_coverage():
+def test_prompt_compares_summary_reading_value_without_requiring_original_evidence():
     instruction = CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION.lower()
-    assert 'positive evidence' in instruction
-    assert 'absence of distinguishing information' in instruction
-    assert 'titles alone cannot resolve that gap' in instruction
-    assert 'keep only the stronger representative' in instruction
-    assert 'fully covered subset independent' in instruction
-    assert 'intended audience' in instruction
-    assert 'distinct factual' in instruction
+    assert 'using only their titles and summaries' in instruction
+    assert 'main information' in instruction and 'worth reading' in instruction
+    assert 'small incidental details' in instruction
+    assert 'too vague to establish overlap' in instruction
+    assert 'original evidence' not in instruction
+    assert 'source evidence' not in instruction
 
 
 def test_prompt_names_character_reason_limits_without_weakening_validation():
@@ -129,39 +128,36 @@ def test_invalid_wire_shapes_are_rejected(invalid):
         validate_content_decisions(invalid, candidates())
 
 
-def test_prompt_has_bounded_separate_untrusted_sources_and_omission_notices():
-    items = candidates()[:1]
-    item = items[0]
-    item.story = replace(item.story, fetched_text='web ' * 10000, story_text='post ' * 10000)
-    item.discussion_text = 'comment ' * 10000
-    original = item.story.fetched_text
-    prompt = build_content_deduplication_prompt(items)
-    rows = json.loads(prompt.split('BEGIN UNTRUSTED CANDIDATE DATA\n')[1].split('\nEND UNTRUSTED')[0])
-    evidence = rows[0]['evidence']
-    assert set(evidence) == {'retrieved_webpage', 'hn_post', 'hn_comments'}
-    assert sum(map(len, evidence.values())) <= 4000
-    assert 2000 < len(evidence['retrieved_webpage']) <= 3000
-    assert len(evidence['hn_post']) <= 500
-    assert len(evidence['hn_comments']) <= 500
-    assert all('omitted' in excerpt or 'omissions' in excerpt for excerpt in evidence.values())
-    assert item.story.fetched_text == original
-    assert 'untrusted' in prompt
-    assert 'Sharing a topic or event alone NEVER' in CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION
-    assert 'uncertainty means retain' in CONTENT_DEDUPLICATION_SYSTEM_INSTRUCTION
-
-
-def test_roundup_evidence_prioritizes_answers_over_question():
+@pytest.mark.parametrize('kind', ['article', 'community_roundup'])
+def test_prompt_excludes_retrieval_and_source_material_for_all_item_kinds(kind):
     item = candidates()[0]
-    item.content_kind = 'community_roundup'
-    item.story = replace(item.story, story_text='question context ' * 1000,
-                         fetched_text='irrelevant webpage')
-    item.discussion_text = 'concrete tools and implementation experiences ' * 1000
+    item.content_kind = kind
+    baseline = build_content_deduplication_prompt([item])
+    item.story = replace(item.story, source_url='https://source.example/private-path',
+                         fetched_text='web material ' * 10000,
+                         story_text='post material ' * 10000)
+    item.discussion_text = 'comment material ' * 10000
+    item.article_retrieval.retrieved_url = 'https://mirror.example/other-path'
+    item.article_retrieval.material_origin = 'syndicated'
+    before = deepcopy(item)
+    prompt = build_content_deduplication_prompt([item])
+    assert prompt == baseline
+    rows = json.loads(prompt.split('BEGIN UNTRUSTED CANDIDATE DATA\n')[1].split('\nEND UNTRUSTED')[0])
+    assert rows == [{'item_id': item.story.hn_item_id, 'title': item.story.title,
+                     'summary': item.summary}]
+    assert item == before
+    assert 'untrusted' in prompt
+
+
+def test_prompt_bounds_titles_and_summaries_without_modifying_candidates():
+    item = candidates()[0]
+    item.story = replace(item.story, title='题' * 600)
+    item.summary = '文' * 1200
     prompt = build_content_deduplication_prompt([item])
     rows = json.loads(prompt.split('BEGIN UNTRUSTED CANDIDATE DATA\n')[1].split('\nEND UNTRUSTED')[0])
-    evidence = rows[0]['evidence']
-    assert set(evidence) == {'hn_post', 'hn_comments'}
-    assert len(evidence['hn_comments']) > len(evidence['hn_post'])
-    assert sum(map(len, evidence.values())) <= 4000
+    assert rows == [{'item_id': item.story.hn_item_id, 'title': '题' * 500, 'summary': '文' * 1000}]
+    assert len(item.story.title) == 600
+    assert len(item.summary) == 1200
 
 
 class Opener:
@@ -198,6 +194,11 @@ def test_backend_uses_task_model_and_does_not_alter_summary_diagnostics(provider
     request = transport.requests[0]
     expected_model = backend.summarizer_model if provider == 'openrouter' else backend.classifier_model
     assert request['model'] == expected_model
+    prompt = (request['messages'][1]['content'] if provider == 'openrouter'
+              else request['input'])
+    rows = json.loads(prompt.split('BEGIN UNTRUSTED CANDIDATE DATA\n')[1].split('\nEND UNTRUSTED')[0])
+    assert rows == [{'item_id': c.story.hn_item_id, 'title': c.story.title, 'summary': c.summary}
+                    for c in candidates()]
     assert backend.last_deduplication_model == expected_model
     assert backend.last_deduplication_usage['input_tokens'] == 100
     assert backend.last_summary_model == before_model

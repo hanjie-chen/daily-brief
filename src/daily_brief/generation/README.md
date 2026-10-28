@@ -155,10 +155,10 @@ this package that owns it.
 8. `content_deduplication.py`: Successful nonempty summaries are compared together
    across both sections, supplied in core-then-outside ranking order. OpenRouter's
    configured summarizer model (medium reasoning) or Gemini's classifier model
-   receives summaries plus bounded original evidence. It marks
+   receives only item IDs, titles and summaries. It marks
    repeated core information, while retaining independent analysis or important
    developments from the same event and uncertain cases. For redundant coverage,
-   it selects the most informative, evidence-supported representative regardless
+   it selects the most complete and informative representative regardless
    of input position; ranking only breaks quality ties. The entire response is
    validated before any deletion; duplicate references may point to any item
    retained in that batch, never self-references, unknown IDs, cycles or chains.
@@ -283,9 +283,7 @@ fakes and story builders live in `tests/fakes.py`.
 ranking/quotas/bounds, later representative replacement, protection from old-to-old
 rejudgments, roundup reuse and final-only history.
 The PHP advisory/release/foundation fixture uses saved public summaries; its
-mocked judgments test orchestration, not live model quality. Repeated live
-order-reversal checks and independent authored cases live in
-[`evals/content_deduplication/`](../../../evals/content_deduplication/README.md).
+mocked judgments test orchestration, not live model quality.
 Normal model-input
 capture includes any additional summary calls but does not replay content
 comparison through `evaluate-model`.

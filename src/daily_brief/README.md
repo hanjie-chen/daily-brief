@@ -119,8 +119,8 @@ listed only in that package's guide.
   Failed external retrieval never produces a title-only article paraphrase.
   Product-level summary requirements are defined in [the product document](../../docs/product.md).
 - Before generation writes artifacts, successful summaries undergo a same-day
-  information comparison across both sections. Repeated core facts without
-  substantive additions lose to the most informative, evidence-supported
+  information comparison across both sections, using only item IDs, titles and
+  summaries. Repeated core facts without substantive additions lose to the most informative
   representative, regardless of input position; original rank only breaks
   quality ties. Independent analysis of the same event remains eligible.
   Qualified same-section reserves can fill the

@@ -43,26 +43,18 @@ the complete response, including later input items. Self-references, unknown IDs
 cycles and duplicate chains are rejected as a whole before any selection changes.
 Reasons must be nonempty and at most 500 characters.
 
-The prompt first assesses informational redundancy across the complete batch,
-then selects representatives by factual coverage, explanatory depth, relevant
-conditions/limitations and support in the supplied evidence. Input rank only
-breaks ties in those quality factors; length and position do not establish
-quality. A later, stronger representative can replace an earlier weaker item.
-The prompt contains no concrete development-case examples or expected answers.
-A shared topic/event alone does not establish duplication: independently useful
-facts, explanations, analysis, corrections and developments remain eligible.
-Shared identity and core facts require specific positive source evidence;
-vague summaries and missing distinguishing details cannot establish redundancy.
-A fully covered subset does not gain independent value from its audience,
-format or reading effort. Missing supporting evidence or uncertainty means retain.
-All content is explicitly untrusted and cannot instruct the model.
-
-Each item includes a bounded title, URLs, summary and up to 4,000 characters of
-original evidence. With multiple sources, 3,000 characters go to the first
-available webpage/post, and 1,000 are shared by the remaining post/comment sources;
-with a single source it receives the full budget. Community roundups prioritize
-comments and then question context, excluding webpage evidence. Truncated excerpts
-carry omission notices. These excerpts do not replace stored in-memory materials.
+Each item contains only `item_id`, a title capped at 500 characters, and a summary
+capped at 1,000 characters. URLs, retrieval metadata, webpage text, posts and
+comments are not sent for comparison, including for community roundups.
+The prompt asks whether a retained item already conveys another summary's main
+information, or the other offers substantive content worth reading separately.
+Incidental details and wording differences alone do not require another slot;
+independent explanations, analysis and substantive developments remain eligible.
+Vague summaries or a shared topic alone cannot establish duplication; uncertain
+items are retained. No original-source evidence is required or consulted.
+For duplicate coverage, the most complete and informative representative wins;
+input rank only breaks quality ties. A later item may replace an earlier one.
+All fields are untrusted data. The prompt includes no concrete case answers.
 
 OpenRouter requests medium reasoning with an 8,192-token limit covering reasoning
 and final output. It shares summarizer model configuration, price caps and request
@@ -78,10 +70,6 @@ Output truncation, malformed decisions and budget failures reject the comparison
 Generation owns selection changes, bounded refills and failure handling, and suspends long
 network recovery for this optional check. `tests/test_content_deduplication_backend.py`
 checks prompts, validation and both provider wire contracts with fake transports.
-The separate [`content comparison evaluation`](../../../evals/content_deduplication/README.md)
-runs frozen cases through this same production prompt and backend in different
-orders, with repetitions, expected judgments kept out of model input, and results
-written separately from generation artifacts.
 
 ## Summary Sufficiency
 
