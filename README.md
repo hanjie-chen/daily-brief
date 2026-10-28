@@ -27,7 +27,7 @@
 3. 生成摘要：获取入选内容的网页、帖子正文、以及评论区生成中文摘要；
 4. 输出与发布：生成用于阅读、发布和复盘的文件；发布作为独立步骤执行
 
-系统总览、原文获取流程与排查入口见 [`docs/architecture.md`](./docs/architecture.md)；模块职责与实现约束见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。分类与中文摘要的模型评测材料及使用说明见 [`evals/README.md`](./evals/README.md)。
+系统总览、原文获取流程与排查入口见 [`docs/architecture.md`](./docs/architecture.md)；模块职责与实现约束见 [`src/daily_brief/README.md`](./src/daily_brief/README.md)。评测材料及使用说明见 [`evals/README.md`](./evals/README.md)。
 
 ## Config
 

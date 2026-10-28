@@ -159,8 +159,8 @@ the same sampler but retain the stricter `MIN_DISCUSSION_COMMENTS` and
 running the pipeline:
 
 ```sh
-python scripts/evaluate_keywords.py collect --first-brief-date YYYY-MM-DD --last-brief-date YYYY-MM-DD --output corpus.json
-python scripts/evaluate_keywords.py evaluate --corpus corpus.json --output report.json
+python -m daily_brief.candidates.keyword_evaluation collect --first-brief-date YYYY-MM-DD --last-brief-date YYYY-MM-DD --output corpus.json
+python -m daily_brief.candidates.keyword_evaluation evaluate --corpus corpus.json --output report.json
 ```
 
 `collect` fetches the Algolia stories for the given range of daily windows.

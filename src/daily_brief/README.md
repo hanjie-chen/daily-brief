@@ -21,7 +21,7 @@ points, see [the architecture guide](../../docs/architecture.md).
   retrieval, recovery, or summary fallback.
 - `candidates/keyword_evaluation.py` provides the corpus collection and replay
   utility used to evaluate production keyword matching. It can be run through
-  `scripts/evaluate_keywords.py`.
+  `python -m daily_brief.candidates.keyword_evaluation`.
 
 ## Generation Flow
 
