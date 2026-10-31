@@ -1,4 +1,4 @@
-"""Run one case through production deduplication, three times in each order."""
+"""Repeat the original order three times, then rotate the first five items once each."""
 from __future__ import annotations
 
 import argparse
@@ -42,10 +42,20 @@ def load_case(path: Path) -> tuple[dict, list[Candidate]]:
     for row in case['expected']:
         if not isinstance(row, dict) or set(row) != {'item_id', 'duplicate_of'}:
             raise ValueError('Expected results require item_id and duplicate_of')
+        targets = row['duplicate_of']
+        if targets is not None and (
+            not isinstance(targets, list) or not targets
+            or not all(isinstance(target, str) for target in targets)
+            or len(set(targets)) != len(targets)
+        ):
+            raise ValueError('Expected duplicate_of must be null or a nonempty list of unique article IDs')
     ensure_content_decisions([
-        ContentDecision(row['item_id'], row['duplicate_of'], 'Expected result')
+        ContentDecision(row['item_id'], (row['duplicate_of'] or [None])[0], 'Expected result')
         for row in case['expected']
     ], candidates)
+    retained = {row['item_id'] for row in case['expected'] if row['duplicate_of'] is None}
+    if any(target not in retained for row in case['expected'] for target in row['duplicate_of'] or []):
+        raise ValueError('Every allowed duplicate target must be an article expected to be retained')
     return case, candidates
 
 
@@ -56,7 +66,13 @@ def save(path: Path, result: dict) -> None:
 
 
 def run(case: dict, candidates: list[Candidate], backend, path: Path) -> dict:
-    expected = {row['item_id']: row['duplicate_of'] for row in case['expected']}
+    expected = {row['item_id']: row['duplicate_of'] if row['duplicate_of'] is not None else [None]
+                for row in case['expected']}
+    rotating, fixed = candidates[:5], candidates[5:]
+    orders = [('original', 3, candidates)] + [
+        (f'rotate_{shift}', 1, rotating[shift:] + rotating[:shift] + fixed)
+        for shift in range(1, len(rotating))
+    ]
     result = {
         'started_at': datetime.now(timezone.utc).isoformat(), 'status': 'running',
         'case': case,
@@ -67,16 +83,17 @@ def run(case: dict, candidates: list[Candidate], backend, path: Path) -> dict:
             'timeout_seconds', 'classifier_min_request_interval_seconds',
             'summarizer_min_request_interval_seconds', 'max_run_cost_usd',
         )},
-        'runs': [],
+        'planned_runs': sum(repeats for _, repeats, _ in orders), 'runs': [],
     }
     # Reserve a new result file before making any paid requests.
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('x', encoding='utf-8') as output:
         json.dump(result, output, ensure_ascii=False, indent=2)
-    for order, items in [('normal', candidates), ('reversed', list(reversed(candidates)))]:
+    for order, repeats, items in orders:
         prompt = build_content_deduplication_prompt(items)
-        for repeat in range(1, 4):
+        for repeat in range(1, repeats + 1):
             row = {'order': order, 'repeat': repeat, 'prompt': prompt,
+                   'input_ids': [item.story.hn_item_id for item in items],
                    'passed': False, 'decisions': [], 'error_type': '', 'http_status': None}
             before = len(getattr(backend, 'request_records', []))
             start = time.monotonic()
@@ -85,7 +102,7 @@ def run(case: dict, candidates: list[Candidate], backend, path: Path) -> dict:
                 with suspend_network_recovery():
                     decisions = ensure_content_decisions(backend.deduplicate(items), items)
                 row['decisions'] = [asdict(decision) for decision in decisions]
-                row['passed'] = {d.item_id: d.duplicate_of for d in decisions} == expected
+                row['passed'] = all(d.duplicate_of in expected[d.item_id] for d in decisions)
             except Exception as exc:
                 # Provider exception messages can contain private request data.
                 row['error_type'] = type(exc).__name__
@@ -101,7 +118,7 @@ def run(case: dict, candidates: list[Candidate], backend, path: Path) -> dict:
             result['runs'].append(row)
             save(path, result)
             status = 'PASS' if row['passed'] else 'ERROR' if row['error_type'] else 'FAIL'
-            print(f'{order} {repeat}/3: {status}', flush=True)
+            print(f'{order} {repeat}/{repeats}: {status}', flush=True)
     result.update(status='complete', finished_at=datetime.now(timezone.utc).isoformat(),
                   passed=sum(row['passed'] for row in result['runs']),
                   errors=sum(bool(row['error_type']) for row in result['runs']),
@@ -120,8 +137,8 @@ def main(argv=None) -> int:
     path = ROOT / 'data/content-dedup-evaluations' / f'{args.case.stem}-{timestamp}.json'
     print(f'Results: {path}', flush=True)
     result = run(case, candidates, backend, path)
-    print(f"Passed {result['passed']}/6; errors {result['errors']}", flush=True)
-    return 0 if result['passed'] == 6 else 1
+    print(f"Passed {result['passed']}/{result['planned_runs']}; errors {result['errors']}", flush=True)
+    return 0 if result['passed'] == result['planned_runs'] else 1
 
 
 if __name__ == '__main__':
