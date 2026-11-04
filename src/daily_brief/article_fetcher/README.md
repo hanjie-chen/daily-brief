@@ -82,6 +82,13 @@ bounded flow:
    a discussion comment. A linkpost introduction is retained as page text;
    its outbound link is not automatically followed. Comment extraction remains
    disabled.
+   Empty inline `span` and custom-element markers (hyphenated tag names) inside
+   paragraphs, headings, list items and table cells are unwrapped before
+   extraction, preserving the following prose. This avoids losing explanations
+   after citation markers that the extractor skips. Only markers with no child
+   elements or non-whitespace text are unwrapped; nonempty components and parent
+   container attributes remain available to normal content filtering. Markers
+   under explicitly hidden ancestors are left intact to avoid exposing their text.
    Nonempty extraction is a retrieval result, not a guarantee of sufficient evidence. No scripts or browser
    interactions are executed. Public PDFs use Adobe
    PDF-to-Markdown first when configured, with one bounded hard timeout across
@@ -257,6 +264,8 @@ before every PDF, adding startup time and memory inside the worker's limits.
 
 Subsystem tests live in `tests/test_article_fetcher.py`. `tests/test_github_issue.py`
 covers API routing, Markdown evidence, identity checks, recovery, and bounds.
+`tests/test_inline_marker_extraction.py` covers prose after empty inline markers,
+text order, paragraph boundaries and preservation of content-filtering structure.
 `tests/test_github_issue_redirects.py` exercises repository renames, issue
 transfers, and redirect-chain restrictions through urllib's redirect handling;
 `tests/test_github_auth.py` covers optional credentials and their isolation.

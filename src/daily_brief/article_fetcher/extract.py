@@ -8,6 +8,10 @@ import trafilatura
 
 
 _TABLE_TAG_PATTERN = re.compile(r"<table(?:\s|>)", re.IGNORECASE)
+_INLINE_MARKER_PATTERN = re.compile(
+    r"<(?:span\b|[a-z][a-z0-9._]*-[a-z0-9._-]+\b)", re.IGNORECASE
+)
+_TEXT_BLOCK_TAGS = frozenset({"p", "li", "th", "td", "h1", "h2", "h3", "h4", "h5", "h6"})
 _IMPORTANT_SUFFIX_PATTERN = re.compile(r"\s*!\s*important\s*$", re.IGNORECASE)
 _METADATA_TITLE_MAX_CHARS = 512
 _METADATA_DESCRIPTION_MAX_CHARS = 2000
@@ -15,8 +19,10 @@ _METADATA_DESCRIPTION_MAX_CHARS = 2000
 
 def extract_html(markup: str) -> str:
     """Extract body text and separately labeled, bounded publisher metadata."""
+    prepared = _normalize_lesswrong_post_markup(markup)
+    prepared = _normalize_empty_inline_markers(prepared)
     extracted = trafilatura.extract(
-        _normalize_semantic_tables(_normalize_lesswrong_post_markup(markup)),
+        _normalize_semantic_tables(prepared),
         include_comments=False,
         favor_precision=True,
         include_tables=True,
@@ -34,6 +40,45 @@ def extract_html(markup: str) -> str:
         + "\n\nExtracted body:\n"
         + body
     )
+
+
+def _normalize_empty_inline_markers(markup: str) -> str:
+    """Keep text following empty inline spans and custom-element markers.
+
+    Trafilatura skips unknown paragraph children, including their tails, and
+    precision-mode pruning can also discard the tails of empty spans. Those
+    tails are surrounding prose, not content belonging to the empty marker.
+    Keep containers and nonempty components intact for normal content filtering.
+    """
+    if _INLINE_MARKER_PATTERN.search(markup) is None:
+        return markup
+    parser = lxml_html.HTMLParser(encoding="utf-8", no_network=True, huge_tree=False)
+    try:
+        document = lxml_html.document_fromstring(markup.encode("utf-8"), parser=parser)
+    except (etree.ParserError, etree.XMLSyntaxError):
+        return markup
+
+    changed = False
+    for element in reversed(list(document.iter())):
+        if not isinstance(element.tag, str):
+            continue
+        if element.tag != "span" and "-" not in element.tag:
+            continue
+        if len(element) or (element.text or "").strip():
+            continue
+        ancestors = list(element.iterancestors())
+        if not any(parent.tag in _TEXT_BLOCK_TAGS for parent in ancestors):
+            continue
+        # Hidden containers are not consistently pruned by the extractor. Do not
+        # expose their text; a marker's own hidden attribute does not hide its tail.
+        if any(_is_explicitly_hidden(parent) for parent in ancestors):
+            continue
+        element.drop_tag()
+        changed = True
+
+    if not changed:
+        return markup
+    return etree.tostring(document, encoding="unicode", method="html")
 
 
 def _normalize_lesswrong_post_markup(markup: str) -> str:
