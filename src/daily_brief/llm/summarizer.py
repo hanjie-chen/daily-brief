@@ -43,10 +43,14 @@ and a specific nonempty reason of at most 300 characters. Never return a title-o
 paraphrase as a sufficient summary. Assess sufficiency and summarize in this one call.
 """
 
-SUMMARY_SCOPE_INSTRUCTION = """摘要范围要求：只介绍 HN 标题所指的具体事件、问题或观点，不要总结整个来源页面。
-材料含有多项更新或多个话题时，仅保留直接说明当前事件的事实、适用条件和限制；不要因为
-它们属于同一个产品或包含共同关键词，就顺带介绍其他变化。原文没有支持的标题说法不能采纳，
-标题与原文冲突时以原文为准。没有相关实质事实时返回 insufficient，不用其他话题凑摘要。
+SUMMARY_SCOPE_INSTRUCTION = """摘要范围要求：介绍读者点开链接后会读到的主要内容，由提供的正文确定摘要重点。
+单一主题文章先交代全文核心主张或结论，再选一两个最有代表性的做法或结果支撑，并保留重要限制。
+多个实验或例子若共同支撑一个主题，不应把标题突出的一例当成全文，也不逐项罗列所有实验或例子。
+更新日志、周刊等包含多个彼此独立话题的页面，只介绍 HN 标题对应的部分，不顺带介绍无关内容。
+HN 标题用于定位条目，不决定单一主题文章的重点；标题与正文冲突时以正文为准。
+HN 自发帖以帖子内容及相关讨论为对象；征集推荐或经验时按对应要求整理具体回答。
+有可用原文时，HN 评论用于补充和纠正，不替代原文主旨；只有评论时只概括有依据的讨论。
+原文没有支持的标题说法不能采纳。没有相关实质事实时返回 insufficient，不用其他话题凑摘要。
 """
 
 SUMMARY_TIME_INSTRUCTION = """时间表述要求：以简报日期为叙述基准，不使用模型猜测的当前日期。
@@ -691,7 +695,7 @@ def _find_results_heading(body: str, start: int = 0) -> re.Match[str] | None:
 
 
 def build_summary_prompt(candidate: Candidate) -> str:
-    """Apply the same event scope to every summary route."""
+    """Apply the shared content-scope rules to every summary route."""
     return (SUMMARY_SCOPE_INSTRUCTION + "\n" + _summary_time_context(candidate)
             + "\n" + _build_summary_route_prompt(candidate))
 
@@ -727,7 +731,7 @@ def _build_summary_route_prompt(candidate: Candidate) -> str:
 不添加与核心解释无关的轶事。
 
 先找出核心内容，再选择最有解释价值的事实：
-- 结合标题定位当前条目的核心事件，并用材料核实。摘要应让读者理解谁或什么做了什么、产生了什么结果。
+- 按上述摘要范围，从正文识别核心主题、主张或事件。摘要应让读者理解主要内容及其关键做法、结果和适用范围。
   主体、方法或参与方式若是该事件的关键区别，必须保留，不要泛化成“研究团队”“某工具”等而丢失这一区别。
   材料明确提供的名称、型号或版本若影响核心主体的识别，应保留；不逐项罗列无关品牌。
   标题突出但材料不支持的说法，不得照搬；材料明确纠正标题时，保留这一纠正。
@@ -738,6 +742,9 @@ def _build_summary_route_prompt(candidate: Candidate) -> str:
   代替实际内容，也不要把标题换一种说法就结束。
 - 先保留核心机制、结论及改变其含义的限制，再考虑例子。相似功能或案例概括共同点，只选一两个
   最有解释价值的细节，不逐项清点。删除重复介绍、无关轶事、称赞、情绪反应和宣传套话。
+- 多个指标或结果若只是重复支持同一结论，只保留最有代表性的一组数字，不逐项罗列成绩。
+  其他结果若体现不同的重要结论，可以简要保留，不必为每个结果都列数字；
+  不要因此省掉改变结论的适用条件或限制。
 - 通常两到四句；材料简单时一句即可，复杂时可以适当展开。没有最低字数要求，不为凑字数扩写，
   也不为缩短篇幅删掉关键解释。不要替读者写推荐理由。
 

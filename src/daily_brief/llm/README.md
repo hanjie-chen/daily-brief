@@ -91,7 +91,8 @@ The prompt organizes the text around the subject, key facts or mechanisms, and
 conditions or limitations. Length is flexible: usually two to four sentences,
 shorter for simple material and longer when explanation requires it. The existing
 1,000-character validation ceiling remains a defensive bound, not a length target.
-The title locates the event, while supplied material verifies it. Distinguishing
+The supplied body determines the core theme, claim, or event under the shared
+scope rules below. Distinguishing
 actors, methods, contributions, and identifying names or versions take priority
 over secondary examples. Publisher metadata may identify a subject named only
 generically in the body; body evidence overrides conflicting metadata. The model
@@ -99,6 +100,10 @@ must declare every source supplying retained facts, including identity details,
 rather than only the dominant source. These are prompt requirements, not semantic
 source-attribution checks in the validator.
 The material prompt puts the core explanation and its limits ahead of examples.
+When several metrics or results repeat the same conclusion, it keeps only the
+most representative set of numbers. Results supporting distinct important
+conclusions may remain without enumerating every metric; conditions and
+limitations that change the conclusion must remain.
 It requires availability status (available, preview, planned), the distinction
 between an author's expectation and an observed result, and metric definitions
 and measurement scope beside the claims they qualify. Unknown details must stay
@@ -176,11 +181,19 @@ Shared sufficiency instructions apply to short and long sources: only facts rele
 to the current item count, the HN title is not evidence, and a concrete short
 announcement can suffice. Absence from excerpts is not absence from the page.
 Selection is lexical, not semantic, and makes no additional provider calls.
-All summary routes share an event-scope instruction: summarize the item rather
-than the entire source page, retain relevant conditions and limitations, and omit
-other updates that only share a product or keywords. Source evidence overrides
-unsupported title claims. This is a generation instruction, not a post-generation
-quality gate; evidence selection and provider-call counts are unchanged.
+All summary routes share content-scope instructions. A single-theme article starts
+with its overall claim or conclusion, supported by one or two representative
+methods or results and important limitations. Experiments supporting that theme
+are neither enumerated nor reduced to the one highlighted by the HN title.
+For changelogs, newsletters, and other pages with independent topics, only the
+HN-title-related portion is summarized. The title locates the item but does not
+set a single-theme article's emphasis; body evidence overrides conflicting or
+unsupported title claims. Self-posts use the post and relevant discussion, while
+recommendation requests retain their route-specific answer format. When source
+text is available, comments supplement or correct it rather than replace its
+main point; comments alone support only grounded discussion summaries. These are
+generation instructions, not a post-generation quality gate; title/anchor-based
+evidence selection and provider-call counts are unchanged.
 
 All summary routes also receive a brief reference date (Asia/Singapore), the HN
 submission timestamp, and the publisher-declared publication date of the retrieved
