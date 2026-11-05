@@ -108,6 +108,55 @@ def test_material_context_separates_metadata_body_post_and_comments():
     assert route_summary_mode(item) == SUMMARY_MODE_GENERIC
 
 
+def test_web_article_between_old_and_new_limits_is_preserved_in_full():
+    body = (
+        'The main claim is that several approaches address the same problem.\n'
+        + 'Detailed supporting observations.\n' * 1800
+        + 'The final limitation is that unfamiliar tasks remain unsolved.'
+    )
+    assert 24_000 < len(body) < 100_000
+    item = candidate(fetched_text=body)
+    prompt = build_summary_prompt(item)
+    context = build_summary_context(item)
+    assert body in prompt
+    assert 'Source excerpts' not in context.text
+    assert context.sections == ('web_body',)
+
+
+def test_oversized_web_body_keeps_intro_and_target_with_separate_metadata_budget():
+    metadata = (
+        'Page metadata (publisher-provided context, not article body):\n'
+        + 'Publisher context. ' * 250 + '\n\nExtracted body:\n'
+    )
+    body = (
+        'This essay explains the general approach and why it matters.\n'
+        + 'Background and analysis.\n' * 6000
+        + 'The video explainer site costs four cents per video; the result is experimental.'
+    )
+    item = candidate(fetched_text=metadata + body)
+    context = build_summary_context(item)
+    web_part = context.text.split('Untrusted HN post text', 1)[0]
+    assert body[:2400] in web_part
+    assert 'the result is experimental.' in web_part
+    assert 'Publisher context.' in web_part
+    assert len(web_part) < 100_200  # Budget plus material labels and separators.
+    assert any(section.startswith('web_body:chars:0:') for section in context.sections)
+
+
+def test_web_metadata_and_body_share_the_new_limit():
+    metadata = (
+        'Page metadata (publisher-provided context, not article body):\n'
+        + 'Publisher context. ' * 250 + '\n\nExtracted body:\n'
+    )
+    body = ('video explainer site observations.\n' * 3000)[:98_000]
+    assert len(body) < 100_000 < len(metadata + body)
+    context = build_summary_context(candidate(fetched_text=metadata + body))
+    web_part = context.text.split('Untrusted HN post text', 1)[0]
+    assert 'Source excerpts' in web_part
+    assert body[:2400] in web_part
+    assert len(web_part) < 100_200
+
+
 @pytest.mark.parametrize("source,kwargs,evidence,summary", [
     (
         "web_metadata",

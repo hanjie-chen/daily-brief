@@ -86,9 +86,12 @@ def _render(text: str, spans: list[tuple[int, int]], strategy: str) -> str:
 def select_evidence(
     text: str, *, title: str, url: str = '',
     max_chars: int = DEFAULT_EVIDENCE_MAX_CHARS,
+    head_chars: int = 0,
 ) -> SelectedEvidence:
     if max_chars < 1_000:
         raise ValueError('evidence budget must be at least 1000 characters')
+    if head_chars < 0:
+        raise ValueError('head characters must be nonnegative')
     if len(text) <= max_chars:
         return SelectedEvidence(text, 'full_text', len(text), len(text))
 
@@ -122,6 +125,13 @@ def select_evidence(
         initial = (0, metadata_end)
         if len(_render(text, [initial], strategy)) <= max_chars - 1_000:
             selected.append(initial)
+    if head_chars:
+        # Summary callers reserve the body introduction independently of title
+        # matches. Metadata alone is not the article's introduction.
+        body_start = metadata_end if metadata else 0
+        selected = _merge(selected + [(body_start, min(len(text), body_start + head_chars))])
+        if len(_render(text, selected, strategy)) > max_chars - 1_000:
+            raise ValueError('evidence budget must leave room for matches after the head')
     for i in ranked:
         # Include a preceding block and a following block. This retains nearby
         # section/version/date headings and qualifying sentences around a match.

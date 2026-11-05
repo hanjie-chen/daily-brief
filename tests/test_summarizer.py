@@ -253,7 +253,7 @@ def test_summary_prompt_uses_placeholder_when_no_content():
 
 def test_generic_long_source_selects_relevant_late_evidence_with_range_markers():
     body = (
-        "Old changelog entry with unrelated maintenance notes.\n\n" * 900
+        "Old changelog entry with unrelated maintenance notes.\n\n" * 3000
         + "Version 2.1.277 adds AGENTS.md support when no CLAUDE.md exists.\n"
     )
     item = candidate(
@@ -432,7 +432,7 @@ def test_research_evidence_falls_back_to_full_text_when_sections_are_too_short()
 def test_research_sections_are_budgeted_after_section_selection():
     body = research_body().replace(
         "Output tokens increased sevenfold,",
-        "Output tokens increased sevenfold, " + ("detailed result " * 2_000),
+        "Output tokens increased sevenfold, " + ("detailed result " * 10_000),
     )
     item = candidate(story_text="", fetched_text=body, title="Enterprise AI study")
 
@@ -440,7 +440,8 @@ def test_research_sections_are_budgeted_after_section_selection():
 
     assert context.strategy == SUMMARY_CONTEXT_RESEARCH_SECTIONS
     assert context.source_chars == len(body.strip())
-    assert context.selected_chars <= 24_000
+    assert context.source_chars > 100_000
+    assert context.selected_chars <= 100_000
     assert context.sections[:2] == ("abstract", "results_through_conclusion")
     assert any(section.startswith("research_chars:") for section in context.sections)
 
@@ -652,13 +653,14 @@ def test_research_budget_keeps_results_and_limitations_when_title_only_in_abstra
         'This study links', 'OpaqueStudyName This study links'
     ).replace(
         'Output tokens increased sevenfold,',
-        'RESULT_SENTINEL Output tokens increased sevenfold, ' + 'additional measurements ' * 4000,
+        'RESULT_SENTINEL Output tokens increased sevenfold, ' + 'additional measurements ' * 8000,
     ).replace(
         'The analysis covers only', 'LIMITATION_SENTINEL The analysis covers only'
     )
     context = build_summary_context(candidate(story_text='', fetched_text=body, title='OpaqueStudyName'))
     assert context.strategy == SUMMARY_CONTEXT_RESEARCH_SECTIONS
-    assert len(context.text) <= 24000
+    assert context.source_chars > 100_000
+    assert len(context.text) <= 100_000
     assert 'OpaqueStudyName' in context.text
     assert 'RESULT_SENTINEL' in context.text
     assert 'LIMITATION_SENTINEL' in context.text

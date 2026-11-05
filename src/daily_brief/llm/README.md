@@ -156,17 +156,25 @@ kept outside this package, as described under Retrieval Flow in the
 
 `llm/evidence_selection.py` supplies deterministic title/URL-fragment-aware excerpts
 at the model boundary: 6,000 characters for classification; for ordinary summaries,
-up to 24,000 characters shared by webpage metadata and webpage text, plus separately
+up to 100,000 characters shared by webpage metadata and webpage text, plus separately
 bounded HN post text (6,000) and comments (16,000). Comments keep the sampler’s order and parent context;
 oversized replay samples are truncated at the end with an explicit marker. The four inputs retain their
 separate boundaries. Full `Story.fetched_text` is never replaced by excerpts,
 including when classification material is reused for a selected item. Capture/replay
 accepts full fetched text up to the same UTF-8 byte ceiling. Short classifier inputs
 keep legacy whitespace normalization; long inputs retain block boundaries.
+Legacy source-text replay routes share the 100,000-character limit and reserved
+introduction, including their story-text fallback; current material routes keep
+HN post text under its separate 6,000-character limit.
 
 Long text is divided into bounded blocks. Rare matching title/anchor terms rank
 blocks; adjacent blocks retain local qualifications and headings when extraction
-preserved them. Publisher metadata keeps its attribution wrapper. No lexical match
+preserved them. Webpage summary callers reserve the first 2,400 body characters
+before selecting matches, so the introduction need not contain title keywords.
+Metadata does not count as the body introduction. Overlapping ranges merge and
+excerpt markers count toward the budget. Text within the budget is passed in full.
+Classification and HN post selection do not reserve this introduction; their
+existing budgets and ranking remain unchanged. Publisher metadata keeps its attribution wrapper. No lexical match
 uses bounded distributed sampling, explicitly distinguished from relevance matching.
 All excerpts carry omission notices; matching never establishes factual truth.
 Summary audit records aggregate source and selected lengths, the input strategy,
@@ -192,8 +200,8 @@ unsupported title claims. Self-posts use the post and relevant discussion, while
 recommendation requests retain their route-specific answer format. When source
 text is available, comments supplement or correct it rather than replace its
 main point; comments alone support only grounded discussion summaries. These are
-generation instructions, not a post-generation quality gate; title/anchor-based
-evidence selection and provider-call counts are unchanged.
+generation instructions, not a post-generation quality gate; they operate on the
+bounded evidence supplied to the model and add no provider calls.
 
 All summary routes also receive a brief reference date (Asia/Singapore), the HN
 submission timestamp, and the publisher-declared publication date of the retrieved

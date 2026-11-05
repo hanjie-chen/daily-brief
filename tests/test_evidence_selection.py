@@ -77,3 +77,58 @@ def test_unicode_offsets_and_budget_preserve_source():
 def test_small_invalid_budget_is_rejected():
     with pytest.raises(ValueError):
         select_evidence('body', title='title', max_chars=0)
+
+
+@pytest.mark.parametrize('with_metadata', [False, True])
+def test_reserved_body_head_survives_without_title_matches(with_metadata):
+    metadata = (
+        'Page metadata (publisher-provided context, not article body):\n'
+        'description: Publisher description.\n\nExtracted body:\n'
+    ) if with_metadata else ''
+    introduction = 'This essay compares several ways of repairing small neural networks.\n'
+    body = (
+        introduction + 'Background and analysis.\n' * 4000
+        + 'ZetaNet gained accuracy after a repair, but only on tasks it could already solve.'
+    )
+    text = metadata + body
+    old = select_evidence(text, title='ZetaNet accuracy repair', max_chars=6000)
+    result = select_evidence(
+        text, title='ZetaNet accuracy repair', max_chars=6000, head_chars=2400,
+    )
+    assert introduction not in old.text
+    assert body[:2400] in result.text
+    assert 'only on tasks it could already solve' in result.text
+    assert result.strategy == 'relevant_excerpts'
+    assert result.selected_chars == len(result.text) <= 6000
+    if metadata:
+        assert metadata in result.text
+    spans = [tuple(map(int, section.split(':')[1:])) for section in result.sections]
+    assert spans == sorted(spans)
+    assert all(a[1] < b[0] for a, b in zip(spans, spans[1:]))
+    for start, end in spans:
+        assert text[start:end] in result.text
+
+
+def test_head_reservation_merges_with_matching_opening_and_keeps_tail_match():
+    opening = 'ZetaNet repair: This opening has both the topic and the general claim.\n'
+    body = opening + 'Other material.\n' * 4000 + 'ZetaNet repair still fails on unfamiliar tasks.'
+    result = select_evidence(body, title='ZetaNet repair', max_chars=6000, head_chars=2400)
+    assert result.text.count(opening) == 1
+    assert 'ZetaNet repair still fails on unfamiliar tasks.' in result.text
+    assert len(result.text) <= 6000
+
+
+def test_reserved_head_without_matches_keeps_sampling_fallback():
+    body = 'BEGIN ' + 'unrelated material\n' * 5000 + ' END'
+    result = select_evidence(body, title='量子纠错实验', max_chars=6000, head_chars=2400)
+    assert result.strategy == 'sampled_excerpts'
+    assert body[:2400] in result.text
+    assert ' END' in result.text
+    assert len(result.text) <= 6000
+
+
+def test_head_reservation_cannot_exceed_budget_or_remove_room_for_matches():
+    with pytest.raises(ValueError, match='room for matches'):
+        select_evidence('body ' * 1000, title='title', max_chars=1000, head_chars=2400)
+    with pytest.raises(ValueError, match='nonnegative'):
+        select_evidence('body', title='title', head_chars=-1)
