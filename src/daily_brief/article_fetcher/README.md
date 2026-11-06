@@ -83,6 +83,25 @@ bounded flow:
    its outbound link is not automatically followed. Comment extraction remains
    disabled.
    HTML extraction uses the pinned `trafilatura==2.2.0` dependency.
+   Nonempty extraction can be checked against the bundled Readability candidate
+   from the same normalized HTML. Only disjoint bodies with strictly better
+   page-title coverage in Readability trigger replacement: casefolded word
+   four-gram sets must overlap by less than 10% of the smaller set, and the
+   alternative must match more unique `<title>` words of at least three
+   characters. Publisher metadata is excluded from body comparisons. Missing
+   title words, bodies shorter than four words, unavailable alternatives, or
+   overlapping/no-better candidates retain the original extraction. Full title
+   coverage in the original skips the extra extraction. Containment of a shorter
+   excerpt does not count as disjointness.
+   A selected Readability HTML candidate passes through the same Trafilatura
+   cleanup once, with comments disabled and without recursive comparison; raw
+   Readability text is never returned. Empty cleanup yields `empty_content` rather
+   than restoring the suspect original or metadata. Existing summary recovery
+   and classification's no-recovery policy still apply. This also applies to
+   Wayback HTML, not Reader text. There are no new model calls, network requests,
+   or public fields. These heuristics do not establish completeness and can
+   reject valid material; existing acquisition and summary-source diagnostics
+   remain available for investigation.
    Empty inline `span` and custom-element markers (hyphenated tag names) inside
    paragraphs, headings, list items and table cells are unwrapped before
    extraction, preserving the following prose. This avoids losing explanations

@@ -5,6 +5,7 @@ import re
 from lxml import etree
 from lxml import html as lxml_html
 import trafilatura
+from trafilatura.external import try_readability
 
 
 _TABLE_TAG_PATTERN = re.compile(r"<table(?:\s|>)", re.IGNORECASE)
@@ -15,23 +16,29 @@ _TEXT_BLOCK_TAGS = frozenset({"p", "li", "th", "td", "h1", "h2", "h3", "h4", "h5
 _IMPORTANT_SUFFIX_PATTERN = re.compile(r"\s*!\s*important\s*$", re.IGNORECASE)
 _METADATA_TITLE_MAX_CHARS = 512
 _METADATA_DESCRIPTION_MAX_CHARS = 2000
+_WORD_PATTERN = re.compile(r"[^\W_]+", re.UNICODE)
+_BODY_OVERLAP_THRESHOLD = 0.10
+_COMPARISON_BLOCK_TAGS = frozenset({
+    "article", "main", "section", "header", "footer", "nav", "aside", "div",
+    "p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "br", "hr",
+    "ul", "ol", "li", "dl", "dt", "dd", "table", "tr", "td", "th",
+})
 
 
 def extract_html(markup: str) -> str:
     """Extract body text and separately labeled, bounded publisher metadata."""
     prepared = _normalize_lesswrong_post_markup(markup)
     prepared = _normalize_empty_inline_markers(prepared)
-    extracted = trafilatura.extract(
-        _normalize_semantic_tables(prepared),
-        include_comments=False,
-        favor_precision=True,
-        include_tables=True,
-    )
-    body = _normalize_extracted_blocks(extracted or "")
+    prepared = _normalize_semantic_tables(prepared)
+    body = _extract_body(prepared)
     # Metadata supplements body text; it must not suppress empty-body recovery.
     if not body:
         return ""
     metadata = _extract_page_metadata(markup)
+    title = next((line[7:] for line in metadata if line.startswith("title: ")), "")
+    body = _recover_disjoint_body(prepared, body, title)
+    if not body:
+        return ""
     if not metadata:
         return body
     return (
@@ -40,6 +47,64 @@ def extract_html(markup: str) -> str:
         + "\n\nExtracted body:\n"
         + body
     )
+
+
+def _extract_body(markup: str) -> str:
+    extracted = trafilatura.extract(
+        markup, include_comments=False, favor_precision=True, include_tables=True,
+    )
+    return _normalize_extracted_blocks(extracted or "")
+
+
+def _recover_disjoint_body(markup: str, body: str, title: str) -> str:
+    """Replace unrelated extraction only when a second candidate fits the title better.
+
+    Compare body text, never our publisher-metadata prefix. Four-word overlap is
+    measured against the smaller set: a shorter excerpt of the same article is
+    not a different article. Title coverage alone cannot trigger replacement.
+    """
+    title_words = {word for word in _WORD_PATTERN.findall(title.casefold()) if len(word) >= 3}
+    if not title_words:
+        return body
+    body_words = _WORD_PATTERN.findall(body.casefold())
+    title_matches = len(title_words.intersection(body_words))
+    if title_matches == len(title_words) or len(body_words) < 4:
+        return body
+
+    parser = lxml_html.HTMLParser(encoding="utf-8", no_network=True, huge_tree=False)
+    try:
+        document = lxml_html.document_fromstring(markup.encode("utf-8"), parser=parser)
+    except (etree.ParserError, etree.XMLSyntaxError):
+        return body
+    alternative = try_readability(document)
+    alternative_words = _WORD_PATTERN.findall(_comparison_text(alternative).casefold())
+    if len(alternative_words) < 4 or len(title_words.intersection(alternative_words)) <= title_matches:
+        return body
+
+    body_phrases = _four_word_phrases(body_words)
+    alternative_phrases = _four_word_phrases(alternative_words)
+    overlap = len(body_phrases & alternative_phrases) / min(len(body_phrases), len(alternative_phrases))
+    if overlap >= _BODY_OVERLAP_THRESHOLD:
+        return body
+
+    # Never return raw Readability text (it may include controls or comments).
+    # Clean once, without recursively comparing candidates. If nothing survives,
+    # leave the body empty so the caller applies its existing recovery policy.
+    return _extract_body(etree.tostring(alternative, encoding="unicode", method="html"))
+
+
+def _four_word_phrases(words: list[str]) -> set[tuple[str, ...]]:
+    return set(zip(words, words[1:], words[2:], words[3:]))
+
+
+def _comparison_text(element) -> str:
+    """Separate adjacent blocks without splitting inline words or changing HTML."""
+    parts = []
+    for event, node in etree.iterwalk(element, events=("start", "end")):
+        if node.tag in _COMPARISON_BLOCK_TAGS:
+            parts.append(" ")
+        parts.append((node.text if event == "start" else node.tail) or "")
+    return "".join(parts)
 
 
 def _normalize_empty_inline_markers(markup: str) -> str:
