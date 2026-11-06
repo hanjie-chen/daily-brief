@@ -621,7 +621,7 @@ def test_long_source_replay_preserves_original_and_selected_prompt(tmp_path):
     assert restored.story.fetched_text == body
     assert build_summary_prompt(restored) == build_summary_prompt(item)
     assert 'except on replicas' in build_summary_prompt(restored)
-    assert len(build_summary_prompt(restored)) < 40000
+    assert 99_000 <= len(build_summary_prompt(restored)) < 110_000
 
 
 def test_schema_six_preserves_four_material_prompt_and_recovery_attribution(tmp_path):

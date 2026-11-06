@@ -83,10 +83,42 @@ def _render(text: str, spans: list[tuple[int, int]], strategy: str) -> str:
     )
 
 
+def _fill_distributed(
+    text: str, blocks: list[tuple[int, int]], selected: list[tuple[int, int]],
+    *, strategy: str, max_chars: int,
+) -> list[tuple[int, int]]:
+    """Add evenly spaced remaining blocks without evicting priority evidence."""
+    remaining = [
+        span for span in blocks
+        if not any(lo <= span[0] and span[1] <= hi for lo, hi in selected)
+    ]
+    while remaining:
+        available = max_chars - len(_render(text, selected, strategy))
+        # Allow for an excerpt marker per block; merging often frees more room.
+        count = min(len(remaining), max(1, available // (_BLOCK_CHARS + 80)))
+        # With room for only one estimated block, make a final middle-out pass
+        # for small/overlapping blocks rather than rebuilding the list per miss.
+        indices = (
+            sorted(range(len(remaining)), key=lambda i: (abs(2 * i - len(remaining) + 1), -i))
+            if count == 1 else
+            [(2 * i + 1) * len(remaining) // (2 * count) for i in range(count)]
+        )
+        for i in indices:
+            trial = _merge(selected + [remaining[i]])
+            if len(_render(text, trial, strategy)) <= max_chars:
+                selected = trial
+        # Retry with evenly spaced blocks from the remaining gaps until none fit.
+        # Each block is tried at most once, including when the budget is full.
+        tried = set(indices)
+        remaining = [span for i, span in enumerate(remaining) if i not in tried]
+    return selected
+
+
 def select_evidence(
     text: str, *, title: str, url: str = '',
     max_chars: int = DEFAULT_EVIDENCE_MAX_CHARS,
     head_chars: int = 0,
+    fill_remaining: bool = False,
 ) -> SelectedEvidence:
     if max_chars < 1_000:
         raise ValueError('evidence budget must be at least 1000 characters')
@@ -151,6 +183,10 @@ def select_evidence(
         # Only reachable with a caller budget smaller than a block plus markers.
         start, end = blocks[ranked[0]]
         selected = [(start, min(end, start + max_chars - 500))]
+    if fill_remaining:
+        selected = _fill_distributed(
+            text, blocks, selected, strategy=strategy, max_chars=max_chars,
+        )
     result = _render(text, selected, strategy)
     return SelectedEvidence(
         result, strategy, len(text), len(result),

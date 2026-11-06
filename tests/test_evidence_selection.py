@@ -132,3 +132,59 @@ def test_head_reservation_cannot_exceed_budget_or_remove_room_for_matches():
         select_evidence('body ' * 1000, title='title', max_chars=1000, head_chars=2400)
     with pytest.raises(ValueError, match='nonnegative'):
         select_evidence('body', title='title', head_chars=-1)
+
+
+@pytest.mark.parametrize('size', [99_999, 100_000, 100_001, 114_000])
+def test_summary_fill_avoids_input_size_cliff_at_budget(size):
+    body = ('General explanation of shared memory.\n' * 4000)[:size]
+    result = select_evidence(
+        body, title='OpaqueTopic', max_chars=100_000, head_chars=2400,
+        fill_remaining=True,
+    )
+    if size <= 100_000:
+        assert result.text == body
+        assert result.strategy == 'full_text'
+        assert result.sections == ()
+    else:
+        assert 99_000 <= result.selected_chars <= 100_000
+        assert body[:2400] in result.text
+        assert result.strategy == 'sampled_excerpts'
+
+
+@pytest.mark.parametrize('position', [0, 250, 499])
+def test_fill_preserves_every_priority_range_and_distributes_remaining_evidence(position):
+    blocks = [f'Block {i:03d}: ' + 'background facts ' * 44 + '\n' for i in range(500)]
+    blocks[position] = 'QuasarDB snapshot isolation excludes legacy tables.\n' + blocks[position]
+    body = ''.join(blocks)
+    kwargs = dict(title='QuasarDB snapshot isolation', max_chars=100_000, head_chars=2400)
+    priority = select_evidence(body, **kwargs)
+    result = select_evidence(body, **kwargs, fill_remaining=True)
+    assert priority.selected_chars < 10_000
+    assert 99_000 <= result.selected_chars <= 100_000
+    assert 'QuasarDB snapshot isolation excludes legacy tables.' in result.text
+    spans = [tuple(map(int, x.split(':')[1:])) for x in result.sections]
+    for section in priority.sections:
+        start, end = map(int, section.split(':')[1:])
+        assert any(lo <= start and end <= hi for lo, hi in spans)
+    for quarter in range(4):
+        assert any(quarter * len(body) // 4 <= lo < (quarter + 1) * len(body) // 4
+                   for lo, _ in spans)
+    assert all(a[1] < b[0] for a, b in zip(spans, spans[1:]))
+    for lo, hi in spans:
+        assert body[lo:hi] in result.text
+    assert result == select_evidence(body, **kwargs, fill_remaining=True)
+
+
+def test_fill_preserves_metadata_and_unicode_offsets_with_small_budget():
+    metadata = ('Page metadata (publisher-provided context, not article body):\n'
+                'description: Publisher context.\n\nExtracted body:\n')
+    body = metadata + '历史背景和其他说明。\n' * 9000 + '数据库向量索引仅支持普通表。'
+    result = select_evidence(
+        body, title='数据库向量索引', max_chars=6000, head_chars=2400, fill_remaining=True,
+    )
+    assert metadata in result.text
+    assert '数据库向量索引仅支持普通表。' in result.text
+    assert 5000 <= len(result.text) <= 6000
+    for section in result.sections:
+        _, start, end = section.split(':')
+        assert body[int(start):int(end)] in result.text

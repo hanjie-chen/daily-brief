@@ -173,9 +173,16 @@ preserved them. Webpage summary callers reserve the first 2,400 body characters
 before selecting matches, so the introduction need not contain title keywords.
 Metadata does not count as the body introduction. Overlapping ranges merge and
 excerpt markers count toward the budget. Text within the budget is passed in full.
-Classification and HN post selection do not reserve this introduction; their
-existing budgets and ranking remain unchanged. Publisher metadata keeps its attribution wrapper. No lexical match
-uses bounded distributed sampling, explicitly distinguished from relevance matching.
+After priority selection, ordinary webpage summaries and legacy source-text replay
+use remaining space for evenly spaced blocks from the unselected material.
+Supplementing only adds ranges; it never evicts the introduction or matched
+evidence. Whole blocks are preferred, so a small amount of space may remain.
+This also fills unused space after the no-match sampling fallback. Classification,
+HN post selection, and research-section sampling do not enable this extra fill;
+their existing budgets and selection rules remain unchanged. Publisher metadata
+keeps its attribution wrapper. No lexical match uses bounded distributed sampling,
+explicitly distinguished from relevance matching. A matching excerpt set may
+also contain the supplementary samples; matching never makes those samples relevant.
 All excerpts carry omission notices; matching never establishes factual truth.
 Summary audit records aggregate source and selected lengths, the input strategy,
 available source sections, source labels actually used, and half-open character

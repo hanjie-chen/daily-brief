@@ -82,6 +82,7 @@ bounded flow:
    a discussion comment. A linkpost introduction is retained as page text;
    its outbound link is not automatically followed. Comment extraction remains
    disabled.
+   HTML extraction uses the pinned `trafilatura==2.2.0` dependency.
    Empty inline `span` and custom-element markers (hyphenated tag names) inside
    paragraphs, headings, list items and table cells are unwrapped before
    extraction, preserving the following prose. This avoids losing explanations

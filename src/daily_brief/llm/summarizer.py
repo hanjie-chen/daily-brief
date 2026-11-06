@@ -395,11 +395,13 @@ def split_page_material(fetched_text: str) -> tuple[str, str]:
 
 def _material_excerpt(
     text: str, *, title: str, url: str, max_chars: int, head_chars: int = 0,
+    fill_remaining: bool = False,
 ) -> tuple[str, tuple[str, ...]]:
     if not text or max_chars <= 0:
         return "", ()
     evidence = select_evidence(
         text, title=title, url=url, max_chars=max_chars, head_chars=head_chars,
+        fill_remaining=fill_remaining,
     )
     return evidence.text, evidence.sections
 
@@ -420,12 +422,12 @@ def build_summary_material_context(candidate: Candidate) -> SummaryContext:
         else:
             web_body, web_sections = _material_excerpt(
                 web_body, title=candidate.story.title, url=candidate.story.source_url,
-                max_chars=web_budget, head_chars=SUMMARY_HEAD_CHARS,
+                max_chars=web_budget, head_chars=SUMMARY_HEAD_CHARS, fill_remaining=True,
             )
     else:
         web_body, web_sections = _material_excerpt(
             web_body, title=candidate.story.title, url=candidate.story.source_url,
-            max_chars=web_budget, head_chars=SUMMARY_HEAD_CHARS,
+            max_chars=web_budget, head_chars=SUMMARY_HEAD_CHARS, fill_remaining=True,
         )
     post, post_sections = _material_excerpt(
         candidate.story.story_text.strip(), title=candidate.story.title,
@@ -517,6 +519,7 @@ def build_summary_context(candidate: Candidate) -> SummaryContext:
                 url=candidate.story.source_url,
                 max_chars=SUMMARY_EVIDENCE_MAX_CHARS,
                 head_chars=SUMMARY_HEAD_CHARS,
+                fill_remaining=True,
             )
             text = (
                 f"Untrusted source material ({source_material_label(candidate)}):\n"
@@ -556,6 +559,7 @@ def build_summary_context(candidate: Candidate) -> SummaryContext:
             url=candidate.story.source_url,
             max_chars=SUMMARY_EVIDENCE_MAX_CHARS,
             head_chars=SUMMARY_HEAD_CHARS,
+            fill_remaining=True,
         )
         return SummaryContext(
             text=evidence.text,
@@ -573,6 +577,7 @@ def build_summary_context(candidate: Candidate) -> SummaryContext:
             url=candidate.story.source_url,
             max_chars=SUMMARY_EVIDENCE_MAX_CHARS,
             head_chars=SUMMARY_HEAD_CHARS,
+            fill_remaining=True,
         )
         return SummaryContext(
             text=evidence.text,

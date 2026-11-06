@@ -139,7 +139,7 @@ def test_oversized_web_body_keeps_intro_and_target_with_separate_metadata_budget
     assert body[:2400] in web_part
     assert 'the result is experimental.' in web_part
     assert 'Publisher context.' in web_part
-    assert len(web_part) < 100_200  # Budget plus material labels and separators.
+    assert 99_000 <= len(web_part) < 100_200  # Includes material labels and separators.
     assert any(section.startswith('web_body:chars:0:') for section in context.sections)
 
 

@@ -513,7 +513,9 @@ def test_item_evidence_selection_preserved_alongside_default_comments(tmp_path, 
             assert item.story.fetched_text == source
             assert context.source_chars >= len(source)
             assert "HN comments" in context.text
-            assert len(context.text) < 27000
+            assert len(context.text) < 103_000  # Web budget plus comments and labels.
+            if long_source:
+                assert len(context.text) >= 99_000
             if relevant:
                 assert announcement in context.text
                 item.summary_sources_used = ["web_body"]
