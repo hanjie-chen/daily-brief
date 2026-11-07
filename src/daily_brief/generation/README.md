@@ -78,7 +78,10 @@ this package that owns it.
    Adobe PDF-to-Markdown first when credentials are configured, with the same
    bounded hard timeout in classification and summary retrieval, conversion
    duration logging, and a logged local `pypdf` fallback.
-   Specialized GitHub, YouTube, HTML, and PDF paths remain behind the same bounded
+   CVE record pages use the official API in both policies, retaining structured
+   vulnerability facts as webpage body and the original page URL. Classification
+   material can therefore be reused without fetching the JavaScript shell.
+   Specialized CVE, GitHub, YouTube, HTML, and PDF paths remain behind the same bounded
    retrieval interface; recovery material is accepted only after deterministic
    validation.
    After an eligible source failure exhausts transport recovery, selected-item

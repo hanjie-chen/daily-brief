@@ -18,7 +18,29 @@ summary generation remain outside this package.
 bounded flow:
 
 1. Validate that the requested URL resolves to public HTTP(S) addresses.
-2. Route supported YouTube and GitHub URLs to their specialized transports;
+2. Route supported YouTube, GitHub and CVE URLs to their specialized transports;
+   CVE record pages on exact `cve.org` or `www.cve.org` hosts use the public
+   `https://cveawg.mitre.org/api/cve/{ID}` endpoint without credentials in both
+   classification and summary retrieval. Recognize `/CVERecord` with an optional
+   trailing slash and one valid `id` query value; normalize the CVE ID to uppercase.
+   Other pages retain ordinary HTML retrieval. Require a matching `CVE_RECORD`
+   with `PUBLISHED` state and a nonempty CNA description. Title-only records
+   cannot succeed. Keep the title as publisher metadata and serialize record
+   metadata and CNA/ADP containers as JSON body text, preserving version bounds,
+   descriptions, metric vectors, weaknesses, dates, references and remedies.
+   No extra model call converts these fields. Publication time comes from
+   `cveMetadata.datePublished`, never the update time. Preserve the original
+   page as `retrieved_url`; private method/extractor are `cve_api`, with the
+   public method projected to `direct`.
+   CVE requests share the direct retry loop, retrieval budget, public-address
+   checks, and download/extraction limits. Restrict every redirect and final URL
+   to the exact requested HTTPS API endpoint. Invalid identities, nonpublished
+   records, malformed responses and unsafe URLs fail without accepting content.
+   Empty descriptions and eligible transport failures recover against the
+   original webpage using the existing policy; classification disables recovery.
+   Ordinary API 429 retains the bounded wait/retry policy without switching
+   channels. No GitHub credentials are sent to CVE Services.
+
    GitHub PDF blobs retain the same PDF extraction policy. Issue-page URLs use
    the public REST issue API in both classification and summary retrieval.
    Follow official issue migrations, restricting every redirect hop to HTTPS,
@@ -272,6 +294,7 @@ budget does not replace per-response, per-route, or extraction limits.
 | `wayback.py` | Capture discovery, identity checks, and replay retrieval |
 | `jina.py` | Jina Reader request and envelope validation |
 | `github.py` | Repository README, exact blob, and structured issue-body retrieval |
+| `cve.py` | CVE record URL recognition, official API validation and structured record text |
 | `extract.py` | HTML body extraction and semantic-table preservation |
 | `http_safety.py` | Public-address validation and pinned connections |
 | `challenges.py` | Browser-challenge and network-failure detection |
@@ -285,7 +308,7 @@ Keep dependencies directed from orchestration toward lower-level modules:
 
 ```text
 __init__ -> fetch -> recovery -> jina / wayback
-                  -> github / responses / youtube_captions
+                  -> cve / github / responses / youtube_captions
 lower-level modules -> budget / contracts / http_safety / challenges / extract / source_evidence
 ```
 
@@ -313,6 +336,8 @@ before every PDF, adding startup time and memory inside the worker's limits.
 
 Subsystem tests live in `tests/test_article_fetcher.py`. `tests/test_github_issue.py`
 covers API routing, Markdown evidence, identity checks, recovery, and bounds.
+`tests/test_cve.py` covers CVE API material, URL/record identity, redirects,
+classification versus summary recovery, budgets and limits using synthetic records.
 `tests/test_inline_marker_extraction.py` covers prose after empty inline markers,
 text order, paragraph boundaries and preservation of content-filtering structure.
 `tests/test_github_issue_redirects.py` exercises repository renames, issue

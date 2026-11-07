@@ -175,7 +175,8 @@ listed only in that package's guide.
   Failed retries preserve the prior public summary and generation info together.
   Items without generation info remain valid; no values are inferred.
   Deploy the accepting website before enabling generator output with new fields.
-  GitHub issue API acquisition records `github_issue` in private diagnostics;
+  GitHub issue API acquisition records `github_issue`, and CVE record API
+  acquisition records `cve_api`, in private diagnostics;
   public generation info maps it to the existing `direct`
   method, without extending the website's enum contract.
   The private `github_api_rate_limited` recovery reason projects to the existing

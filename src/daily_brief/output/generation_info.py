@@ -41,7 +41,7 @@ def _reason(code: str, http_status: int | None = None, *, model_service: bool = 
 
 def public_retrieval_method(method: str) -> str:
     """Project private transport details onto the existing public vocabulary."""
-    if method == "github_issue":
+    if method in {"github_issue", "cve_api"}:
         return "direct"
     return method if method in RETRIEVAL_METHODS else "unknown"
 

@@ -16,6 +16,7 @@ from urllib.request import Request
 
 from .budget import budgeted_opener, budgeted_sleep, remaining_seconds, with_retrieval_budget
 from .challenges import _is_network_timeout, _is_tls_issuer_unavailable
+from .cve import cve_record_id, fetch_cve_record
 from .contracts import (
     ArticleFetchError,
     ArticleFetchPolicy,
@@ -198,7 +199,8 @@ def fetch_article(
         return result
 
     github_issue = _github_issue(url)
-    direct_method = "github_issue" if github_issue else "direct"
+    cve_id = cve_record_id(url)
+    direct_method = "github_issue" if github_issue else "cve_api" if cve_id else "direct"
     direct_request = Request(
         url,
         headers={
@@ -248,6 +250,12 @@ def fetch_article(
                     comment_id=(urlsplit(url).fragment.removeprefix("issuecomment-")
                                 if re.fullmatch(r"issuecomment-[1-9][0-9]{0,19}", urlsplit(url).fragment)
                                 else ""),
+                )
+            elif cve_id:
+                result = fetch_cve_record(
+                    cve_id, page_url=url, opener=open_request, resolver=resolver,
+                    timeout_seconds=timeout_seconds, max_bytes=html_max_bytes,
+                    extracted_max_bytes=extracted_max_bytes,
                 )
             else:
                 result = fetch_direct(direct_request)

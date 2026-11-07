@@ -98,7 +98,7 @@ def _http_fallback_reason(exc: HTTPError) -> str:
 def _article_error_fallback_reason(exc: ArticleFetchError) -> str:
     if exc.error_code in {"vercel_challenge", "challenge_page"}:
         return exc.error_code
-    if exc.error_code == "empty_content" and exc.extractor in {"trafilatura", "github_api"}:
+    if exc.error_code == "empty_content" and exc.extractor in {"trafilatura", "github_api", "cve_api"}:
         return "empty_content"
     return ""
 
@@ -119,6 +119,9 @@ def _recover_direct_failure(
     direct_failure = direct_failure or rule.direct_failure
     if context.method == "github_issue":
         direct_failure = f"GitHub issue API {fallback_reason}"
+        policy_failure = direct_failure
+    elif context.method == "cve_api":
+        direct_failure = f"CVE API {fallback_reason}"
         policy_failure = direct_failure
     archive_only = fallback_reason in {"http_404", "http_410"}
     if not archive_only and not context.policy.jina_enabled:

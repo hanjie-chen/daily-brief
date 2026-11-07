@@ -57,16 +57,17 @@ def test_comment_sampling_diagnostics_are_private():
     validate_public_brief(public)
 
 
-def test_github_issue_transport_is_public_direct_and_private_diagnostic():
+@pytest.mark.parametrize('method', ['github_issue', 'cve_api'])
+def test_structured_api_transport_is_public_direct_and_private_diagnostic(method):
     from daily_brief.output.render import render_candidates_json
 
     item = candidate()
-    item.article_retrieval.method = 'github_issue'
+    item.article_retrieval.method = method
     data = payload(item)
     public = data['sections']['ai']['items'][0]
     assert 'provenance' not in public
     assert public['generation_info']['materials']['webpage']['method'] == 'direct'
-    assert json.loads(render_candidates_json([item]))[0]['article_retrieval']['method'] == 'github_issue'
+    assert json.loads(render_candidates_json([item]))[0]['article_retrieval']['method'] == method
     validate_public_brief(data)
 
 
