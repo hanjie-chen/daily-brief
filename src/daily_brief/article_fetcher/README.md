@@ -62,6 +62,7 @@ bounded flow:
    missing comment or invalid response) still permits recent sampling. Only
    retrieval-budget exhaustion or API throttling (429, or 403 with zero remaining
    quota or Retry-After) stops both. A recent-page failure stops further paging.
+   Issue and linked-comment requests share the throttling predicate in `github.py`.
    All failures retain the initial body and already validated comments. Logs
    record failures and reported/acquired/included counts.
    Comments can supply material for an empty initial body; only when both are

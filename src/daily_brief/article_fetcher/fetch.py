@@ -35,6 +35,7 @@ from .github import (
     _github_blob,
     _github_issue,
     _github_repository,
+    _is_github_api_rate_limited,
     fetch_github_blob,
     fetch_github_issue,
     fetch_github_readme_text,
@@ -254,10 +255,7 @@ def fetch_article(
             # API quota exhaustion does not imply the issue page is limited.
             # Stop API requests; recovery reads the original webpage instead.
             if github_issue and exc.code in {403, 429}:
-                limited = exc.code == 429 or bool(exc.headers) and (
-                    exc.headers.get("X-RateLimit-Remaining") == "0"
-                    or bool(exc.headers.get("Retry-After"))
-                )
+                limited = _is_github_api_rate_limited(exc)
                 exc.close()
                 if limited:
                     return _recover_direct_failure(

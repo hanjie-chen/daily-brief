@@ -46,6 +46,18 @@ GITHUB_COMMENT_MAX_CHARS = 6_000
 GITHUB_COMMENTS_MAX_CHARS = 24_000
 
 
+def _is_github_api_rate_limited(error: BaseException) -> bool:
+    """Recognize GitHub throttling for issue and comment requests alike."""
+    if not isinstance(error, HTTPError):
+        return False
+    return error.code == 429 or (
+        error.code == 403 and bool(error.headers) and (
+            error.headers.get("X-RateLimit-Remaining") == "0"
+            or bool(error.headers.get("Retry-After"))
+        )
+    )
+
+
 def _github_api_request(url: str, *, accept: str) -> Request:
     """Attach optional credentials only to the initial GitHub API request."""
     parsed = urlparse(url)
@@ -232,13 +244,10 @@ def _fetch_issue_comments(
             except (ArticleFetchError, URLError, OSError, HTTPException, ValueError) as exc:
                 # The linked comment is optional. Only a shared limit prevents
                 # trying the independently validated recent-comment endpoint.
-                limited = isinstance(exc, HTTPError) and (
-                    exc.code == 429 or exc.code == 403 and bool(exc.headers) and (
-                        exc.headers.get("X-RateLimit-Remaining") == "0"
-                        or bool(exc.headers.get("Retry-After"))
-                    )
-                )
-                if limited or getattr(exc, "error_code", "") == "retrieval_budget_exhausted":
+                if (
+                    _is_github_api_rate_limited(exc)
+                    or getattr(exc, "error_code", "") == "retrieval_budget_exhausted"
+                ):
                     raise
                 if isinstance(exc, HTTPError):
                     exc.close()
