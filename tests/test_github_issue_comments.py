@@ -68,6 +68,8 @@ def test_recent_comments_use_at_most_two_tail_pages(count, policy):
     result = fetch_article(URL, opener=opener_for(routes, requests), resolver=resolver_for({}), policy=policy)
     assert [r.full_url for r in requests] == [API_URL, *[page_url(p) for p in expected_pages]]
     assert included_ids(result.text) == list(range(max(1, count - 29), count + 1))
+    assert f"Reported comment count: {count};" in result.text
+    assert f"Included comment count: {min(count, 30)}." in result.text
     assert BODY in result.text
     assert "reporter; repository association: MEMBER" in result.text
     assert "2026-11-06T10:00:00+00:00" in result.text
@@ -89,6 +91,7 @@ def test_linked_comment_is_fetched_first_and_added_without_duplication(anchor):
     assert [r.full_url for r in requests] == [API_URL, target_url, page_url(2)]
     expected = ([1] if anchor == 1 else []) + list(range(31, 61))
     assert included_ids(result.text) == expected
+    assert f"Included comment count: {len(expected)}." in result.text
     assert f"Comment {anchor} (linked target)" in result.text
 
 
@@ -97,14 +100,64 @@ def test_linked_comment_is_fetched_first_and_added_without_duplication(anchor):
     {"url": "https://api.github.com/repos/other/compiler/issues/comments/1"},
     {"html_url": URL + "#issuecomment-2"}, {"body": None},
 ])
-def test_invalid_target_comment_does_not_contaminate_valid_body(change):
+def test_invalid_target_comment_does_not_suppress_recent_comments(change):
     target_url = API_URL.rsplit("/issues/", 1)[0] + "/issues/comments/1"
     requests = []
-    routes = {API_URL: response(issue_data(comments=0)), target_url: json_response(comment(1, **change), target_url)}
+    routes = {
+        API_URL: response(issue_data(comments=1)),
+        target_url: json_response(comment(1, **change), target_url),
+        page_url(1): json_response([comment(3)], page_url(1)),
+    }
     result = fetch_article(URL + "#issuecomment-1", opener=opener_for(routes, requests), resolver=resolver_for({}))
     assert BODY in result.text
+    assert included_ids(result.text) == [3]
+    assert [r.full_url for r in requests] == [API_URL, target_url, page_url(1)]
+    assert "retrieval: partial" in result.text
+
+
+@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
+@pytest.mark.parametrize("body", [BODY, ""])
+@pytest.mark.parametrize("failure", ["timeout", "500", "403", "json"])
+def test_target_failure_still_acquires_recent_comments(policy, body, failure):
+    target_url = API_URL.rsplit("/issues/", 1)[0] + "/issues/comments/1"
+    failures = {
+        "timeout": URLError(TimeoutError("timed out")),
+        "500": http_error(target_url, 500),
+        "403": http_error(target_url, 403),
+        "json": FakeResponse(b"{", content_type="application/json", final_url=target_url),
+    }
+    routes = {
+        API_URL: response(issue_data(body=body, comments=1)),
+        target_url: failures[failure],
+        page_url(1): json_response([comment(2)], page_url(1)),
+    }
+    requests = []
+    result = fetch_article(URL + "#issuecomment-1", opener=opener_for(routes, requests),
+                           resolver=resolver_for({}), policy=policy)
+    assert [r.full_url for r in requests] == [API_URL, target_url, page_url(1)]
+    assert included_ids(result.text) == [2]
+    assert "retrieval: partial" in result.text
+    assert "Included comment count: 1." in result.text
+    assert result.method == "github_issue"
+
+
+@pytest.mark.parametrize("failure", ["429", "quota", "retry_after", "budget"])
+def test_target_global_limit_stops_recent_comment_requests(failure):
+    from daily_brief.article_fetcher import ArticleFetchError
+
+    target_url = API_URL.rsplit("/issues/", 1)[0] + "/issues/comments/1"
+    failures = {
+        "429": http_error(target_url, 429),
+        "quota": http_error(target_url, 403, X_RateLimit_Remaining="0"),
+        "retry_after": http_error(target_url, 403, Retry_After="60"),
+        "budget": ArticleFetchError("exhausted", error_code="retrieval_budget_exhausted"),
+    }
+    requests = []
+    routes = {API_URL: response(issue_data(comments=1)), target_url: failures[failure]}
+    result = fetch_article(URL + "#issuecomment-1", opener=opener_for(routes, requests), resolver=resolver_for({}))
+    assert [r.full_url for r in requests] == [API_URL, target_url]
+    assert BODY in result.text
     assert not included_ids(result.text)
-    assert len(requests) == 2
 
 
 @pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
@@ -182,6 +235,8 @@ def test_linked_comment_gets_character_budget_before_recent_comments():
     assert "乙" * 6001 not in comments_text
     assert "[Comment truncated]" in comments_text
     assert included_ids(result.text)[0] == 1
+    assert len(included_ids(result.text)) < 30
+    assert f"Included comment count: {len(included_ids(result.text))}." in comments_text
 
 
 def test_tight_utf8_extraction_limit_retains_body():

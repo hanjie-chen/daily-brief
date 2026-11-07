@@ -44,6 +44,8 @@ bounded flow:
    order. The sample is bounded to 24,000 characters including labels, with at
    most 6,000 body characters per comment; the remaining extraction byte budget
    can reduce this further. Truncated comments and incomplete sampling are labeled.
+   The sample reports both the issue total and the actual included count after
+   character limits, counting a linked target only once.
    Initial body and comments have separate creation/edit timestamps; comments
    include author, URL, and repository association, which does not prove an
    affiliation with the organization being discussed. Both remain `web_body`,
@@ -56,9 +58,12 @@ bounded flow:
    issue URL and page anchor. Comment endpoints reject redirects to a different
    URL before credentials can leave; every request shares public-address,
    response-size and retrieval-budget checks. Comment calls are best effort,
-   without retries: failure stops further sampling and retains the initial body
-   and already validated comments. A missing (404) linked comment still permits
-   recent sampling. Logs record failures and reported/acquired/included counts.
+   without retries: a linked-target failure (including timeout, server error,
+   missing comment or invalid response) still permits recent sampling. Only
+   retrieval-budget exhaustion or API throttling (429, or 403 with zero remaining
+   quota or Retry-After) stops both. A recent-page failure stops further paging.
+   All failures retain the initial body and already validated comments. Logs
+   record failures and reported/acquired/included counts.
    Comments can supply material for an empty initial body; only when both are
    unusable does the existing empty-content recovery apply.
    The initial issue API request shares the direct retry loop and retrieval budget.

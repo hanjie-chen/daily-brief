@@ -229,10 +229,22 @@ def _fetch_issue_comments(
         if comment_id:
             try:
                 accept(read(f"{repository_api}/issues/comments/{comment_id}"), comment_id)
-            except HTTPError as exc:
-                if exc.code != 404:
+            except (ArticleFetchError, URLError, OSError, HTTPException, ValueError) as exc:
+                # The linked comment is optional. Only a shared limit prevents
+                # trying the independently validated recent-comment endpoint.
+                limited = isinstance(exc, HTTPError) and (
+                    exc.code == 429 or exc.code == 403 and bool(exc.headers) and (
+                        exc.headers.get("X-RateLimit-Remaining") == "0"
+                        or bool(exc.headers.get("Retry-After"))
+                    )
+                )
+                if limited or getattr(exc, "error_code", "") == "retrieval_budget_exhausted":
                     raise
-                failed = True  # A deleted target does not suppress recent updates.
+                if isinstance(exc, HTTPError):
+                    exc.close()
+                failed = True
+                LOGGER.info("component=article_fetch event=github_linked_comment_failure error=%s code=%s",
+                            type(exc).__name__, getattr(exc, "error_code", "request_failed"))
         if count:
             last_page = (count + GITHUB_RECENT_COMMENTS - 1) // GITHUB_RECENT_COMMENTS
             for page in (last_page, last_page - 1):
@@ -246,6 +258,8 @@ def _fetch_issue_comments(
                 if len(rows) == GITHUB_RECENT_COMMENTS:
                     break
     except (ArticleFetchError, URLError, OSError, HTTPException, ValueError) as exc:
+        if isinstance(exc, HTTPError):
+            exc.close()
         failed = True
         LOGGER.info("component=article_fetch event=github_comments_failure error=%s code=%s",
                     type(exc).__name__, getattr(exc, "error_code", "request_failed"))
@@ -259,7 +273,9 @@ def _fetch_issue_comments(
         "or an official statement from the organization discussed.\n"
         f"Reported comment count: {count}; retrieval: {'partial' if failed else 'sampled'}.\n"
     )
-    remaining = max_chars - len(header)
+    # Reserve enough digits for the largest possible included count, then
+    # report the actual count after character limits have been applied.
+    remaining = max_chars - len(header) - len(f"Included comment count: {len(priority)}.\n")
     blocks = {}
     for identifier in priority:
         comment = acquired[identifier]
@@ -284,7 +300,11 @@ def _fetch_issue_comments(
         remaining -= len(blocks[identifier])
     LOGGER.info("component=article_fetch event=github_comments reported=%s acquired=%s included=%s partial=%s",
                 count, len(acquired), len(blocks), failed)
-    return header + "".join(blocks[i] for i in sorted(blocks)) if blocks else ""
+    return (
+        header + f"Included comment count: {len(blocks)}.\n"
+        + "".join(blocks[i] for i in sorted(blocks))
+        if blocks else ""
+    )
 
 
 def _github_issue_api_identity(url: object) -> tuple[str, ...] | None:
