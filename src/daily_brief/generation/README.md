@@ -72,7 +72,9 @@ this package that owns it.
    into private audit and logs, including insufficient samples; public material
    status remains unchanged. The [candidate guide](../candidates/README.md)
    documents sampling order, limits, and stop-reason semantics.
-   Material fetched during classification is reused. Every fetched public PDF is
+   Material fetched during classification is reused. GitHub issue retrieval includes
+   the same bounded recent/linked comment sample in both policies, so reuse
+   preserves issue updates without another fetch or summary call. Every fetched public PDF is
    Adobe PDF-to-Markdown first when credentials are configured, with the same
    bounded hard timeout in classification and summary retrieval, conversion
    duration logging, and a logged local `pypdf` fallback.

@@ -136,6 +136,58 @@ def test_selected_exploration_article_reuses_classification_fetch(tmp_path, publ
     assert "webpage_published_at" not in result.public_json_path.read_text()
 
 
+def test_github_updates_survive_classification_reuse_without_another_fetch(tmp_path):
+    from daily_brief.article_fetcher import CLASSIFICATION_FETCH_POLICY, fetch_article
+    from daily_brief.llm.summarizer import build_summary_prompt
+    from test_article_fetcher import FakeResponse, resolver_for
+    from test_github_issue import API_URL, URL, issue_data
+
+    requests, policies, summaries = [], [], []
+    update = "The new payment flow now rejects this operating system."
+    comment = {
+        "id": 123, "url": API_URL.rsplit("/", 1)[0] + "/comments/123",
+        "issue_url": API_URL, "html_url": URL + "#issuecomment-123",
+        "body": update, "created_at": "2026-07-07T12:00:00Z",
+        "updated_at": "2026-07-07T12:00:00Z", "author_association": "NONE",
+        "user": {"login": "reporter"},
+    }
+
+    def opener(request, timeout):
+        requests.append(request.full_url)
+        payload = (issue_data(body="The old version worked.", comments=1,
+                              created_at="2022-07-14T15:27:02Z")
+                   if request.full_url == API_URL else [comment])
+        return FakeResponse(json.dumps(payload).encode(), content_type="application/json",
+                            final_url=request.full_url)
+
+    def fetch(url, **kwargs):
+        policies.append(kwargs["policy"])
+        return fetch_article(url, opener=opener, resolver=resolver_for({}), **kwargs)
+
+    class CheckingSummarizer(FakeSummarizer):
+        def summarize(self, candidate):
+            prompt = build_summary_prompt(candidate)
+            assert "The old version worked." in prompt
+            assert update in prompt
+            assert "2022-07-14" in prompt and "2026-07-07" in prompt
+            assert "GitHub issue comments" in prompt
+            summaries.append(candidate.story.hn_item_id)
+            return super().summarize(candidate)
+
+    result = run_generate(
+        output_dir=tmp_path / "briefs", data_dir=tmp_path / "data",
+        date_label="2026-07-08",
+        algolia_stories=[story("1", "Bank app operating system compatibility",
+                               points=500, comments=20, url=URL)], hot_stories=[],
+        classifier=FakeClassifier(default_label="core_non_ai"),
+        article_fetcher=fetch, summarizer=CheckingSummarizer(),
+    )
+    assert policies == [CLASSIFICATION_FETCH_POLICY]
+    assert requests == [API_URL, API_URL + "/comments?per_page=30&page=1"]
+    assert summaries == ["1"]
+    assert result.public_json_path is not None
+
+
 def test_default_classification_fetch_uses_bounded_policy(tmp_path, monkeypatch):
     calls = []
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import socket
 import ssl
 import time
@@ -243,6 +244,9 @@ def fetch_article(
                     *github_issue, opener=open_request, resolver=resolver,
                     timeout_seconds=timeout_seconds, max_bytes=html_max_bytes,
                     extracted_max_bytes=extracted_max_bytes,
+                    comment_id=(urlsplit(url).fragment.removeprefix("issuecomment-")
+                                if re.fullmatch(r"issuecomment-[1-9][0-9]{0,19}", urlsplit(url).fragment)
+                                else ""),
                 )
             else:
                 result = fetch_direct(direct_request)

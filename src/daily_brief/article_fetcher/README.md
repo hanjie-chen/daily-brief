@@ -33,13 +33,36 @@ bounded flow:
    conflicting identities, PRs, and malformed responses. Preserve the original
    story URL and record the canonical page as `retrieved_url`; a successful
    migration is still direct API acquisition, not fallback.
-   Keep the API title as metadata and the nonempty
-   Markdown `body` as webpage text, preserving code blocks without acquiring
-   GitHub comments. `created_at` supplies the publication date, never `updated_at`.
-   Query strings and fragments do not change which issue is fetched. Other
-   GitHub URL types retain their existing routing.
-   Issue API requests share the direct retry loop and retrieval budget. Empty
-   bodies and eligible transport failures enter the existing Jina/Wayback flow
+   Keep the API title as metadata and Markdown `body` as webpage text,
+   preserving code blocks. In both classification and summary retrieval, append
+   a bounded sample of recent issue comments, so classification material can be
+   reused without losing updates. Fetch at most two pages of 30 comments from
+   the end using the issue's reported count; retain the latest 30 by ID. A URL's
+   `#issuecomment-ID` target is fetched first and retained in addition when it is
+   outside the recent sample. Deduplicate by ID, reserve text for the target
+   first, then newer comments, and present included comments in ascending ID
+   order. The sample is bounded to 24,000 characters including labels, with at
+   most 6,000 body characters per comment; the remaining extraction byte budget
+   can reduce this further. Truncated comments and incomplete sampling are labeled.
+   Initial body and comments have separate creation/edit timestamps; comments
+   include author, URL, and repository association, which does not prove an
+   affiliation with the organization being discussed. Both remain `web_body`,
+   distinct from HN comments, without another model call or public schema field.
+   `created_at` still supplies the page publication date, never `updated_at`.
+   Query strings and other fragments do not change which issue is fetched.
+   Other GitHub URL types retain their existing routing.
+   Comment requests use the validated canonical issue's repository after any
+   migration, never arbitrary payload links. Validate each comment's ID, API URL,
+   issue URL and page anchor. Comment endpoints reject redirects to a different
+   URL before credentials can leave; every request shares public-address,
+   response-size and retrieval-budget checks. Comment calls are best effort,
+   without retries: failure stops further sampling and retains the initial body
+   and already validated comments. A missing (404) linked comment still permits
+   recent sampling. Logs record failures and reported/acquired/included counts.
+   Comments can supply material for an empty initial body; only when both are
+   unusable does the existing empty-content recovery apply.
+   The initial issue API request shares the direct retry loop and retrieval budget.
+   Empty combined material and eligible transport failures enter the existing Jina/Wayback flow
    against the original issue page, without retrying generic HTML extraction;
    404/410 skip Reader for archives. Classification still disables recovery.
    API quota exhaustion (429, or 403 with `X-RateLimit-Remaining: 0` or

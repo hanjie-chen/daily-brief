@@ -26,7 +26,7 @@ def issue_data(**changes):
     return {
         "number": 42, "url": API_URL, "html_url": URL, "title": "A lifetime check is missing",
         "body": BODY, "created_at": "2026-10-13T10:00:00Z",
-        "comments": 7, "comments_url": API_URL + "/comments", **changes,
+        "comments": 0, "comments_url": API_URL + "/comments", **changes,
     }
 
 
@@ -37,7 +37,7 @@ def response(data=None, **kwargs):
     )
 
 
-@pytest.mark.parametrize("suffix", ["", "/", "?view=1#issuecomment-123"])
+@pytest.mark.parametrize("suffix", ["", "/", "?view=1#other-section"])
 @pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
 def test_issue_api_body_reaches_summary_with_markdown_intact(suffix, policy):
     requests = []

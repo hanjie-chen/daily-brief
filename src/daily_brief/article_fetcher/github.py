@@ -4,7 +4,9 @@ import json
 import os
 import re
 import socket
-from urllib.error import HTTPError
+from datetime import datetime
+from http.client import HTTPException
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request
 
@@ -39,6 +41,9 @@ GITHUB_API_BASE_URL = "https://api.github.com"
 GITHUB_RAW_BASE_URL = "https://raw.githubusercontent.com"
 GITHUB_API_VERSION = "2022-11-28"
 GITHUB_REPOSITORY_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+GITHUB_RECENT_COMMENTS = 30
+GITHUB_COMMENT_MAX_CHARS = 6_000
+GITHUB_COMMENTS_MAX_CHARS = 24_000
 
 
 def _github_api_request(url: str, *, accept: str) -> Request:
@@ -78,8 +83,9 @@ def fetch_github_issue(
     timeout_seconds: int,
     max_bytes: int,
     extracted_max_bytes: int,
+    comment_id: str = "",
 ) -> ArticleFetchResult:
-    """Read one issue's Markdown body; transport recovery belongs to fetch.py."""
+    """Read an issue and bounded updates; transport recovery belongs to fetch.py."""
     api_url = f"{GITHUB_API_BASE_URL}/repos/{owner}/{repository}/issues/{number}"
     _validate_public_http_url(api_url, resolver)
     request = _github_api_request(api_url, accept="application/vnd.github+json")
@@ -126,16 +132,32 @@ def fetch_github_issue(
             error_code="invalid_response", extractor="github_api",
         )
     body = (issue["body"] or "").strip()
-    if not body:
-        raise ArticleFetchError(
-            "GitHub issue API returned an empty body",
-            error_code="empty_content", extractor="github_api",
-        )
     title = " ".join(issue["title"].split())[:512]
     text = (
         "Page metadata (publisher-provided context, not article body):\n"
         f"title: {title}\n\nExtracted body:\n{body}"
     )
+    _enforce_extracted_limit(text, extracted_max_bytes, extractor="github_api")
+    comments = _fetch_issue_comments(
+        issue, comment_id=comment_id, opener=opener, resolver=resolver,
+        timeout_seconds=timeout_seconds, max_bytes=max_bytes,
+        # Four bytes per character bounds UTF-8 without truncating the initial body.
+        max_chars=min(GITHUB_COMMENTS_MAX_CHARS,
+                      max(0, (extracted_max_bytes - len(text.encode("utf-8")) - 1024) // 4)),
+    )
+    if not body and not comments:
+        raise ArticleFetchError(
+            "GitHub issue API returned no usable body or comments",
+            error_code="empty_content", extractor="github_api",
+        )
+    if comments:
+        text = (
+            "Page metadata (publisher-provided context, not article body):\n"
+            f"title: {title}\n\nExtracted body:\n"
+            f"Initial issue body (created: {_comment_date(issue.get('created_at'))}; "
+            f"updated: {_comment_date(issue.get('updated_at'))}):\n"
+            f"{body or '[Empty initial body]'}\n\n{comments}"
+        )
     _enforce_extracted_limit(text, extracted_max_bytes, extractor="github_api")
     created_at = issue.get("created_at")
     published_at = created_at.strip() if isinstance(created_at, str) and len(created_at) <= 64 else ""
@@ -144,6 +166,125 @@ def fetch_github_issue(
         retrieved_url=page_url,
         source_evidence=SourceEvidence(title=title, published_at=published_at),
     )
+
+
+def _comment_date(value: object) -> str:
+    if isinstance(value, str) and len(value) <= 64:
+        try:
+            return datetime.fromisoformat(value).isoformat()
+        except ValueError:
+            pass
+    return "unknown"
+
+
+def _fetch_issue_comments(
+    issue, *, comment_id, opener, resolver, timeout_seconds, max_bytes, max_chars,
+) -> str:
+    """Best-effort sample; a comment failure never invalidates acquired material."""
+    count = issue.get("comments")
+    count = count if type(count) is int and count >= 0 else 0
+    if not (count or comment_id) or max_chars < 512:
+        return ""
+    api_url = issue["url"]
+    page_url = issue["html_url"].rstrip("/")
+    repository_api = api_url.rsplit("/issues/", 1)[0]
+    acquired = {}
+    failed = False
+
+    def read(url):
+        def validate(destination):
+            if destination != url:
+                raise ArticleFetchError("Unexpected GitHub comment endpoint", error_code="invalid_response")
+
+        _validate_public_http_url(url, resolver)
+        request = _github_api_request(url, accept="application/vnd.github+json")
+        request._redirect_validator = validate
+        with opener(request, timeout=timeout_seconds) as response:
+            _validate_public_http_url(response.geturl(), resolver)
+            validate(response.geturl())
+            if response.headers.get_content_type().lower() not in {
+                "application/json", "application/vnd.github+json",
+            }:
+                raise ArticleFetchError("Invalid GitHub comment response", error_code="invalid_response")
+            payload = _read_bounded(response, max_bytes)
+        return json.loads(payload)
+
+    def accept(comment, expected_id=None):
+        if not isinstance(comment, dict):
+            raise ValueError("Invalid comment")
+        identifier = comment.get("id")
+        if (
+            type(identifier) is not int or identifier <= 0
+            or (expected_id is not None and str(identifier) != expected_id)
+            or comment.get("issue_url") != api_url
+            or comment.get("url") != f"{repository_api}/issues/comments/{identifier}"
+            or comment.get("html_url") != f"{page_url}#issuecomment-{identifier}"
+            or not isinstance(comment.get("body"), str)
+        ):
+            raise ValueError("Comment identity mismatch")
+        if comment["body"].strip():
+            acquired[identifier] = comment
+
+    try:
+        if comment_id:
+            try:
+                accept(read(f"{repository_api}/issues/comments/{comment_id}"), comment_id)
+            except HTTPError as exc:
+                if exc.code != 404:
+                    raise
+                failed = True  # A deleted target does not suppress recent updates.
+        if count:
+            last_page = (count + GITHUB_RECENT_COMMENTS - 1) // GITHUB_RECENT_COMMENTS
+            for page in (last_page, last_page - 1):
+                if page < 1:
+                    break
+                rows = read(f"{api_url}/comments?per_page={GITHUB_RECENT_COMMENTS}&page={page}")
+                if not isinstance(rows, list) or len(rows) > GITHUB_RECENT_COMMENTS:
+                    raise ValueError("Invalid comment page")
+                for row in rows:
+                    accept(row)
+                if len(rows) == GITHUB_RECENT_COMMENTS:
+                    break
+    except (ArticleFetchError, URLError, OSError, HTTPException, ValueError) as exc:
+        failed = True
+        LOGGER.info("component=article_fetch event=github_comments_failure error=%s code=%s",
+                    type(exc).__name__, getattr(exc, "error_code", "request_failed"))
+
+    recent = sorted(acquired, reverse=True)[:GITHUB_RECENT_COMMENTS]
+    target = int(comment_id) if comment_id else None
+    priority = ([target] if target in acquired else []) + [i for i in recent if i != target]
+    header = (
+        "GitHub issue comments (bounded sample; omitted comments may contain context).\n"
+        "Dates belong to each comment. Repository association is not proof of employment "
+        "or an official statement from the organization discussed.\n"
+        f"Reported comment count: {count}; retrieval: {'partial' if failed else 'sampled'}.\n"
+    )
+    remaining = max_chars - len(header)
+    blocks = {}
+    for identifier in priority:
+        comment = acquired[identifier]
+        user = comment.get("user")
+        author = user.get("login", "unknown") if isinstance(user, dict) else "unknown"
+        author = " ".join(str(author).split())[:80]
+        association = " ".join(str(comment.get("author_association", "unknown")).split())[:40]
+        prefix = (
+            f"\nComment {identifier}{' (linked target)' if identifier == target else ''}\n"
+            f"URL: {comment['html_url']}\nAuthor: {author}; repository association: {association}\n"
+            f"Created: {_comment_date(comment.get('created_at'))}; "
+            f"updated: {_comment_date(comment.get('updated_at'))}\n"
+        )
+        available = min(GITHUB_COMMENT_MAX_CHARS, remaining - len(prefix) - 1)
+        marker = "\n[Comment truncated]"
+        if available <= len(marker):
+            break
+        body = comment["body"].strip()
+        if len(body) > available:
+            body = body[:available - len(marker)] + marker
+        blocks[identifier] = prefix + body + "\n"
+        remaining -= len(blocks[identifier])
+    LOGGER.info("component=article_fetch event=github_comments reported=%s acquired=%s included=%s partial=%s",
+                count, len(acquired), len(blocks), failed)
+    return header + "".join(blocks[i] for i in sorted(blocks)) if blocks else ""
 
 
 def _github_issue_api_identity(url: object) -> tuple[str, ...] | None:

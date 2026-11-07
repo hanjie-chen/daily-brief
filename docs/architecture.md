@@ -122,11 +122,15 @@ HTML 正文提取使用固定版本 `trafilatura==2.2.0`。提取前，会移除
 4. **如果原站仍未取得正文，再搜索其他来源。**\
    系统会尝试寻找同一篇文章的其他发布页面；特定情况下，还会寻找 Reuters 的转载或其他媒体的同事件报道。这部分有单独的验证规则，下一段展开。
 
-GitHub issue 在分类和摘要阶段均优先请求 `/repos/{owner}/{repo}/issues/{number}`，读取并核对返回的仓库、issue 编号及页面地址。标题单独作为元信息，非空 Markdown `body` 作为正文，保留代码块；不获取 issue 评论，不把 PR、issue 列表或其他 GitHub 页面当成 issue。发布时间使用 API 的 `created_at`，不用更新时间。查询参数和页面锚点不改变目标 issue。
+GitHub issue 在分类和摘要阶段均优先请求 `/repos/{owner}/{repo}/issues/{number}`，读取并核对返回的仓库、issue 编号及页面地址。标题单独作为元信息，Markdown `body` 保留代码块，并补充近期 issue 评论，不把 PR、issue 列表或其他 GitHub 页面当成 issue。分类和摘要阶段均获取同样的评论样本，分类材料复用时也保留后续进展。按 issue 报告的评论总数定位末页，每页 30 条，最多读取末尾两页，按 ID 保留最近 30 条。链接带 `#issuecomment-ID` 时优先单独获取目标评论；它不在近期样本中时额外保留，按 ID 去重。字符预算先分配给目标评论，再给较新评论，最终按 ID 升序展示。
+
+评论连同标注最多 24,000 字符，单条正文最多 6,000 字符；剩余提取字节预算不足时进一步缩减。初始正文和评论分别标注创建／更新时间，每条评论保留作者、链接和仓库关联身份；仓库成员身份不等同于被讨论机构的官方身份。截断和取样范围显式标注。两部分都属于网页正文 `web_body`，不混入 HN 评论，不增加模型调用或公开 schema 字段。页面发布时间仍使用 issue 的 `created_at`；查询参数和其他锚点不改变目标 issue。
+
+评论请求基于经过验证的最终 issue 身份构造，不直接使用响应中的任意链接；逐条校验评论 ID、API 地址、所属 issue 和网页锚点。评论接口不跟随到不同地址的重定向，请求仍受公网校验、响应大小和共享获取预算约束。评论不额外重试；失败时停止补抓，保留正文和已验证评论。指定评论返回 404 时仍可读取近期评论。日志记录失败及报告／获取／纳入数量。初始正文为空但评论可用时仍可摘要；两者都没有可用内容时才走原空内容恢复路径。
 
 仓库改名或 issue 转移时，允许跟随 GitHub API 的重定向，直接使用新资源的正文。每一跳仍须通过公网地址校验，并限定为 HTTPS、精确的 `api.github.com` 主机及 issue API 路径；支持 `/repos/{owner}/{repo}/issues/{number}` 和 `/repositories/{id}/issues/{number}`。校验依据是最终 API 地址、响应的 `url`、`html_url` 和 `number`：允许仓库和编号随官方重定向变化，数字仓库路径的名称由可信响应中相互一致的 API／网页地址确定。未重定向时仍按原资源核对；外域中转、HTTP 降级及身份冲突均拒绝。原 `source_url` 保留，`retrieved_url` 记录新网页地址；正常迁移仍是 API 直接获取成功，不记为 fallback。
 
-issue API 与普通网页共用短重试、大小限制及获取预算。摘要阶段遇到空正文或可恢复的网络错误时，针对原 issue 页面地址尝试 Jina、Wayback 及既有搜索恢复；API 的 404/410 直接转存档，不再用普通 HTML 提取器重复读取已知容易漏正文的页面。分类阶段仍不启用这些备用渠道。API 配额耗尽（429，或带 `X-RateLimit-Remaining: 0`／`Retry-After` 的 403）停止 API 重试，摘要阶段立即对原 issue 页面进入 Jina、Wayback 及适用的搜索恢复，私有原因记录为 `github_api_rate_limited`，公开 `generation_info` 映射为既有的 `rate_limited`。分类阶段只记录失败，不启动恢复。没有限流证据的 API 403 权限错误、其他终止类 HTTP 错误、无效响应或身份不符、非公网地址及大小限制不会转入恢复。私有诊断记录 `method=github_issue`、`extractor=github_api`；公开详情将该方式映射为既有的 `direct`，表示直接请求原站 API，不增加网站 schema 枚举。
+issue API 与普通网页共用短重试、大小限制及获取预算。摘要阶段遇到正文与评论均不可用或初始 issue 请求发生可恢复的网络错误时，针对原 issue 页面地址尝试 Jina、Wayback 及既有搜索恢复；API 的 404/410 直接转存档，不再用普通 HTML 提取器重复读取已知容易漏正文的页面。分类阶段仍不启用这些备用渠道。API 配额耗尽（429，或带 `X-RateLimit-Remaining: 0`／`Retry-After` 的 403）停止 API 重试，摘要阶段立即对原 issue 页面进入 Jina、Wayback 及适用的搜索恢复，私有原因记录为 `github_api_rate_limited`，公开 `generation_info` 映射为既有的 `rate_limited`。分类阶段只记录失败，不启动恢复。没有限流证据的 API 403 权限错误、其他终止类 HTTP 错误、无效响应或身份不符、非公网地址及大小限制不会转入恢复。私有诊断记录 `method=github_issue`、`extractor=github_api`；公开详情将该方式映射为既有的 `direct`，表示直接请求原站 API，不增加网站 schema 枚举。
 
 GitHub README、具体文件和 YouTube 使用各自的读取方式，失败后仍不会进入 Jina 和 Wayback 的恢复流程。
 
