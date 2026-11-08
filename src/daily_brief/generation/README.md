@@ -40,10 +40,14 @@ this package that owns it.
    `candidates/keywords.py` and `candidates/scoring.py` establish
    the initial core candidates and ranking order.
 4. `classification.py`: A bounded set of remaining candidates, including
-   keyword-matched HN self-posts, is fetched under the classification retrieval
-   policy (through `material.py`) and classified by article evidence as AI, other
-   core computing, outside the core scope, or uncertain. Retrieval and classifier
-   failures fail closed for that candidate.
+   keyword-matched HN self-posts, is fetched through `material.py` using the same
+   source retrieval and full recovery chain as summarization, then classified
+   by article evidence as AI, other core computing, outside the core scope, or
+   uncertain. Retrieval and classifier
+   failures fail closed for that candidate. Ordinary external articles require
+   usable body evidence; HN discussion is not a classification fallback.
+   The existing 25-candidate inspection cap still counts retrieval failures;
+   ranking and section eligibility thresholds are unchanged.
    The classifier can first route project-sharing, tool-recommendation, and
    practical-experience solicitations as `community_roundup`. Only self-posts
    qualify; informative self-posts and general debates keep the normal route.
@@ -61,9 +65,9 @@ this package that owns it.
    work is bounded by the classification pool.
    Confirmed core candidates join one ranked pool. Confirmed outside candidates
    must also satisfy the exploration eligibility rules and are ranked separately.
-6. `material.py` (with `recovery/`): Selected external stories are
-   retrieved under the fuller summary policy. For every ordinary selected item,
-   it also obtains one bounded HN discussion sample before summary generation;
+6. `material.py` (with `recovery/`): External candidates and selected stories share
+   one source retrieval policy, including default HTTP and local PDF timeouts.
+   For every ordinary selected item, it also obtains one bounded HN discussion sample before summary generation;
    this is independent of external retrieval success or apparent webpage
    sufficiency. A failed or empty discussion sample is recorded and does not
    prevent the remaining material from being summarized.
@@ -73,20 +77,20 @@ this package that owns it.
    status remains unchanged. The [candidate guide](../candidates/README.md)
    documents sampling order, limits, and stop-reason semantics.
    Material fetched during classification is reused. GitHub issue retrieval includes
-   the same bounded recent/linked comment sample in both policies, so reuse
+   the same bounded recent/linked comment sample in both stages, so reuse
    preserves issue updates without another fetch or summary call. Every fetched public PDF is
    Adobe PDF-to-Markdown first when credentials are configured, with the same
    bounded hard timeout in classification and summary retrieval, conversion
    duration logging, and a logged local `pypdf` fallback.
-   CVE record pages use the official API in both policies, retaining structured
+   CVE record pages use the official API in both stages, retaining structured
    vulnerability facts as webpage body and the original page URL. Classification
    material can therefore be reused without fetching the JavaScript shell.
    Specialized CVE, GitHub, YouTube, HTML, and PDF paths remain behind the same bounded
    retrieval interface; recovery material is accepted only after deterministic
    validation.
-   After an eligible source failure exhausts transport recovery, selected-item
-   summary retrieval first tries `recovery/same_article.py`: one title-based Tavily basic query,
-   ten discovery candidates, and at most three unique candidate fetches. Only HN
+   After an eligible source failure exhausts transport recovery, both
+   classification and summary retrieval first try `recovery/same_article.py`:
+   one title-based Tavily basic query, ten discovery candidates, and at most three unique candidate fetches. Only HN
    is excluded. An independently fetched nonempty title, explicit publisher
    cross-post/republication backlink to the source, and substantive body are
    required. YouTube candidates use the existing captions path and must declare
@@ -246,7 +250,7 @@ unsuccessful target gives the CLI a nonzero exit status, even if other items upd
 | `classification.py` | Keyword routing, bounded topic classification, roundup assessment, and section selection |
 | `content_deduplication.py` | Same-day information comparison, representative replacement and bounded section refills |
 | `summaries.py` | Selected-item single-call summary loop and summary diagnostics |
-| `material.py` | Classification/summary retrieval modes, recovery dispatch, and bounded HN discussion material |
+| `material.py` | Shared classification/summary source retrieval, recovery dispatch, and bounded HN discussion material |
 
 ## Dependency Direction
 

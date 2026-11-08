@@ -37,7 +37,7 @@ bounded flow:
    to the exact requested HTTPS API endpoint. Invalid identities, nonpublished
    records, malformed responses and unsafe URLs fail without accepting content.
    Empty descriptions and eligible transport failures recover against the
-   original webpage using the existing policy; classification disables recovery.
+   original webpage in both classification and summary retrieval.
    Ordinary API 429 retains the bounded wait/retry policy without switching
    channels. No GitHub credentials are sent to CVE Services.
 
@@ -92,13 +92,12 @@ bounded flow:
    The initial issue API request shares the direct retry loop and retrieval budget.
    Empty combined material and eligible transport failures enter the existing Jina/Wayback flow
    against the original issue page, without retrying generic HTML extraction;
-   404/410 skip Reader for archives. Classification still disables recovery.
+   404/410 skip Reader for archives in both stages.
    API quota exhaustion (429, or 403 with `X-RateLimit-Remaining: 0` or
    `Retry-After`) stops API retries and enters webpage recovery immediately
-   during summary retrieval. The private cause is `github_api_rate_limited`;
-   Reader, Wayback, and eligible search recovery use the original issue page.
-   Classification reports the API failure without recovery. API 403 without
-   rate-limit evidence remains terminal, as do malformed or
+   during classification and summary retrieval. The private cause is
+   `github_api_rate_limited`; Reader, Wayback, and eligible search recovery use the original issue page.
+   API 403 without rate-limit evidence remains terminal, as do malformed or
    mismatched responses, unsafe URLs, size violations, and existing terminal
    HTTP cases. README/blob transport failure behavior is unchanged.
    Issue and README API requests read optional `GITHUB_TOKEN` from the process
@@ -126,8 +125,15 @@ bounded flow:
    are also retained: this is a bounded set of shell patterns, not semantic
    validation or a minimum body length. Accepted content is returned unchanged.
    Wayback uses the same HTML check. A Reader shell proceeds to Wayback, and
-   exhausted summary retrieval remains eligible for search recovery. Classification
-   still obeys its policy that disables these recovery paths.
+   exhausted retrieval remains eligible for search recovery in both classification
+   and summarization.
+   Security-verification notices are matched as complete lines or sentences,
+   including the verification heading and explanatory bot-check notices. A bare
+   hostname heading is ignored only alongside a recognized security notice.
+   Pages containing only these notices/navigation yield `empty_content`, so
+   Reader can continue to Wayback and exhausted source retrieval to search.
+   Quoted/code lines and other body text are preserved, including articles
+   discussing verification prompts.
    Recognizable LessWrong post markup is normalized before extraction: the
    article's `commentOnSelection` wrapper must not cause it to be discarded as
    a discussion comment. A linkpost introduction is retained as page text;
@@ -147,8 +153,8 @@ bounded flow:
    A selected Readability HTML candidate passes through the same Trafilatura
    cleanup once, with comments disabled and without recursive comparison; raw
    Readability text is never returned. Empty cleanup yields `empty_content` rather
-   than restoring the suspect original or metadata. Existing summary recovery
-   and classification's no-recovery policy still apply. This also applies to
+   than restoring the suspect original or metadata. The same recovery conditions
+   apply in classification and summarization. This also applies to
    Wayback HTML, not Reader text. There are no new model calls, network requests,
    or public fields. These heuristics do not establish completeness and can
    reject valid material; existing acquisition and summary-source diagnostics
@@ -245,8 +251,9 @@ Exceeding a hard ceiling still fails; this package does not truncate or select
 title-dependent excerpts. Classification and summarization select bounded views
 after retrieval, preserving full material for recovery validation.
 
-Classification uses a stricter policy than final summary retrieval. Recovery
-paths must not run when the active policy disables them.
+Classification and summary retrieval share `DEFAULT_FETCH_POLICY`, HTTP and local
+PDF timeouts, recovery eligibility, budgets, and date bounds. Recovery paths must
+not run when an explicitly supplied policy disables them.
 
 ## Shared Retrieval Budget
 
@@ -261,7 +268,7 @@ generation first tries the existing material alternatives, then decides whether
 to pause. Each resumed material attempt gets a new retrieval budget after the
 long pause, while successful material is retained.
 
-`budget.py` gives each selected item's source-material preparation a shared
+`budget.py` gives each candidate's source-material preparation a shared
 120-second cooperative deadline and a maximum of 24 opener calls. Direct
 requests, retries, Reader, Wayback discovery/replay, Tavily searches, and fetched
 recovery candidates consume the same scope; nested fetches do not reset it.
@@ -337,7 +344,7 @@ before every PDF, adding startup time and memory inside the worker's limits.
 Subsystem tests live in `tests/test_article_fetcher.py`. `tests/test_github_issue.py`
 covers API routing, Markdown evidence, identity checks, recovery, and bounds.
 `tests/test_cve.py` covers CVE API material, URL/record identity, redirects,
-classification versus summary recovery, budgets and limits using synthetic records.
+shared classification/summary recovery, budgets and limits using synthetic records.
 `tests/test_inline_marker_extraction.py` covers prose after empty inline markers,
 text order, paragraph boundaries and preservation of content-filtering structure.
 `tests/test_github_issue_redirects.py` exercises repository renames, issue

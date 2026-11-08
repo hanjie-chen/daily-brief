@@ -30,7 +30,7 @@ from .contracts import (
     DEFAULT_TIMEOUT_SECONDS,
     DIRECT_RETRY_DELAY_SECONDS,
     LOGGER,
-    SUMMARY_FETCH_POLICY,
+    DEFAULT_FETCH_POLICY,
 )
 from .github import (
     _github_blob,
@@ -72,7 +72,7 @@ def fetch_article_text(
     wayback_not_before: datetime | None = None,
     wayback_not_after: datetime | None = None,
     sleeper=time.sleep,
-    policy: ArticleFetchPolicy = SUMMARY_FETCH_POLICY,
+    policy: ArticleFetchPolicy = DEFAULT_FETCH_POLICY,
 ) -> str:
     """Fetch article text while preserving the original string-returning API."""
     return fetch_article(
@@ -111,7 +111,7 @@ def fetch_article(
     wayback_not_before: datetime | None = None,
     wayback_not_after: datetime | None = None,
     sleeper=time.sleep,
-    policy: ArticleFetchPolicy = SUMMARY_FETCH_POLICY,
+    policy: ArticleFetchPolicy = DEFAULT_FETCH_POLICY,
 ) -> ArticleFetchResult:
     """Fetch an article and report transport and extraction provenance."""
     if max_bytes is not None:
@@ -124,8 +124,8 @@ def fetch_article(
     if youtube_video_id(url) is not None:
         if not policy.youtube_enabled:
             raise ArticleFetchError(
-                "YouTube is skipped during classification retrieval",
-                error_code="youtube_skipped_in_classification",
+                "YouTube retrieval is disabled by policy",
+                error_code="youtube_disabled",
                 method="youtube_caption",
                 extractor="yt_dlp",
                 attempts=0,

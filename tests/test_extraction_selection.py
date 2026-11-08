@@ -7,7 +7,7 @@ from lxml import html
 import pytest
 
 from daily_brief.article_fetcher import (
-    CLASSIFICATION_FETCH_POLICY,
+    ArticleFetchPolicy,
     ArticleFetchError,
     extract_html,
     fetch_article,
@@ -143,8 +143,7 @@ def test_comparison_keeps_inline_words_together(monkeypatch):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("policy", [None, CLASSIFICATION_FETCH_POLICY])
-def test_register_layout_recovers_shorter_article_instead_of_recommendations(policy):
+def test_register_layout_recovers_shorter_article_instead_of_recommendations():
     # Authored prose in the misleading layout: the correct article is shorter
     # than the unrelated page-content lists, so the library keeps those lists.
     markup = (Path(__file__).parent / "fixtures/article_extraction/disjoint-recommendations.html").read_text()
@@ -161,7 +160,6 @@ def test_register_layout_recovers_shorter_article_instead_of_recommendations(pol
 
     result = fetch_article(
         "https://example.com/article", opener=opener, resolver=resolver_for({}),
-        **({"policy": policy} if policy is not None else {}),
     )
     assert "lunar observatory completed its mirror calibration" in result.text
     assert "harbor" not in result.text
@@ -189,8 +187,8 @@ def test_unreadable_optional_candidate_preserves_primary(monkeypatch):
     assert extract_html(MARKUP).endswith(PRIMARY)
 
 
-@pytest.mark.parametrize("classification", [True, False])
-def test_empty_cleanup_obeys_existing_recovery_policy(monkeypatch, classification):
+@pytest.mark.parametrize("recovery_enabled", [True, False])
+def test_empty_cleanup_obeys_explicit_recovery_policy(monkeypatch, recovery_enabled):
     candidates(monkeypatch, cleaned="")
     requests = []
     url = "https://example.com/article"
@@ -206,9 +204,11 @@ def test_empty_cleanup_obeys_existing_recovery_policy(monkeypatch, classificatio
         )
 
     kwargs = {"opener": opener, "resolver": resolver_for({})}
-    if classification:
+    if not recovery_enabled:
         with pytest.raises(ArticleFetchError) as caught:
-            fetch_article(url, policy=CLASSIFICATION_FETCH_POLICY, **kwargs)
+            fetch_article(
+                url, policy=ArticleFetchPolicy(jina_enabled=False, wayback_enabled=False), **kwargs,
+            )
         assert caught.value.error_code == "empty_content"
         assert requests == [url]
     else:
@@ -223,7 +223,7 @@ def test_selected_cleaned_body_still_obeys_size_limit(monkeypatch):
     candidates(monkeypatch, cleaned=ALTERNATIVE * 20)
     with pytest.raises(ArticleFetchError) as caught:
         fetch_article(
-            "https://example.com/article", policy=CLASSIFICATION_FETCH_POLICY,
+            "https://example.com/article",
             opener=lambda *args, **kwargs: FakeResponse(MARKUP.encode()),
             resolver=resolver_for({}), extracted_max_bytes=300,
         )

@@ -19,7 +19,6 @@ from ..network_recovery import NetworkFailures, suspend_network_recovery
 from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow
 from .material import (
-    RETRIEVAL_MODE_SUMMARY,
     bounded_error_message,
     prepare_candidate_material,
     prepare_hn_discussion_material,
@@ -98,7 +97,6 @@ def _prepare_selected_materials(
                 prepare_candidate_material(
                     candidate, article_fetcher, syndicated_finder,
                     alternate_reporting_finder, window,
-                    retrieval_mode=RETRIEVAL_MODE_SUMMARY,
                     same_article_finder=same_article_finder,
                 )
             prepare_hn_discussion_material(candidate, hn_discussion_fetcher)

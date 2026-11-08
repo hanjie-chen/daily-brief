@@ -18,7 +18,6 @@ from daily_brief.article_fetcher import extract as article_extract_module
 from daily_brief.article_fetcher import fetch as article_fetch_module
 from daily_brief.article_fetcher import responses as article_responses_module
 from daily_brief.article_fetcher import (
-    CLASSIFICATION_FETCH_POLICY,
     DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
     ArticleFetchError,
     ArticleFetchPolicy,
@@ -211,7 +210,7 @@ def test_fetch_article_metadata_without_body_preserves_empty_content():
             "https://example.com/article",
             opener=lambda request, timeout: FakeResponse(markup),
             resolver=resolver_for({}),
-            policy=CLASSIFICATION_FETCH_POLICY,
+            policy=ArticleFetchPolicy(jina_enabled=False, wayback_enabled=False),
         )
     assert caught.value.error_code == "empty_content"
     assert caught.value.method == "direct"
@@ -226,7 +225,6 @@ def test_fetch_article_metadata_does_not_bypass_extracted_size_limit():
             opener=lambda request, timeout: FakeResponse(markup),
             resolver=resolver_for({}),
             extracted_max_bytes=50,
-            policy=CLASSIFICATION_FETCH_POLICY,
         )
 
     assert caught.value.error_code == "extracted_content_too_large"
@@ -241,7 +239,7 @@ def test_fetch_article_metadata_does_not_bypass_challenge_detection():
             "https://example.com/article",
             opener=lambda request, timeout: FakeResponse(markup),
             resolver=resolver_for({}),
-            policy=CLASSIFICATION_FETCH_POLICY,
+            policy=ArticleFetchPolicy(jina_enabled=False, wayback_enabled=False),
         )
 
     assert caught.value.error_code == "challenge_page"
@@ -525,26 +523,26 @@ def test_fetch_article_routes_target_youtube_video_to_caption_extractor(monkeypa
     ]
 
 
-def test_classification_policy_skips_youtube_without_attempting_captions(monkeypatch):
+def test_explicit_policy_skips_youtube_without_attempting_captions(monkeypatch):
     monkeypatch.setattr(
         article_fetch_module,
         "fetch_youtube_caption",
-        lambda *args, **kwargs: pytest.fail("classification must skip YouTube"),
+        lambda *args, **kwargs: pytest.fail("disabled YouTube transport must skip captions"),
     )
 
     with pytest.raises(ArticleFetchError) as caught:
         fetch_article(
             "https://www.youtube.com/watch?v=68X8yEatepQ",
             resolver=resolver_for({"www.youtube.com": PUBLIC_ADDRESS}),
-            policy=CLASSIFICATION_FETCH_POLICY,
+            policy=ArticleFetchPolicy(youtube_enabled=False),
         )
 
-    assert caught.value.error_code == "youtube_skipped_in_classification"
+    assert caught.value.error_code == "youtube_disabled"
     assert caught.value.attempts == 0
     assert caught.value.method == "youtube_caption"
 
 
-def test_classification_policy_does_not_retry_or_use_jina_after_timeout():
+def test_explicit_policy_does_not_retry_or_use_jina_after_timeout():
     requests = []
     delays = []
 
@@ -558,7 +556,9 @@ def test_classification_policy_does_not_retry_or_use_jina_after_timeout():
             opener=time_out,
             resolver=resolver_for({"example.com": PUBLIC_ADDRESS}),
             sleeper=delays.append,
-            policy=CLASSIFICATION_FETCH_POLICY,
+            policy=ArticleFetchPolicy(
+                direct_max_attempts=1, jina_enabled=False, wayback_enabled=False,
+            ),
         )
 
     assert requests == ["https://example.com/article"]
@@ -568,7 +568,7 @@ def test_classification_policy_does_not_retry_or_use_jina_after_timeout():
     assert caught.value.attempts == 1
 
 
-def test_classification_policy_does_not_use_jina_for_challenge_response():
+def test_explicit_policy_does_not_use_jina_for_challenge_response():
     requests = []
 
     def challenge(request, timeout):
@@ -580,7 +580,7 @@ def test_classification_policy_does_not_use_jina_for_challenge_response():
             "https://example.com/article",
             opener=challenge,
             resolver=resolver_for({"example.com": PUBLIC_ADDRESS}),
-            policy=CLASSIFICATION_FETCH_POLICY,
+            policy=ArticleFetchPolicy(jina_enabled=False, wayback_enabled=False),
         )
 
     assert requests == ["https://example.com/article"]
@@ -1210,7 +1210,7 @@ def test_direct_pdf_uses_adobe_markdown_when_configured(monkeypatch):
     assert result.extractor == "adobe_pdf_to_markdown"
 
 
-def test_classification_policy_allows_slow_adobe_with_full_timeout(
+def test_default_policy_allows_slow_adobe_with_full_timeout(
     monkeypatch, caplog
 ):
     monkeypatch.setenv("PDF_SERVICES_CLIENT_ID", "client-id")
@@ -1219,7 +1219,7 @@ def test_classification_policy_allows_slow_adobe_with_full_timeout(
 
     def extract_with_adobe(*args, **kwargs):
         adobe_calls.append(kwargs)
-        return "# Report\n\nClean classification Markdown."
+        return "# Report\n\nClean report Markdown."
 
     monkeypatch.setattr(
         article_responses_module,
@@ -1244,11 +1244,10 @@ def test_classification_policy_allows_slow_adobe_with_full_timeout(
             "https://example.com/report.pdf",
             opener=lambda request, timeout: response,
             resolver=resolver_for({}),
-            policy=CLASSIFICATION_FETCH_POLICY,
             pdf_parse_timeout_seconds=10,
         )
 
-    assert result.text == "# Report\n\nClean classification Markdown."
+    assert result.text == "# Report\n\nClean report Markdown."
     assert result.extractor == "adobe_pdf_to_markdown"
     assert result.fallback_reason == ""
     assert adobe_calls[0]["timeout_seconds"] == DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS
@@ -2586,7 +2585,7 @@ def test_correction_revalidates_public_address_before_request():
     assert caught.value.fallback_reason == "url_trailing_backslash"
 
 
-def test_classification_policy_does_not_correct_url():
+def test_explicit_policy_does_not_correct_url():
     requests = []
     source = "https://example.com/article/\\"
 
@@ -2596,7 +2595,9 @@ def test_classification_policy_does_not_correct_url():
 
     with pytest.raises(ArticleFetchError):
         fetch_article(source, opener=deny, resolver=resolver_for({}),
-                      policy=CLASSIFICATION_FETCH_POLICY)
+                      policy=ArticleFetchPolicy(
+                          jina_enabled=False, wayback_enabled=False, url_correction_enabled=False,
+                      ))
     assert requests == [source]
 
 

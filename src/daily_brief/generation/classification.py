@@ -17,10 +17,9 @@ from ..candidates import (
 from ..config import EXPLORATION_CLASSIFIER_MAX_CANDIDATES
 from ..llm import ensure_topic_decisions
 from ..models import Candidate
-from ..recovery import AlternateReportingFinder, SyndicatedCopyFinder
+from ..recovery import AlternateReportingFinder, SameArticleFinder, SyndicatedCopyFinder
 from ..time_window import TimeWindow
 from .material import (
-    RETRIEVAL_MODE_CLASSIFICATION,
     prepare_candidate_material,
     prepare_hn_discussion_material,
 )
@@ -50,6 +49,7 @@ def classify_and_select_candidates(
     *,
     summary_client,
     hn_discussion_fetcher,
+    same_article_finder: SameArticleFinder | None = None,
 ) -> SelectionResult:
     known_core_candidates = [
         candidate
@@ -77,7 +77,7 @@ def classify_and_select_candidates(
             syndicated_finder,
             alternate_reporting_finder,
             window,
-            retrieval_mode=RETRIEVAL_MODE_CLASSIFICATION,
+            same_article_finder=same_article_finder,
         ):
             candidate.topic_route = "topic_unknown"
             candidate.rejection_reason = "topic_unknown"

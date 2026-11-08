@@ -8,7 +8,7 @@ import pytest
 import trafilatura
 
 from daily_brief.article_fetcher import (
-    CLASSIFICATION_FETCH_POLICY,
+    ArticleFetchPolicy,
     ArticleFetchError,
     extract_html,
     fetch_article,
@@ -32,6 +32,12 @@ NAV_BODY = (
     "Region\n\nAll Russia Kazakhstan\n\nRegion"
 )
 FACT = "The storage API is unavailable in the western region."
+SECURITY_BODY = (
+    "![Site icon](https://example.com/favicon.ico)\n\n"
+    "## www.example.com\n\n## Performing security verification\n\n"
+    "This website uses a security service to protect against malicious bots. "
+    "This page is displayed while the website verifies you are not a bot."
+)
 
 
 def html_page(body):
@@ -63,6 +69,9 @@ def reader_response(body, title=TITLE):
     "Region All Russia Kazakhstan",
     "[Home](/)\n[Search](/search)\n[Log in](/login)",
     "Language\nEnglish Deutsch Français",
+    SECURITY_BODY,
+    SECURITY_BODY.replace("website", "site").replace("www.example.com", "journal.example.org"),
+    "Performing security verification",
 ])
 def test_reader_rejects_known_shells(body):
     with pytest.raises(ArticleFetchError) as caught:
@@ -91,6 +100,12 @@ def test_reader_rejects_known_shells(body):
     "Region\nAll systems operational.",
     "Region\nUnknown option",
     "Home\nA short announcement.",
+    SECURITY_BODY + "\n" + FACT,
+    "The message 'Performing security verification' indicates a browser check.",
+    "> This website uses a security service to protect against malicious bots.",
+    "```text\n" + SECURITY_BODY + "\n```",
+    '"Performing security verification"',
+    "www.example.com",
 ])
 def test_reader_preserves_short_facts_and_ambiguous_or_substantive_material(body):
     result = fetch_jina_reader_text(
@@ -100,7 +115,7 @@ def test_reader_preserves_short_facts_and_ambiguous_or_substantive_material(body
     assert result == body
 
 
-@pytest.mark.parametrize("body", [JS_BODY, "Home\nAbout us\nContact\nPrivacy policy"])
+@pytest.mark.parametrize("body", [JS_BODY, SECURITY_BODY, "Home\nAbout us\nContact\nPrivacy policy"])
 def test_real_html_extractor_rejects_nonempty_shell_before_metadata(body):
     markup = html_page(body)
     # Regression must exercise a genuinely nonempty extraction, not mock it empty.
@@ -112,12 +127,15 @@ def test_real_html_extractor_rejects_nonempty_shell_before_metadata(body):
         return FakeResponse(markup.encode(), final_url=URL)
 
     with pytest.raises(ArticleFetchError) as caught:
-        fetch_article(URL, opener=opener, resolver=resolver_for({}), policy=CLASSIFICATION_FETCH_POLICY)
+        fetch_article(
+            URL, opener=opener, resolver=resolver_for({}),
+            policy=ArticleFetchPolicy(jina_enabled=False, wayback_enabled=False),
+        )
     assert caught.value.error_code == "empty_content"
     assert requests == [URL]
 
 
-@pytest.mark.parametrize("body", [FACT, JS_BODY + "\n" + FACT, "Home\nContact\n" + FACT])
+@pytest.mark.parametrize("body", [FACT, JS_BODY + "\n" + FACT, SECURITY_BODY + "\n" + FACT, "Home\nContact\n" + FACT])
 def test_real_html_extractor_keeps_short_body_and_publisher_metadata(body):
     result = extract_html(html_page(body))
     assert FACT in result
@@ -142,8 +160,9 @@ def test_js_shell_recovers_via_reader():
     assert result.attempts == len(requests) == 2
 
 
-@pytest.mark.parametrize("archive_body", [FACT, JS_BODY, "Home\nAbout us\nContact"])
-def test_reader_shell_continues_to_archive_and_archive_uses_same_check(archive_body):
+@pytest.mark.parametrize("reader_body", [NAV_BODY, SECURITY_BODY])
+@pytest.mark.parametrize("archive_body", [FACT, JS_BODY, SECURITY_BODY, "Home\nAbout us\nContact"])
+def test_reader_shell_continues_to_archive_and_archive_uses_same_check(archive_body, reader_body):
     requests = []
     timestamp = "20261012060000"
     replay_url = f"https://web.archive.org/web/{timestamp}id_/{URL}"
@@ -153,7 +172,7 @@ def test_reader_shell_continues_to_archive_and_archive_uses_same_check(archive_b
         if request.full_url == URL:
             return FakeResponse(html_page(JS_BODY).encode(), final_url=URL)
         if request.full_url == f"https://r.jina.ai/{URL}":
-            return reader_response(NAV_BODY)
+            return reader_response(reader_body)
         if request.full_url.startswith("https://web.archive.org/cdx/"):
             return FakeResponse(
                 make_wayback_payload([timestamp, URL, "text/html", "200", "HASH", "512"]),
@@ -220,7 +239,8 @@ def test_size_limit_still_precedes_shell_rejection(channel):
     assert caught.value.error_code in {"response_too_large", "extracted_content_too_large"}
 
 
-def test_shells_exhaust_source_channels_then_attempt_search_and_report_no_body():
+@pytest.mark.parametrize("reader_body", [NAV_BODY, SECURITY_BODY])
+def test_shells_exhaust_source_channels_then_attempt_search_and_report_no_body(reader_body):
     from daily_brief.generation.material import prepare_candidate_material
     from daily_brief.models import Candidate, Story
     from daily_brief.time_window import TimeWindow
@@ -245,7 +265,7 @@ def test_shells_exhaust_source_channels_then_attempt_search_and_report_no_body()
         if request.full_url == URL:
             return FakeResponse(html_page(JS_BODY).encode(), final_url=URL)
         if request.full_url == f"https://r.jina.ai/{URL}":
-            return reader_response(NAV_BODY)
+            return reader_response(reader_body)
         if request.full_url.startswith("https://web.archive.org/cdx/"):
             return FakeResponse(
                 make_wayback_payload([timestamp, URL, "text/html", "200", "HASH", "512"]),

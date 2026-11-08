@@ -7,7 +7,7 @@ from urllib.error import URLError
 import pytest
 
 from daily_brief.article_fetcher import (
-    CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY, fetch_article,
+    fetch_article,
 )
 from daily_brief.article_fetcher.budget import retrieval_budget
 from daily_brief.article_fetcher.http_safety import _SafeRedirectHandler
@@ -53,9 +53,8 @@ def included_ids(text):
     return [int(value) for value in re.findall(r"^Comment (\d+)", text, re.MULTILINE)]
 
 
-@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
 @pytest.mark.parametrize("count", [1, 30, 31, 60, 91])
-def test_recent_comments_use_at_most_two_tail_pages(count, policy):
+def test_recent_comments_use_at_most_two_tail_pages(count):
     last = (count + 29) // 30
     requests = []
     routes = {API_URL: response(issue_data(comments=count, comments_url="http://127.0.0.1/private"))}
@@ -65,7 +64,7 @@ def test_recent_comments_use_at_most_two_tail_pages(count, policy):
     for page in expected_pages:
         ids = range((page - 1) * 30 + 1, min(page * 30, count) + 1)
         routes[page_url(page)] = json_response([comment(i) for i in ids], page_url(page))
-    result = fetch_article(URL, opener=opener_for(routes, requests), resolver=resolver_for({}), policy=policy)
+    result = fetch_article(URL, opener=opener_for(routes, requests), resolver=resolver_for({}))
     assert [r.full_url for r in requests] == [API_URL, *[page_url(p) for p in expected_pages]]
     assert included_ids(result.text) == list(range(max(1, count - 29), count + 1))
     assert f"Reported comment count: {count};" in result.text
@@ -115,10 +114,9 @@ def test_invalid_target_comment_does_not_suppress_recent_comments(change):
     assert "retrieval: partial" in result.text
 
 
-@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
 @pytest.mark.parametrize("body", [BODY, ""])
 @pytest.mark.parametrize("failure", ["timeout", "500", "403", "json"])
-def test_target_failure_still_acquires_recent_comments(policy, body, failure):
+def test_target_failure_still_acquires_recent_comments(body, failure):
     target_url = API_URL.rsplit("/issues/", 1)[0] + "/issues/comments/1"
     failures = {
         "timeout": URLError(TimeoutError("timed out")),
@@ -133,7 +131,7 @@ def test_target_failure_still_acquires_recent_comments(policy, body, failure):
     }
     requests = []
     result = fetch_article(URL + "#issuecomment-1", opener=opener_for(routes, requests),
-                           resolver=resolver_for({}), policy=policy)
+                           resolver=resolver_for({}))
     assert [r.full_url for r in requests] == [API_URL, target_url, page_url(1)]
     assert included_ids(result.text) == [2]
     assert "retrieval: partial" in result.text
@@ -160,13 +158,12 @@ def test_target_global_limit_stops_recent_comment_requests(failure):
     assert not included_ids(result.text)
 
 
-@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
-def test_comments_can_supply_evidence_when_initial_body_is_empty(policy):
+def test_comments_can_supply_evidence_when_initial_body_is_empty():
     routes = {
         API_URL: response(issue_data(body=None, comments=1)),
         page_url(1): json_response([comment(1)], page_url(1)),
     }
-    result = fetch_article(URL, opener=opener_for(routes, []), resolver=resolver_for({}), policy=policy)
+    result = fetch_article(URL, opener=opener_for(routes, []), resolver=resolver_for({}))
     assert result.method == "github_issue"
     assert "Update body 1." in result.text
     assert "Empty initial body" in result.text
@@ -301,9 +298,7 @@ def test_migrated_issue_fetches_comments_from_validated_canonical_repository(num
     assert all(r.get_header("Authorization") == "Bearer synthetic-comment-token" for r in requests)
 
 
-@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
-def test_empty_initial_body_and_empty_comment_keep_existing_recovery(policy):
-    from daily_brief.article_fetcher import ArticleFetchError
+def test_empty_initial_body_and_empty_comment_keep_existing_recovery():
     from test_article_fetcher import make_jina_payload
 
     requests = []
@@ -313,13 +308,7 @@ def test_empty_initial_body_and_empty_comment_keep_existing_recovery(policy):
         page_url(1): json_response([comment(1, body="  ")], page_url(1)),
         reader: FakeResponse(make_jina_payload(content=BODY, url=URL), content_type="application/json"),
     }
-    if policy == CLASSIFICATION_FETCH_POLICY:
-        with pytest.raises(ArticleFetchError) as caught:
-            fetch_article(URL, opener=opener_for(routes, requests), resolver=resolver_for({}), policy=policy)
-        assert caught.value.error_code == "empty_content"
-        assert [r.full_url for r in requests] == [API_URL, page_url(1)]
-    else:
-        result = fetch_article(URL, opener=opener_for(routes, requests), resolver=resolver_for({}), policy=policy)
-        assert result.method == "jina"
-        assert result.fallback_reason == "empty_content"
-        assert [r.full_url for r in requests] == [API_URL, page_url(1), reader]
+    result = fetch_article(URL, opener=opener_for(routes, requests), resolver=resolver_for({}))
+    assert result.method == "jina"
+    assert result.fallback_reason == "empty_content"
+    assert [r.full_url for r in requests] == [API_URL, page_url(1), reader]

@@ -1,6 +1,6 @@
 # Recovery
 
-This package finds replacement material for a selected story whose original page
+This package finds replacement material for a candidate or selected story whose original page
 remains unavailable after eligible transport recovery. It searches for other pages, fetches them,
 and accepts one only after deterministic validation. The package-level facade is
 the import used by the rest of the application:
@@ -17,8 +17,8 @@ in [the architecture guide](../../../docs/architecture.md) (Chinese).
 
 ## When Recovery Runs
 
-Recovery runs only while preparing a selected story's summary, never during
-classification, and only after an eligible failure from Jina or Wayback. This
+Classification and summary preparation use the same recovery routes, after
+an eligible failure from Jina or Wayback. This
 includes recognized challenges, ordinary recoverable HTTP errors, empty HTML
 extraction, network timeouts or interrupted connections, and missing TLS issuer
 information. HTTP 400, 401, 407, 422, 429, and 451 are excluded from the ordinary
@@ -40,7 +40,9 @@ Each completed route's audit is retained when a later route runs or succeeds.
 When every route fails, the story keeps
 its original retrieval failure; budget exhaustion is recorded explicitly when
 it stops further work. Available HN post and discussion materials can still be
-used by generation.
+used for ordinary summaries. External-article classification still requires
+usable recovered body evidence and fails closed without it; it never falls back
+to HN discussion. Self-post and community-roundup evidence rules are unchanged.
 
 All searches and candidate fetches reuse the source-material preparation's
 120-second cooperative deadline and 24-request budget from
@@ -173,7 +175,7 @@ No additional network diagnostics enter public output.
 - Fail closed. Missing configuration, provider errors, malformed results,
   unclear identity, and conflicts all leave the story without recovered
   material; none of them fails the run.
-- No recursion. Candidate pages are fetched through the same summary-policy
+- No recursion. Candidate pages are fetched through the same source-retrieval
   article client as the original, and `article_fetcher` never imports this
   package, so fetching a candidate cannot start another search.
 - Everything is bounded: search results, fetches, response sizes

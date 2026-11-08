@@ -1,9 +1,6 @@
 """Bounded public article retrieval with a stable package-level API."""
 
 from .contracts import (
-    CLASSIFICATION_FETCH_POLICY,
-    CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
-    CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS,
     DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS,
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_EXTRACTED_BYTES,
@@ -15,7 +12,7 @@ from .contracts import (
     DEFAULT_TIMEOUT_SECONDS,
     DIRECT_MAX_ATTEMPTS,
     DIRECT_RETRY_DELAY_SECONDS,
-    SUMMARY_FETCH_POLICY,
+    DEFAULT_FETCH_POLICY,
     ArticleFetchError,
     ArticleFetchPolicy,
     ArticleFetchResult,
@@ -28,9 +25,6 @@ from .source_evidence import SourceEvidence, SourceRelation
 
 
 __all__ = [
-    "CLASSIFICATION_FETCH_POLICY",
-    "CLASSIFICATION_HTTP_TIMEOUT_SECONDS",
-    "CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS",
     "DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS",
     "DEFAULT_MAX_BYTES",
     "DEFAULT_MAX_EXTRACTED_BYTES",
@@ -42,7 +36,7 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "DIRECT_MAX_ATTEMPTS",
     "DIRECT_RETRY_DELAY_SECONDS",
-    "SUMMARY_FETCH_POLICY",
+    "DEFAULT_FETCH_POLICY",
     "ArticleFetchError",
     "ArticleFetchPolicy",
     "ArticleFetchResult",

@@ -7,7 +7,6 @@ from .source_evidence import SourceEvidence
 
 
 DEFAULT_TIMEOUT_SECONDS = 15
-CLASSIFICATION_HTTP_TIMEOUT_SECONDS = 8
 DIRECT_MAX_ATTEMPTS = 2
 DIRECT_RETRY_DELAY_SECONDS = 1
 # Hard extraction ceiling, independent of the smaller model evidence budget.
@@ -16,7 +15,6 @@ DEFAULT_MAX_HTML_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_PDF_BYTES = 20 * 1024 * 1024
 DEFAULT_MAX_PDF_PAGES = 100
 DEFAULT_PDF_PARSE_TIMEOUT_SECONDS = 60
-CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS = 10
 DEFAULT_ADOBE_PDF_TIMEOUT_SECONDS = 300
 DEFAULT_PDF_ADDRESS_SPACE_BYTES = 512 * 1024 * 1024
 
@@ -59,15 +57,7 @@ class ArticleFetchPolicy:
     url_correction_enabled: bool = True
 
 
-SUMMARY_FETCH_POLICY = ArticleFetchPolicy()
-CLASSIFICATION_FETCH_POLICY = ArticleFetchPolicy(
-    direct_max_attempts=1,
-    jina_enabled=False,
-    wayback_enabled=False,
-    youtube_enabled=False,
-    adobe_pdf_enabled=True,
-    url_correction_enabled=False,
-)
+DEFAULT_FETCH_POLICY = ArticleFetchPolicy()
 
 
 @dataclass(frozen=True)

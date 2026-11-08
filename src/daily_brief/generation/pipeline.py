@@ -103,6 +103,7 @@ def run_generate(
         clock,
         summary_client=summarizer or backend,
         hn_discussion_fetcher=hn_discussion_fetcher,
+        same_article_finder=same_article_finder,
     )
     summarization_inputs = selection.summary_inputs + summarize_selected_candidates(
         selection.ai_items,

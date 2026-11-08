@@ -7,10 +7,7 @@ from functools import partial
 
 from ..article_fetcher import (
     ArticleFetchError,
-    CLASSIFICATION_FETCH_POLICY,
-    CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
-    CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS,
-    SUMMARY_FETCH_POLICY,
+    DEFAULT_FETCH_POLICY,
     fetch_article,
 )
 from ..article_fetcher.budget import check_budget, with_retrieval_budget
@@ -44,8 +41,6 @@ from ..recovery import (
 )
 
 LOGGER = logging.getLogger(__name__)
-RETRIEVAL_MODE_CLASSIFICATION = "classification"
-RETRIEVAL_MODE_SUMMARY = "summary"
 MIN_DISCUSSION_COMMENTS = 3
 MIN_DISCUSSION_CHARS = 500
 
@@ -57,7 +52,6 @@ def prepare_candidate_material(
     alternate_reporting_finder: AlternateReportingFinder | None,
     window,
     *,
-    retrieval_mode: str = RETRIEVAL_MODE_SUMMARY,
     same_article_finder: SameArticleFinder | None = None,
 ) -> bool:
     """Exhaust available source routes before pausing for a network recovery."""
@@ -66,7 +60,6 @@ def prepare_candidate_material(
             available = _prepare_candidate_material_once(
                 candidate, article_fetcher_fn, syndicated_finder,
                 alternate_reporting_finder, window,
-                retrieval_mode=retrieval_mode,
                 same_article_finder=same_article_finder,
             )
         if available or not failures.transient:
@@ -85,10 +78,9 @@ def _prepare_candidate_material_once(
     alternate_reporting_finder: AlternateReportingFinder | None,
     window,
     *,
-    retrieval_mode: str = RETRIEVAL_MODE_SUMMARY,
     same_article_finder: SameArticleFinder | None = None,
 ) -> bool:
-    """Fetch a candidate's source, trying search recovery for summaries.
+    """Fetch a candidate's source through the shared transport and search recovery chain.
 
     Returns False only when an external source could not be retrieved.
     """
@@ -96,31 +88,26 @@ def _prepare_candidate_material_once(
     if not source_url or source_url == candidate.story.hn_discussion_url:
         _record_no_external_source(candidate)
         return True
-    if retrieval_mode not in {RETRIEVAL_MODE_CLASSIFICATION, RETRIEVAL_MODE_SUMMARY}:
-        raise ValueError(f"unknown retrieval mode: {retrieval_mode}")
-
-    article_client = _article_client(article_fetcher_fn, retrieval_mode, candidate, window)
+    article_client = _article_client(article_fetcher_fn, candidate, window)
     try:
         material = coerce_fetched_material(article_client(source_url), source_url)
     except Exception as exc:
         failure = _retrieval_failure(exc)
-        recovery = _SearchRecovery()
-        if retrieval_mode == RETRIEVAL_MODE_SUMMARY:
-            recovery = _attempt_search_recovery(
-                candidate,
+        recovery = _attempt_search_recovery(
+            candidate,
+            failure,
+            article_client,
+            same_article_finder=same_article_finder,
+            syndicated_finder=syndicated_finder,
+            alternate_reporting_finder=alternate_reporting_finder,
+        )
+        if recovery.error_code:
+            failure = replace(
                 failure,
-                article_client,
-                same_article_finder=same_article_finder,
-                syndicated_finder=syndicated_finder,
-                alternate_reporting_finder=alternate_reporting_finder,
+                error_type="ArticleFetchError",
+                error_code=recovery.error_code,
+                error_message="Retrieval budget exhausted",
             )
-            if recovery.error_code:
-                failure = replace(
-                    failure,
-                    error_type="ArticleFetchError",
-                    error_code=recovery.error_code,
-                    error_message="Retrieval budget exhausted",
-                )
         if recovery.material is None:
             _record_retrieval_failure(candidate, failure, recovery)
             return False
@@ -153,22 +140,14 @@ class _SearchRecovery:
     )
 
 
-def _article_client(article_fetcher_fn, retrieval_mode: str, candidate: Candidate, window):
+def _article_client(article_fetcher_fn, candidate: Candidate, window):
     active_fetcher = article_fetcher_fn if article_fetcher_fn is not None else fetch_article
-    if retrieval_mode == RETRIEVAL_MODE_CLASSIFICATION:
-        fetch = partial(
-            active_fetcher,
-            timeout_seconds=CLASSIFICATION_HTTP_TIMEOUT_SECONDS,
-            pdf_parse_timeout_seconds=CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS,
-            policy=CLASSIFICATION_FETCH_POLICY,
-        )
-    else:
-        fetch = partial(
-            active_fetcher,
-            policy=SUMMARY_FETCH_POLICY,
-            wayback_not_before=_wayback_not_before(candidate.story.created_at, window.start),
-            wayback_not_after=window.end,
-        )
+    fetch = partial(
+        active_fetcher,
+        policy=DEFAULT_FETCH_POLICY,
+        wayback_not_before=_wayback_not_before(candidate.story.created_at, window.start),
+        wayback_not_after=window.end,
+    )
 
     def observed_fetch(url):
         try:

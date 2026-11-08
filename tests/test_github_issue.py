@@ -8,7 +8,7 @@ from urllib.error import URLError
 import pytest
 
 from daily_brief.article_fetcher import (
-    CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY, ArticleFetchError, fetch_article,
+    ArticleFetchError, ArticleFetchPolicy, fetch_article,
 )
 from daily_brief.article_fetcher.budget import retrieval_budget
 from daily_brief.llm.summarizer import build_summary_material_context, split_page_material
@@ -38,8 +38,7 @@ def response(data=None, **kwargs):
 
 
 @pytest.mark.parametrize("suffix", ["", "/", "?view=1#other-section"])
-@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
-def test_issue_api_body_reaches_summary_with_markdown_intact(suffix, policy):
+def test_issue_api_body_reaches_summary_with_markdown_intact(suffix):
     requests = []
 
     def opener(request, timeout):
@@ -47,7 +46,7 @@ def test_issue_api_body_reaches_summary_with_markdown_intact(suffix, policy):
         return response()
 
     with retrieval_budget(timeout_seconds=5, clock=lambda: 10) as budget:
-        result = fetch_article(URL + suffix, opener=opener, resolver=resolver_for({}), policy=policy)
+        result = fetch_article(URL + suffix, opener=opener, resolver=resolver_for({}))
         assert budget.requests == 1
     assert len(requests) == 1
     request, timeout = requests[0]
@@ -132,10 +131,13 @@ def test_empty_issue_body_uses_reader_for_original_page(body):
     assert requests == [API_URL, "https://r.jina.ai/" + URL]
 
 
-def test_classification_empty_body_stays_failed_without_reader():
+def test_disabled_recovery_empty_body_stays_failed_without_reader():
     with pytest.raises(ArticleFetchError) as caught:
-        fetch_article(URL, opener=lambda request, timeout: response(issue_data(body=None)),
-                      resolver=resolver_for({}), policy=CLASSIFICATION_FETCH_POLICY)
+        fetch_article(
+            URL, opener=lambda request, timeout: response(issue_data(body=None)),
+            resolver=resolver_for({}),
+            policy=ArticleFetchPolicy(jina_enabled=False, wayback_enabled=False),
+        )
     assert caught.value.error_code == "empty_content"
     assert caught.value.method == "github_issue"
     assert caught.value.fallback_attempted is False
@@ -222,9 +224,8 @@ def test_issue_api_redirect_to_private_address_is_rejected():
     (429, {}), (429, {"Retry_After": "1"}), (429, {"Retry_After": "3600"}),
 ])
 @pytest.mark.parametrize("authenticated", [False, True])
-@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
-def test_api_rate_limit_stops_api_and_recovers_only_for_summary(
-    status, headers, authenticated, policy, monkeypatch,
+def test_api_rate_limit_stops_api_and_recovers_original_page(
+    status, headers, authenticated, monkeypatch,
 ):
     if authenticated:
         monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
@@ -240,23 +241,13 @@ def test_api_rate_limit_stops_api_and_recovers_only_for_summary(
         assert request.get_header("Authorization") is None
         return FakeResponse(make_jina_payload(content=BODY, url=URL), content_type="application/json")
 
-    if policy == CLASSIFICATION_FETCH_POLICY:
-        with pytest.raises(ArticleFetchError) as caught:
-            fetch_article(URL, opener=opener, resolver=resolver_for({}),
-                          policy=policy, sleeper=sleeps.append)
-        assert caught.value.error_code == "github_api_rate_limited"
-        assert caught.value.method == "github_issue"
-        assert not caught.value.fallback_attempted
-        assert caught.value.attempts == 1
-        assert requests == [API_URL]
-    else:
-        result = fetch_article(URL, opener=opener, resolver=resolver_for({}),
-                               policy=policy, sleeper=sleeps.append)
-        assert result.method == "jina"
-        assert result.fallback_reason == "github_api_rate_limited"
-        assert result.attempts == 2
-        assert BODY in result.text
-        assert requests == [API_URL, "https://r.jina.ai/" + URL]
+    result = fetch_article(URL, opener=opener, resolver=resolver_for({}),
+                           sleeper=sleeps.append)
+    assert result.method == "jina"
+    assert result.fallback_reason == "github_api_rate_limited"
+    assert result.attempts == 2
+    assert BODY in result.text
+    assert requests == [API_URL, "https://r.jina.ai/" + URL]
     assert sleeps == []
 
 

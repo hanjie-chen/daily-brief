@@ -1,23 +1,23 @@
 """Completed, validated material survives the deadline for starting new work."""
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from functools import partial
 
 import pytest
 
 from daily_brief.article_fetcher import (
-    CLASSIFICATION_FETCH_POLICY,
-    SUMMARY_FETCH_POLICY,
+    DEFAULT_FETCH_POLICY,
     ArticleFetchError,
     fetch_article,
 )
 from daily_brief.article_fetcher import responses
 from daily_brief.article_fetcher.budget import retrieval_budget
 from daily_brief.generation.material import (
-    RETRIEVAL_MODE_CLASSIFICATION,
     prepare_candidate_material,
 )
 from daily_brief.models import Candidate
+from daily_brief.time_window import TimeWindow
 from fakes import story
 from test_article_fetcher import (
     FakeResponse,
@@ -61,8 +61,7 @@ def pdf_response(request, timeout):
     )
 
 
-@pytest.mark.parametrize("policy", [SUMMARY_FETCH_POLICY, CLASSIFICATION_FETCH_POLICY])
-def test_adobe_result_after_item_deadline_keeps_full_timeout_and_material(slow_adobe, policy):
+def test_adobe_result_after_item_deadline_keeps_full_timeout_and_material(slow_adobe):
     clock, calls = slow_adobe
     requests = []
 
@@ -71,11 +70,11 @@ def test_adobe_result_after_item_deadline_keeps_full_timeout_and_material(slow_a
         return pdf_response(request, timeout)
 
     with retrieval_budget(timeout_seconds=120, clock=clock):
-        result = fetch_article(PDF_URL, opener=opener, resolver=resolver_for({}), policy=policy)
+        result = fetch_article(PDF_URL, opener=opener, resolver=resolver_for({}))
         assert result.text == MARKDOWN
         assert result.extractor == "adobe_pdf_to_markdown"
         with pytest.raises(ArticleFetchError) as caught:
-            fetch_article(PDF_URL, opener=opener, resolver=resolver_for({}), policy=policy)
+            fetch_article(PDF_URL, opener=opener, resolver=resolver_for({}))
         assert caught.value.error_code == "retrieval_budget_exhausted"
 
     assert requests == [PDF_URL]
@@ -83,15 +82,17 @@ def test_adobe_result_after_item_deadline_keeps_full_timeout_and_material(slow_a
     assert len(calls) == 1
 
 
-def test_classification_preparation_retains_late_successful_adobe_material(slow_adobe):
+def test_material_preparation_retains_late_successful_adobe_material(slow_adobe):
     clock, calls = slow_adobe
     candidate = Candidate(story("1", "Research report", url=PDF_URL))
     fetcher = partial(fetch_article, opener=pdf_response, resolver=resolver_for({}))
 
     with retrieval_budget(timeout_seconds=120, clock=clock):
         assert prepare_candidate_material(
-            candidate, fetcher, None, None, None,
-            retrieval_mode=RETRIEVAL_MODE_CLASSIFICATION,
+            candidate, fetcher, None, None,
+            TimeWindow(
+                datetime(2026, 9, 14, tzinfo=UTC), datetime(2026, 9, 15, tzinfo=UTC), "2026-09-15",
+            ),
         )
 
     assert candidate.story.fetched_text == MARKDOWN
@@ -151,7 +152,7 @@ def test_late_reader_response_still_rejects_unsuccessful_origin_status():
         with pytest.raises(ArticleFetchError) as caught:
             fetch_article(
                 source, opener=opener, resolver=resolver_for({}),
-                policy=replace(SUMMARY_FETCH_POLICY, wayback_enabled=False),
+                policy=replace(DEFAULT_FETCH_POLICY, wayback_enabled=False),
             )
     assert caught.value.error_code == "jina_origin_status"
     assert caught.value.method == "jina"

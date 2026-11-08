@@ -7,7 +7,7 @@ from urllib.error import URLError
 import pytest
 
 from daily_brief.article_fetcher import (
-    CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY, ArticleFetchError, fetch_article,
+    ArticleFetchError, fetch_article,
 )
 from daily_brief.article_fetcher.budget import retrieval_budget
 from daily_brief.llm.summarizer import build_summary_material_context, split_page_material
@@ -49,10 +49,9 @@ def response(data=None, *, final_url=API_URL):
                         content_type="application/json", final_url=final_url)
 
 
-@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
 @pytest.mark.parametrize("url", [URL, "http://cve.org/CVERecord/?id=cve-2026-12345",
                                   "https://cve.org:443/CVERecord?id=CVE-2026-12345&view=full#details"])
-def test_cve_api_preserves_structured_material_and_metadata(policy, url, monkeypatch):
+def test_cve_api_preserves_structured_material_and_metadata(url, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "unrelated-secret")
     requests = []
 
@@ -62,7 +61,7 @@ def test_cve_api_preserves_structured_material_and_metadata(policy, url, monkeyp
         return response()
 
     with retrieval_budget(timeout_seconds=5, clock=lambda: 10) as budget:
-        result = fetch_article(url, opener=opener, resolver=resolver_for({}), policy=policy)
+        result = fetch_article(url, opener=opener, resolver=resolver_for({}))
         assert budget.requests == 1
     assert [request.full_url for request in requests] == [API_URL]
     assert requests[0].get_header("Accept") == "application/json"
@@ -136,8 +135,7 @@ def test_invalid_record_is_terminal(case):
 
 
 @pytest.mark.parametrize("descriptions", [[], [{"lang": "en", "value": " \n "}]])
-@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
-def test_empty_description_recovers_original_page_only_for_summary(descriptions, policy):
+def test_empty_description_recovers_original_page(descriptions):
     data = record()
     data["containers"]["cna"]["descriptions"] = descriptions
     requests = []
@@ -149,17 +147,11 @@ def test_empty_description_recovers_original_page_only_for_summary(descriptions,
         assert request.full_url == "https://r.jina.ai/" + URL
         return FakeResponse(make_jina_payload(content=DESCRIPTION, url=URL), content_type="application/json")
 
-    if policy == CLASSIFICATION_FETCH_POLICY:
-        with pytest.raises(ArticleFetchError) as caught:
-            fetch_article(URL, opener=opener, resolver=resolver_for({}), policy=policy)
-        assert caught.value.error_code == "empty_content"
-        assert requests == [API_URL]
-    else:
-        result = fetch_article(URL, opener=opener, resolver=resolver_for({}), policy=policy)
-        assert result.method == "jina"
-        assert result.fallback_reason == "empty_content"
-        assert DESCRIPTION in result.text
-        assert requests == [API_URL, "https://r.jina.ai/" + URL]
+    result = fetch_article(URL, opener=opener, resolver=resolver_for({}))
+    assert result.method == "jina"
+    assert result.fallback_reason == "empty_content"
+    assert DESCRIPTION in result.text
+    assert requests == [API_URL, "https://r.jina.ai/" + URL]
 
 
 @pytest.mark.parametrize(("limits", "code"), [({"html_max_bytes": 10}, "response_too_large"),

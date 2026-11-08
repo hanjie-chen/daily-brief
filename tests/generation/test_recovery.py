@@ -27,7 +27,7 @@ from fakes import (
 )
 
 
-def test_classification_retrieval_does_not_attempt_reuters_recovery(tmp_path):
+def test_classification_exhausted_recovery_still_fails_closed_without_discussion(tmp_path):
     finder = FakeSyndicatedFinder(
         [SyndicatedCandidate(title="copy", url=yahoo_story_url())]
     )
@@ -53,11 +53,10 @@ def test_classification_retrieval_does_not_attempt_reuters_recovery(tmp_path):
     )
 
     records = json.loads(result.data_path.read_text(encoding="utf-8"))
-    assert finder.calls == []
+    assert finder.calls == ["1"]
     assert records[0]["topic_route"] == "topic_unknown"
-    assert records[0]["article_retrieval"]["syndicated_recovery"]["status"] == (
-        "not_attempted"
-    )
+    assert records[0]["article_retrieval"]["syndicated_recovery"]["status"] == "exhausted"
+    assert records[0]["discussion_retrieval"]["status"] == "not_attempted"
 
 
 def test_reuters_datadome_failure_recovers_verified_yahoo_copy(tmp_path):
@@ -776,13 +775,13 @@ def test_alternate_reporting_conflict_fails_closed(tmp_path):
     assert summarizer.titles == []
 
 
-def test_alternate_reporting_is_disabled_for_classification(
+def test_classification_attempts_alternate_reporting_and_fails_closed_when_empty(
     tmp_path,
 ):
     alternate_finder = FakeAlternateReportingFinder([])
     block = origin_block_failure("datadome_challenge")
 
-    run_generate(
+    result = run_generate(
         output_dir=tmp_path / "classification-briefs",
         data_dir=tmp_path / "classification-data",
         date_label="2026-08-29",
@@ -804,7 +803,10 @@ def test_alternate_reporting_is_disabled_for_classification(
         classifier=FakeClassifier(),
         summarizer=FakeSummarizer(),
     )
-    assert alternate_finder.calls == []
+    assert alternate_finder.calls == ["outside"]
+    record = json.loads(result.data_path.read_text())[0]
+    assert record["topic_route"] == "topic_unknown"
+    assert record["discussion_retrieval"]["status"] == "not_attempted"
 
 
 def test_reuters_syndication_failure_searches_other_reporting_and_exports_provenance(tmp_path):

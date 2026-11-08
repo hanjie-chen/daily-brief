@@ -171,17 +171,35 @@ def test_same_article_failure_continues_to_hn_discussion_after_alternative():
     assert item.article_retrieval.status == 'failed'
 
 
-@pytest.mark.parametrize('mode,error', [
-    (material.RETRIEVAL_MODE_CLASSIFICATION, blocked()),
-    (material.RETRIEVAL_MODE_SUMMARY, ArticleFetchError('timeout', error_code='network_timeout')),
-])
-def test_search_never_runs_during_classification_or_nonchallenge_failure(mode, error):
+def test_material_preparation_recovers_same_article_before_classification():
     finder = Finder([COPY])
+    item = candidate()
+    requests = []
+
     def fetch(url, **kwargs):
-        raise error
+        requests.append(url)
+        if url == ORIGINAL:
+            raise blocked()
+        return recovered(url)
+
+    assert material.prepare_candidate_material(
+        item, fetch, None, None, WINDOW, same_article_finder=finder,
+    )
+    assert requests == [ORIGINAL, COPY]
+    assert finder.calls == 1
+    assert item.story.fetched_text == BODY.strip()
+    assert item.article_retrieval.material_origin == 'same_article'
+
+
+def test_search_never_runs_for_unexhausted_failure():
+    finder = Finder([COPY])
+
+    def fetch(url, **kwargs):
+        raise ArticleFetchError('timeout', error_code='network_timeout')
+
     item = candidate()
     assert not material.prepare_candidate_material(
-        item, fetch, None, None, WINDOW, retrieval_mode=mode, same_article_finder=finder,
+        item, fetch, None, None, WINDOW, same_article_finder=finder,
     )
     assert finder.calls == 0
     assert item.article_retrieval.same_article_recovery.status == 'not_attempted'

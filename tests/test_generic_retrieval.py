@@ -6,7 +6,7 @@ from urllib.error import URLError
 import pytest
 
 from daily_brief.article_fetcher import (
-    ArticleFetchError, ArticleFetchPolicy, CLASSIFICATION_FETCH_POLICY, fetch_article,
+    ArticleFetchError, ArticleFetchPolicy, fetch_article,
 )
 from daily_brief.article_fetcher.budget import retrieval_budget
 from daily_brief.article_fetcher.fetch import _http_retry_delay
@@ -56,7 +56,7 @@ def test_terminal_http_errors_do_not_enter_backup_transports(status):
 
 
 @pytest.mark.parametrize("status", [403, 404, 410, 408, 429, 503])
-def test_classification_stays_one_direct_request(status):
+def test_explicit_policy_stays_one_direct_request(status):
     calls, sleeps = [], []
 
     def deny(request, timeout):
@@ -65,7 +65,9 @@ def test_classification_stays_one_direct_request(status):
 
     with pytest.raises(ArticleFetchError) as caught:
         fetch_article(SOURCE, opener=deny, resolver=resolver_for({}),
-                      sleeper=sleeps.append, policy=CLASSIFICATION_FETCH_POLICY)
+                      sleeper=sleeps.append, policy=ArticleFetchPolicy(
+                          direct_max_attempts=1, jina_enabled=False, wayback_enabled=False,
+                      ))
     assert calls == [SOURCE]
     assert sleeps == []
     assert caught.value.error_code == f"http_{status}"

@@ -20,6 +20,17 @@ _JS_NOTICE = re.compile(
     r")[.!]?",
     re.IGNORECASE,
 )
+_SECURITY_NOTICE = re.compile(
+    r"(?:performing security verification|"
+    r"this (?:website|site) uses a security service to protect against malicious bots|"
+    r"this page is displayed while the (?:website|site) verifies you are not a bot"
+    r")[.!]?",
+    re.IGNORECASE,
+)
+_HOSTNAME = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}",
+    re.IGNORECASE,
+)
 _NAVIGATION = re.compile(
     r"(?:(?:home|menu|navigation|about(?: us)?|contact(?: us)?|search|"
     r"sign in|log in|login|sign up|register|privacy(?: policy)?|"
@@ -47,6 +58,10 @@ def _is_js_notice(line: str) -> bool:
     return all(_JS_NOTICE.fullmatch(part) for part in re.split(r"(?<=[.!?])\s+", line))
 
 
+def _is_security_notice(line: str) -> bool:
+    return all(_SECURITY_NOTICE.fullmatch(part) for part in re.split(r"(?<=[.!?])\s+", line))
+
+
 def is_page_shell(text: str, *, title: str = "") -> bool:
     """Reject only recognized notices/navigation with no other body remaining.
 
@@ -69,17 +84,22 @@ def is_page_shell(text: str, *, title: str = "") -> bool:
     has_region = any(line.casefold() in {"region", "select region", "choose region"} for line in lines)
     has_language = any(line.casefold() in {"language", "select language"} for line in lines)
     has_js_notice = any(_is_js_notice(line) for line in lines)
+    has_security_notice = any(_is_security_notice(line) for line in lines)
     normalized_title = " ".join(title.split()).casefold()
     recognized_shell = False
     for line in lines:
         # Several notice sentences can share a paragraph after HTML extraction.
-        if _is_js_notice(line):
+        if _is_js_notice(line) or _is_security_notice(line):
             recognized_shell = True
         elif _NAVIGATION.fullmatch(line):
             recognized_shell = True
         elif has_region and _REGION_OPTIONS.fullmatch(line):
             continue
         elif has_language and _LANGUAGE_OPTIONS.fullmatch(line):
+            continue
+        elif has_security_notice and _HOSTNAME.fullmatch(line):
+            # Verification interstitials often repeat the protected hostname.
+            # Other prose, including articles explaining these notices, stays.
             continue
         elif (
             has_js_notice and normalized_title and line.casefold() == normalized_title

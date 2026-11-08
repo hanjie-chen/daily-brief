@@ -10,7 +10,7 @@ from urllib.response import addinfourl
 import pytest
 
 from daily_brief.article_fetcher import (
-    CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY, ArticleFetchError, fetch_article,
+    ArticleFetchError, fetch_article,
 )
 from daily_brief.article_fetcher.budget import retrieval_budget
 from daily_brief.article_fetcher.http_safety import _SafeRedirectHandler
@@ -54,7 +54,6 @@ def transport(routes, requests):
     ).open
 
 
-@pytest.mark.parametrize("policy", [CLASSIFICATION_FETCH_POLICY, SUMMARY_FETCH_POLICY])
 @pytest.mark.parametrize("destinations", [
     ["https://api.github.com/repos/new-owner/new-compiler/issues/42"],
     ["https://api.github.com/repositories/1234/issues/42"],
@@ -62,7 +61,7 @@ def transport(routes, requests):
     [NUMERIC_API_URL],
     [NEW_API_URL, NUMERIC_API_URL],
 ])
-def test_official_rename_or_transfer_preserves_issue_body(destinations, policy, monkeypatch):
+def test_official_rename_or_transfer_preserves_issue_body(destinations, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
     number = int(destinations[-1].rsplit("/", 1)[1])
     canonical_api = NEW_API_URL.rsplit("/", 1)[0] + f"/{number}"
@@ -73,7 +72,7 @@ def test_official_rename_or_transfer_preserves_issue_body(destinations, policy, 
     requests = []
     with retrieval_budget(max_requests=1, timeout_seconds=5, clock=lambda: 10) as budget:
         result = fetch_article(URL, opener=transport(routes, requests),
-                               resolver=resolver_for({}), policy=policy)
+                               resolver=resolver_for({}))
         # urllib redirect hops keep the existing separately bounded behavior.
         assert budget.requests == 1
     assert [request.full_url for request in requests] == chain

@@ -104,8 +104,11 @@ listed only in that package's guide.
   and every fetched URL, including redirects, passes public-address validation
   in [`article_fetcher/`](article_fetcher/README.md). Specialized transports and
   recovery paths must not weaken these controls.
-- Classification uses a stricter retrieval policy than selected-item
-  summarization. A recovery path is eligible only for its documented failure
+- Classification and summarization share source retrieval, recovery, timeouts,
+  budgets, and date bounds. Classification material is reused after selection.
+  Ordinary external articles require usable body evidence for classification;
+  HN discussion cannot replace it. Self-post and community-roundup evidence
+  rules remain separate. A recovery path is eligible only for its documented failure
   conditions, cannot recurse, and must validate both source identity and usable
   material before model input is created. Missing or ambiguous evidence fails
   closed.

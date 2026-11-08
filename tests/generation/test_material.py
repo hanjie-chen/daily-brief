@@ -137,7 +137,7 @@ def test_selected_exploration_article_reuses_classification_fetch(tmp_path, publ
 
 
 def test_github_updates_survive_classification_reuse_without_another_fetch(tmp_path):
-    from daily_brief.article_fetcher import CLASSIFICATION_FETCH_POLICY, fetch_article
+    from daily_brief.article_fetcher import DEFAULT_FETCH_POLICY, fetch_article
     from daily_brief.llm.summarizer import build_summary_prompt
     from test_article_fetcher import FakeResponse, resolver_for
     from test_github_issue import API_URL, URL, issue_data
@@ -182,7 +182,7 @@ def test_github_updates_survive_classification_reuse_without_another_fetch(tmp_p
         classifier=FakeClassifier(default_label="core_non_ai"),
         article_fetcher=fetch, summarizer=CheckingSummarizer(),
     )
-    assert policies == [CLASSIFICATION_FETCH_POLICY]
+    assert policies == [DEFAULT_FETCH_POLICY]
     assert requests == [API_URL, API_URL + "/comments?per_page=30&page=1"]
     assert summaries == ["1"]
     assert result.public_json_path is not None
@@ -209,12 +209,10 @@ def test_default_classification_fetch_uses_bounded_policy(tmp_path, monkeypatch)
 
     assert len(calls) == 1
     _, kwargs = calls[0]
-    assert kwargs["timeout_seconds"] == material.CLASSIFICATION_HTTP_TIMEOUT_SECONDS
-    assert (
-        kwargs["pdf_parse_timeout_seconds"]
-        == material.CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
-    )
-    assert kwargs["policy"] is material.CLASSIFICATION_FETCH_POLICY
+    assert "timeout_seconds" not in kwargs
+    assert "pdf_parse_timeout_seconds" not in kwargs
+    assert kwargs["policy"] is material.DEFAULT_FETCH_POLICY
+    assert kwargs["wayback_not_before"] < kwargs["wayback_not_after"]
 
 
 def test_injected_classification_fetch_receives_bounded_policy(tmp_path):
@@ -237,12 +235,10 @@ def test_injected_classification_fetch_receives_bounded_policy(tmp_path):
 
     assert len(calls) == 1
     _, kwargs = calls[0]
-    assert kwargs["timeout_seconds"] == material.CLASSIFICATION_HTTP_TIMEOUT_SECONDS
-    assert (
-        kwargs["pdf_parse_timeout_seconds"]
-        == material.CLASSIFICATION_PDF_PARSE_TIMEOUT_SECONDS
-    )
-    assert kwargs["policy"] is material.CLASSIFICATION_FETCH_POLICY
+    assert "timeout_seconds" not in kwargs
+    assert "pdf_parse_timeout_seconds" not in kwargs
+    assert kwargs["policy"] is material.DEFAULT_FETCH_POLICY
+    assert kwargs["wayback_not_before"] < kwargs["wayback_not_after"]
 
 
 def test_injected_summary_fetch_receives_full_policy_and_wayback_bounds(tmp_path):
@@ -264,14 +260,24 @@ def test_injected_summary_fetch_receives_full_policy_and_wayback_bounds(tmp_path
 
     assert len(calls) == 1
     _, kwargs = calls[0]
-    assert kwargs["policy"] is material.SUMMARY_FETCH_POLICY
+    assert kwargs["policy"] is material.DEFAULT_FETCH_POLICY
     assert kwargs["wayback_not_before"] < kwargs["wayback_not_after"]
     assert "timeout_seconds" not in kwargs
 
 
-def test_classification_youtube_skip_is_audited_with_zero_attempts(
+def test_classification_uses_youtube_captions_and_reuses_them(
     tmp_path, monkeypatch
 ):
+    from daily_brief.article_fetcher import fetch as fetch_module
+    from daily_brief.article_fetcher.youtube_captions import YoutubeCaptionResult
+
+    calls = []
+    def captions(url, **kwargs):
+        calls.append(url)
+        return YoutubeCaptionResult("A lecture about ancient history.", "en", False)
+
+    monkeypatch.setattr(fetch_module, "fetch_youtube_caption", captions)
+
     def fetch(url, **kwargs):
         return article_fetcher_module.fetch_article(
             url,
@@ -303,12 +309,11 @@ def test_classification_youtube_skip_is_audited_with_zero_attempts(
     )
 
     record = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
-    assert classifier.seen_ids == []
-    assert record["topic_route"] == "topic_unknown"
-    assert record["article_retrieval"]["error_code"] == (
-        "youtube_skipped_in_classification"
-    )
-    assert record["article_retrieval"]["attempts"] == 0
+    assert classifier.seen_ids == ["1"]
+    assert record["topic_route"] == "article_outside"
+    assert record["selected"] is True
+    assert record["article_retrieval"]["method"] == "youtube_caption"
+    assert len(calls) == 1
 
 
 def test_adobe_markdown_from_classification_is_reused_for_research_summary(tmp_path):
@@ -358,7 +363,7 @@ A bibliography that should not enter the summary evidence.
 
     selected = json.loads(result.data_path.read_text(encoding="utf-8"))[0]
     assert len(calls) == 1
-    assert calls[0][1]["policy"] is material.CLASSIFICATION_FETCH_POLICY
+    assert calls[0][1]["policy"] is material.DEFAULT_FETCH_POLICY
     assert summarizer.fetched_texts == [body.strip()]
     assert summarizer.summary_modes == [SUMMARY_MODE_RESEARCH_REPORT]
     assert selected["article_retrieval"]["extractor"] == "adobe_pdf_to_markdown"
