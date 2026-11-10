@@ -146,6 +146,13 @@ listed only in that package's guide.
   is held in memory only. See the architecture guide for the supported failures
   and command boundaries.
 - HN, model and publishing operations use the critical-service retry policy.
+  DNS resolution failures (`EAI_AGAIN`, `EAI_NODATA`, `EAI_NONAME`, and
+  `EAI_FAIL`) share the bounded allowance: unavailable names or addresses can
+  also result from upstream DNS or proxy failures. Even a genuinely missing
+  critical-service name can spend at most the six shared pauses. Invalid DNS
+  call parameters (flags, address family, service, socket type) do not trigger
+  pauses; certificate, authentication, rate-limit and content errors retain
+  their existing handling.
   Optional material failures (including DNS and route errors) cannot alone spend
   shared pauses. After allowed fallbacks yield no usable material, one bounded
   HN HTTPS check must also fail transiently before a pause is requested. An

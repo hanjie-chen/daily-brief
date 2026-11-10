@@ -1,6 +1,8 @@
 import json
 import logging
+import socket
 from datetime import datetime
+from urllib.error import URLError
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -100,7 +102,13 @@ def test_get_json_raises_after_exactly_three_attempts(caplog):
     assert "source=algolia attempt=3/3 status=failed" in caplog.text
 
 
-def test_scheduled_collection_recovers_current_page_without_reloading_previous(monkeypatch):
+@pytest.mark.parametrize("error", [
+    TimeoutError(),
+    URLError(socket.gaierror(socket.EAI_NODATA, "no address")),
+    URLError(socket.gaierror(socket.EAI_NONAME, "name unavailable")),
+    URLError(socket.gaierror(socket.EAI_FAIL, "resolver failure")),
+])
+def test_scheduled_collection_recovers_current_page_without_reloading_previous(monkeypatch, error):
     from datetime import datetime
     from daily_brief.candidates import hn_client
     from daily_brief.network_recovery import NetworkRecovery
@@ -114,7 +122,7 @@ def test_scheduled_collection_recovers_current_page_without_reloading_previous(m
         page = int(parse_qs(urlparse(request.full_url).query)["page"][0])
         pages.append(page)
         if page == 1 and pages.count(1) <= 3:
-            raise TimeoutError()
+            raise error
         return FakeResponse(json.dumps({"hits": [], "nbPages": 2}).encode())
 
     monkeypatch.setattr(hn_client, "_get_json", lambda url: get_json(url, opener=opener, sleep=short_waits.append))

@@ -1,3 +1,5 @@
+import errno
+import socket
 from types import SimpleNamespace
 from urllib.error import URLError
 
@@ -7,6 +9,48 @@ from daily_brief import daily_run
 from daily_brief.cli import main
 from daily_brief.network_recovery import NetworkRecovery, recoverable_network
 from daily_brief.output import PublishResult
+
+
+@pytest.mark.parametrize("error", [
+    URLError(socket.gaierror(socket.EAI_AGAIN, "temporary DNS failure")),
+    URLError(socket.gaierror(socket.EAI_NODATA, "No address associated with hostname")),
+    URLError(socket.gaierror(socket.EAI_NONAME, "name unavailable")),
+    URLError(socket.gaierror(socket.EAI_FAIL, "resolver failure")),
+    URLError(OSError(errno.ENETUNREACH, "network unreachable")),
+    TimeoutError(),
+])
+def test_scheduled_source_outage_waits_six_times_then_exits_without_publishing(
+    monkeypatch, tmp_path, error,
+):
+    from daily_brief.candidates import hn_client
+    from daily_brief.generation import SourceCollectionError
+
+    attempts, short_waits, waits = [], [], []
+    recovery = NetworkRecovery(sleeper=waits.append)
+    monkeypatch.setattr(daily_run, "NetworkRecovery", lambda: recovery)
+    monkeypatch.setattr(daily_run, "publish_brief", lambda **kw: pytest.fail("must not publish"))
+    get_json = hn_client._get_json
+
+    def opener(request, timeout):
+        attempts.append(request.full_url)
+        raise error
+
+    monkeypatch.setattr(
+        hn_client, "_get_json",
+        lambda url: get_json(url, opener=opener, sleep=short_waits.append),
+    )
+    with pytest.raises(SourceCollectionError, match="algolia"):
+        daily_run.run_daily(
+            output_dir=tmp_path / "briefs", data_dir=tmp_path / "data",
+            model_backend=object(),
+        )
+
+    assert waits == [600] * 6
+    assert short_waits == [10, 20] * 7
+    assert len(attempts) == 21
+    assert len(set(attempts)) == 1
+    assert recovery.exhausted
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_daily_run_shares_allowance_and_does_not_regenerate_for_publish(monkeypatch):

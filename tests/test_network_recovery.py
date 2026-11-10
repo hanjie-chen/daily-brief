@@ -26,6 +26,9 @@ def test_transient_network_failures(error):
 @pytest.mark.parametrize("error", [
     TimeoutError(), ConnectionRefusedError(), ConnectionResetError(),
     URLError("offline"), ssl.SSLEOFError(),
+    URLError(socket.gaierror(socket.EAI_NODATA, "no address")),
+    URLError(socket.gaierror(socket.EAI_NONAME, "name unavailable")),
+    URLError(socket.gaierror(socket.EAI_FAIL, "resolver failure")),
     HTTPError("https://article.example", 503, "unavailable", {}, None),
     HTTPError("https://article.example", 408, "timeout", {}, None),
 ])
@@ -45,6 +48,9 @@ def test_same_error_has_different_scope_for_optional_material_and_critical_servi
 
 @pytest.mark.parametrize("cause", [
     socket.gaierror(socket.EAI_AGAIN, "temporary DNS failure"),
+    socket.gaierror(socket.EAI_NODATA, "no address"),
+    socket.gaierror(socket.EAI_NONAME, "name unavailable"),
+    socket.gaierror(socket.EAI_FAIL, "resolver failure"),
     OSError(errno.ENETDOWN, "interface down"),
     OSError(errno.ENETUNREACH, "route unavailable"),
 ])
@@ -94,7 +100,10 @@ def test_retrieval_deadline_cannot_hide_the_network_failure_that_used_it_up():
 @pytest.mark.parametrize("error", [
     ValueError("invalid response"), FileNotFoundError(), PermissionError(),
     URLError(ssl.SSLCertVerificationError("certificate")),
-    URLError(socket.gaierror(socket.EAI_NONAME, "missing name")),
+    URLError(socket.gaierror(socket.EAI_BADFLAGS, "invalid flags")),
+    URLError(socket.gaierror(socket.EAI_FAMILY, "unsupported address family")),
+    URLError(socket.gaierror(socket.EAI_SERVICE, "unsupported service")),
+    URLError(socket.gaierror(socket.EAI_SOCKTYPE, "unsupported socket type")),
     HTTPError("https://example.com", 401, "unauthorized", {}, None),
     HTTPError("https://example.com", 404, "missing", {}, None),
     HTTPError("https://example.com", 429, "quota", {}, None),
@@ -186,6 +195,9 @@ def test_interrupted_wait_propagates_and_cleans_scope():
 @pytest.mark.parametrize("error, should_wait", [
     (TimeoutError(), True),
     (URLError(socket.gaierror(socket.EAI_AGAIN, "temporary DNS failure")), True),
+    (URLError(socket.gaierror(socket.EAI_NODATA, "no address")), True),
+    (URLError(socket.gaierror(socket.EAI_NONAME, "name unavailable")), True),
+    (URLError(socket.gaierror(socket.EAI_FAIL, "resolver failure")), True),
     (OSError(errno.ENETUNREACH, "no route"), True),
     (HTTPError("https://hn.example", 503, "unavailable", {}, None), True),
     (HTTPError("https://hn.example", 429, "limited", {}, None), False),

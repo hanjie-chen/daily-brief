@@ -19,6 +19,13 @@ from urllib.request import urlopen
 LOGGER = logging.getLogger(__name__)
 WAIT_SECONDS = 600
 MAX_PAUSES = 6
+# Broken upstream DNS/proxies can report missing names or addresses as well as
+# temporary failure. None proves a permanent outage; retry within the allowance.
+RETRYABLE_DNS_ERRORS = {
+    getattr(socket, name)
+    for name in ("EAI_AGAIN", "EAI_NODATA", "EAI_NONAME", "EAI_FAIL")
+    if hasattr(socket, name)
+}
 CONNECTIVITY_URL = "https://hacker-news.firebaseio.com/v0/maxitem.json"
 CONNECTIVITY_TIMEOUT_SECONDS = 10
 _ACTIVE: ContextVar[NetworkRecovery | None] = ContextVar("network_recovery", default=None)
@@ -40,7 +47,7 @@ def is_transient_network_error(error: BaseException) -> bool:
         if isinstance(current, ssl.SSLError):
             return earlier_transport_failure
         if isinstance(current, socket.gaierror):
-            return earlier_transport_failure or current.errno == socket.EAI_AGAIN
+            return earlier_transport_failure or current.errno in RETRYABLE_DNS_ERRORS
         if isinstance(current, HTTPError):
             return earlier_transport_failure or current.code == 408 or 500 <= current.code <= 599
         if isinstance(current, URLError):
