@@ -83,7 +83,8 @@ def test_network_pause_preserves_completed_requests_cost_and_attempts():
 
 def test_network_pause_does_not_reset_cost_budget():
     transport = Opener(TimeoutError('offline'))
-    client = backend(transport, max_retries=0, max_run_cost_usd=.006)
+    # Admit one reservation for the current prompt, but not a second attempt.
+    client = backend(transport, max_retries=0, max_run_cost_usd=.008)
     pauses = []
     with NetworkRecovery(sleeper=pauses.append, max_pauses=1):
         with pytest.raises(OpenRouterAPIError) as caught:
@@ -230,7 +231,8 @@ def test_budget_blocks_before_request_and_does_not_reset_between_calls():
 
 def test_failed_attempts_stop_at_budget_not_retry_count():
     transport = Opener(TimeoutError())
-    client = backend(transport, max_run_cost_usd=.006)
+    # Admit one reservation for the current prompt, but not a second attempt.
+    client = backend(transport, max_run_cost_usd=.008)
     with pytest.raises(OpenRouterAPIError, match='budget'):
         client.summarize(material())
     assert len(transport.requests) == 1

@@ -85,6 +85,18 @@ unused sources are omitted from the array. Validation rejects unknown, duplicate
 or unavailable sources and inconsistent sufficiency decisions before updating the
 audit. Source usage is model-declared, not claim-level verification.
 
+Source sufficiency requires evidence that represents the article or post's main
+content, including the key reasoning, outcome or conditions needed to understand
+it. Background facts in an introduction, preview or truncated excerpt do not
+suffice when the main content is missing. Full text and exhaustive detail are not
+required; a short announcement that states the change and its applicable
+conditions can still be sufficient. Partial material must never be described as
+the whole article's argument. If the source is absent or insufficient, substantive
+comments may support a discussion summary, explicitly attributed to commenters
+rather than to the article. If neither supports a substantive summary, the same
+call returns insufficient. These are prompt rules, not a new classifier or a
+semantic check in the output validator.
+
 Reader-preference guidance retains useful concrete mechanisms and metric scope even when that takes more space; it does not optimize for the shortest possible text.
 
 The prompt organizes the text around the subject, key facts or mechanisms, and
@@ -205,8 +217,10 @@ HN-title-related portion is summarized. The title locates the item but does not
 set a single-theme article's emphasis; body evidence overrides conflicting or
 unsupported title claims. Self-posts use the post and relevant discussion, while
 recommendation requests retain their route-specific answer format. When source
-text is available, comments supplement or correct it rather than replace its
-main point; comments alone support only grounded discussion summaries. These are
+text is sufficient to represent the main content, comments supplement or correct
+it rather than replace its main point. When source text is absent or insufficient,
+substantive comments can support a discussion summary explicitly attributed to
+commenters, without reconstructing the unseen article. These are
 generation instructions, not a post-generation quality gate; they operate on the
 bounded evidence supplied to the model and add no provider calls.
 
