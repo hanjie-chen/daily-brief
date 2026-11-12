@@ -26,6 +26,10 @@ JS_BODY = (
     "Example Cloud\nYou have JavaScript disabled\n"
     "To use the site, you must enable JavaScript in the browser settings and reload the page."
 )
+PASSIVE_JS_BODY = (
+    "JavaScript must be enabled on your browser, otherwise content or functionality "
+    "may be limited or unavailable."
+)
 NAV_BODY = (
     '[![Image 1: Example Cloud](https://example.com/logo.svg)]'
     '(https://example.com/ "Example Cloud")\n\n'
@@ -64,6 +68,10 @@ def reader_response(body, title=TITLE):
     "You need to enable JavaScript to run this app.",
     "Please enable JavaScript. You have JavaScript disabled.",
     "This website requires JavaScript to function properly.",
+    PASSIVE_JS_BODY,
+    "JavaScript must be enabled.",
+    "JavaScript must be enabled in your browser settings.",
+    "JavaScript must be enabled in the browser, otherwise functionality may be unavailable.",
     NAV_BODY,
     "Home | About us | Contact | Privacy policy",
     "Region All Russia Kazakhstan",
@@ -88,8 +96,14 @@ def test_reader_rejects_known_shells(body):
     "All systems operational.",
     "v2 is out.",
     JS_BODY + "\n" + FACT,
+    PASSIVE_JS_BODY + "\n" + FACT,
+    PASSIVE_JS_BODY + " " + FACT,
     NAV_BODY + "\n" + FACT,
     "JavaScript is disabled by default in our sandbox.",
+    "JavaScript must be enabled in our sandbox to reproduce the bug.",
+    "JavaScript must be enabled on your browser for the benchmark to measure compilation.",
+    "> " + PASSIVE_JS_BODY,
+    "`" + PASSIVE_JS_BODY + "`",
     "The browser displays 'You have JavaScript disabled' when scripts are blocked.",
     'The message "Please enable JavaScript" is misleading.',
     "> Please enable JavaScript.",
@@ -115,7 +129,7 @@ def test_reader_preserves_short_facts_and_ambiguous_or_substantive_material(body
     assert result == body
 
 
-@pytest.mark.parametrize("body", [JS_BODY, SECURITY_BODY, "Home\nAbout us\nContact\nPrivacy policy"])
+@pytest.mark.parametrize("body", [JS_BODY, PASSIVE_JS_BODY, SECURITY_BODY, "Home\nAbout us\nContact\nPrivacy policy"])
 def test_real_html_extractor_rejects_nonempty_shell_before_metadata(body):
     markup = html_page(body)
     # Regression must exercise a genuinely nonempty extraction, not mock it empty.
@@ -143,13 +157,14 @@ def test_real_html_extractor_keeps_short_body_and_publisher_metadata(body):
     assert "description: Service availability" in result
 
 
-def test_js_shell_recovers_via_reader():
+@pytest.mark.parametrize("body", [JS_BODY, PASSIVE_JS_BODY])
+def test_js_shell_recovers_via_reader(body):
     requests = []
 
     def opener(request, timeout):
         requests.append(request.full_url)
         if request.full_url == URL:
-            return FakeResponse(html_page(JS_BODY).encode(), final_url=URL)
+            return FakeResponse(html_page(body).encode(), final_url=URL)
         assert request.full_url == f"https://r.jina.ai/{URL}"
         return reader_response(FACT)
 
@@ -160,8 +175,41 @@ def test_js_shell_recovers_via_reader():
     assert result.attempts == len(requests) == 2
 
 
-@pytest.mark.parametrize("reader_body", [NAV_BODY, SECURITY_BODY])
-@pytest.mark.parametrize("archive_body", [FACT, JS_BODY, SECURITY_BODY, "Home\nAbout us\nContact"])
+def test_noscript_notice_is_rejected_despite_publisher_metadata():
+    markup = (
+        f"<html><head><title>{TITLE}</title>"
+        '<meta name="description" content="Service availability and incident reports.">'
+        f"</head><body><noscript><div><div>{PASSIVE_JS_BODY}</div></div></noscript>"
+        '<div id="root"></div><script src="/app.js"></script>'
+        "</body></html>"
+    )
+    assert PASSIVE_JS_BODY in extract_html(markup)
+    with pytest.raises(ArticleFetchError) as caught:
+        fetch_article(
+            URL,
+            opener=lambda *args, **kwargs: FakeResponse(markup.encode(), final_url=URL),
+            resolver=resolver_for({}),
+            policy=ArticleFetchPolicy(jina_enabled=False, wayback_enabled=False),
+        )
+    assert caught.value.error_code == "empty_content"
+
+
+@pytest.mark.parametrize("separator", ["\n", " "])
+def test_html_notice_with_real_body_remains_usable(separator):
+    markup = html_page(PASSIVE_JS_BODY + separator + FACT)
+    result = fetch_article(
+        URL,
+        opener=lambda *args, **kwargs: FakeResponse(markup.encode(), final_url=URL),
+        resolver=resolver_for({}),
+        policy=ArticleFetchPolicy(jina_enabled=False, wayback_enabled=False),
+    )
+    assert PASSIVE_JS_BODY in result.text
+    assert FACT in result.text
+    assert result.method == "direct"
+
+
+@pytest.mark.parametrize("reader_body", [NAV_BODY, SECURITY_BODY, PASSIVE_JS_BODY])
+@pytest.mark.parametrize("archive_body", [FACT, JS_BODY, PASSIVE_JS_BODY, SECURITY_BODY, "Home\nAbout us\nContact"])
 def test_reader_shell_continues_to_archive_and_archive_uses_same_check(archive_body, reader_body):
     requests = []
     timestamp = "20261012060000"

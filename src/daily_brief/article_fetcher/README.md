@@ -124,6 +124,10 @@ bounded flow:
    numbered titles and unknown body text are retained. Unknown controls/headings
    are also retained: this is a bounded set of shell patterns, not semantic
    validation or a minimum body length. Accepted content is returned unchanged.
+   JS notices include the passive `JavaScript must be enabled` form, optional
+   browser/settings wording, and the warning that content or functionality may
+   be limited or unavailable. Matching still requires a complete notice; extra
+   substantive prose, quotations, and code remain eligible as body material.
    Wayback uses the same HTML check. A Reader shell proceeds to Wayback, and
    exhausted retrieval remains eligible for search recovery in both classification
    and summarization.
